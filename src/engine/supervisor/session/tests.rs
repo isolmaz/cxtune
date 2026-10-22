@@ -1192,6 +1192,31 @@ fn a_second_sleep_before_the_put_back_still_puts_the_original_setting_back() {
 }
 
 #[test]
+fn a_sleep_before_the_put_back_does_not_lose_it() {
+    // nothing runs at the second wake, or a measurement that does not touch the setting
+    for between in [None, Some(TestRequest::NoiseFloor { seconds: 1 })] {
+        let cfg = Config {
+            mode: Some(Mode::Quiet),
+            ..Config::default()
+        };
+        let mut rig = Rig::with_device(FakeDevice::in_mode(Mode::Quiet), cfg, true);
+        rig.run(5.0);
+        test(&mut rig, TestRequest::NoiseReductionAb { seconds: 1 });
+        rig.run(WARMUP.as_secs_f64() + 1.0 + 1.5);
+        assert!(!nr_state(&rig).0);
+        rig.sup.resumed();
+        if let Some(request) = between {
+            test(&mut rig, request);
+        }
+        rig.run(0.5);
+        rig.sup.resumed();
+        rig.run(SETTLE.as_secs_f64() + 1.0);
+        assert!(nr_state(&rig).0, "{between:?}: the user's setting is back");
+        assert!(rig.warnings().is_empty(), "{:?}", rig.warnings());
+    }
+}
+
+#[test]
 fn the_state_says_what_is_running_and_whether_there_is_a_recording() {
     let mut rig = rig_in(Mode::Quiet);
     let state = |rig: &Rig| rig.snapshot().test;

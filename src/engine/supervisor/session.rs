@@ -525,16 +525,21 @@ impl<B: Backend> Supervisor<B> {
     ///
     /// `defer_put_back` keeps the noise reduction put-back for the first settings pass after the
     /// dongle has recovered, instead of writing it now: after a sleep the firmware is not ready.
+    /// A put-back that is already pending stays pending until a pass writes it, unless the job
+    /// that is aborted carries its own (a comparison that started after the wake carries the
+    /// pending one). Without `defer_put_back` a pending put-back is dropped.
     pub(super) fn abort_tests(&mut self, reason: &str, defer_put_back: bool) {
         let was_running = self.tests.job.is_some() || self.tests.meter;
         let kind = self.tests.job.as_ref().map(|job| job.kind);
         let job = self.tests.job.take();
-        self.tests.deferred_nr = None;
+        if !defer_put_back {
+            self.tests.deferred_nr = None;
+        }
         if let Some(job) = &job {
-            if defer_put_back {
-                self.tests.deferred_nr = job.nr_original;
-            } else {
+            if !defer_put_back {
                 self.put_back_noise_reduction(job);
+            } else if job.nr_original.is_some() {
+                self.tests.deferred_nr = job.nr_original;
             }
         }
         drop(job);

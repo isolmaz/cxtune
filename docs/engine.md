@@ -179,9 +179,12 @@ closed by the engine as soon as nothing needs it. A request that cannot be run i
 - **The dongle while a test runs.** A running test holds the dongle: the saved settings wait until
   it ends. The meter alone does not, so a setting can be changed and watched on the meter. A
   disconnect, a sleep or `Engine::stop` ends the test and closes everything it opened. A
-  noise reduction comparison that a sleep ends leaves the dongle alone until the settling wait of
-  2 s after the wake is over; the first settings pass after it puts the setting back. After a
-  disconnect or a stop nothing is written.
+  noise reduction comparison that `Engine::stop` ends puts the setting back at once; one that a
+  disconnect ends tries to, and a warning is logged when the write fails. One that a sleep ends
+  leaves the dongle alone: the put-back is pending until the settling wait of 2 s after the wake
+  is over, and the first settings pass after it writes it. A pending put-back stays through a
+  further sleep and through a test that starts meanwhile. If the dongle disconnects or the
+  engine stops before that pass, the pending put-back is dropped.
 - **Warm-up.** The first 4 s after the microphone opens are not measured or recorded: the codec
   delivers digital silence and a click first, and in balanced mode the meter showed higher
   levels for a while longer (`docs/firmware-notes.md`; the 4 s is provisional until it is
