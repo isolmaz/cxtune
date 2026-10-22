@@ -2,7 +2,7 @@
 
 A small Windows tool that removes the constant idle hiss of the **HyperX Cloud II USB sound
 card dongle** (USB `0951:16A4`, Conexant/Synaptics CX20773 codec, ROM `CATP_V00.15.00.00`) on
-sensitive IEMs, and sets its analog microphone boost.
+sensitive IEMs, and sets its analog microphone boost and a few microphone DSP settings.
 
 > **Warning.** This project is not affiliated with HyperX, HP or Synaptics/Conexant. Use it at
 > your own risk. It only changes the codec's **volatile RAM**: it never writes EEPROM or DSP
@@ -30,18 +30,40 @@ The exact bytes, registers and measurements behind each mode are in
 `mic-boost <0-7>` sets `$1017` MIC_CONTROL to `0x38 + n` (analog boost in 6 dB steps; the
 vendor value is 4, best measured SNR was 6).
 
+Microphone DSP settings (what was measured on the device is in
+[docs/firmware-notes.md](docs/firmware-notes.md)):
+
+| Command | Setting | Measured |
+|---|---|---|
+| `mic-nr on\|off` | Noise reduction, device default on | Stationary noise 11.9 dB lower with it on. Speech not measured. |
+| `mic-agc on\|off` | AGC, device default off, **experimental** | The firmware applies it, but no effect on stationary noise could be measured and speech was not tested. |
+| `sidetone on\|off` | Microphone mixed into the headphones, device default off, **experimental** | The firmware starts the path (only while a microphone and a playback stream are open). Loudness not measured. |
+| `sidetone-level <1-4096>` | Sidetone gain register, device default 947, **experimental** | The unit is not known; start low. Sidetone can be loud in IEMs. |
+
+The playback EQ preset is not offered: the vendor patch resets it on every pass, so it has no
+effect on this firmware.
+
 Because RAM is reset on every replug, `watch` re-applies the remembered settings whenever the
 dongle appears.
 
 ## Usage
 
 ```
-cxtune status               read and show the device state and detected mode (read-only)
-cxtune apply <mode>         apply stock | quiet | balanced | min-hiss and remember it
-cxtune tune <ms>            set the min-hiss settle time (20-2000 ms in steps of 10)
-cxtune mic-boost <0-7>      set mic boost and remember it
-cxtune watch                keep the remembered settings applied across replugs
+cxtune status                   read and show the device state and detected mode (read-only)
+cxtune apply <mode>             apply stock | quiet | balanced | min-hiss and remember it
+cxtune tune <ms>                set the min-hiss settle time (20-2000 ms in steps of 10)
+cxtune mic-boost <0-7>          set mic boost and remember it
+cxtune mic-nr <on|off>          set microphone noise reduction and remember it
+cxtune mic-agc <on|off>         set microphone AGC (experimental) and remember it
+cxtune sidetone <on|off>        set sidetone (experimental) and remember it
+cxtune sidetone-level <1-4096>  set the sidetone gain register (experimental) and remember it
+cxtune watch                    keep the remembered settings applied across replugs
 ```
+
+A noise reduction or AGC change made while a microphone stream is open is applied to the
+running stream at once; otherwise the next microphone stream applies it. Switching sidetone on
+applies the remembered level first. The commands refuse to change anything if the `$1151` byte
+holds bits other than the three they manage.
 
 Settings are stored in `%APPDATA%\cxtune\config.toml`:
 
@@ -49,7 +71,13 @@ Settings are stored in `%APPDATA%\cxtune\config.toml`:
 mode = "balanced"
 mic_boost = 6
 min_hiss_ms = 600
+mic_nr = true
+mic_agc = false
+sidetone = false
+sidetone_level = 947
 ```
+
+Keys that are absent leave that setting as the device has it.
 
 A config file with keys from an earlier version (`profile`, `idle`, `clamp`) is rejected with
 an error that names the file, before anything is written to the device; delete it or rewrite it
@@ -91,7 +119,11 @@ guarantee it (a crossed response that happens to satisfy a single-bit check pass
   dongle's output, because closing it releases the output at once. Otherwise, or when exclusive
   mode is not available, it is a shared-mode stream: taking the output exclusively would stop
   the other programs' sessions for good.
-- `$1151`, `$0F4D` and the sidetone bytes are not exposed.
+- The DSP writes (`$1151` bits 2, 4 and 7, the sidetone gain `$1276/7`, and the NEWC request
+  in `$1154`) are guarded like the rest: they need the chip-mode and DSP-bypass flags clear,
+  accept only the bit subsets and range listed in the firmware notes, and read the byte again
+  right before writing. After a NEWC request the ROM must clear it and leave the other bits of
+  `$1154` as they were. `$1152`, `$0F4D` and `$040A` are never written.
 
 ## Known limitations
 
