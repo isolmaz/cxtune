@@ -413,6 +413,20 @@ and the first mode byte (`$1EFC`) at 521 ms. A second run wrote nothing.
 | EQ preset (`$1152` bits 1:0) | **Inert, not shipped.** Writing 2, 1 or 3 was never readable back, even 8 ms later; `$1248` stayed `0x06` and a NEWC pass loaded nothing. The hook-5 routine (`$16B5`, `JSR $1650`) of the vendor patch rewrites the two bits to 0 on every pass; changing that would mean editing vendor routine code, which cxtune does not do. |
 | Mic boost (`$1017`, existing) | One step more (6 to 7) raised the noise floor from -52.0 to -45.8 dBFS (+6.2 dB), consistent with 6 dB steps. |
 
+Mic boost and signal-to-noise ratio, measured on the real dongle with an IEM microphone, one
+take per boost value (speech level and noise floor in dBFS):
+
+| Boost (`$1017`) | Speech | Noise | Speech minus noise |
+|---|---|---|---|
+| 4 (vendor) | -57 | -65 | 8 dB |
+| 6 | -45.3 | -57.9 | 12.6 dB |
+| 7 | -40.7 | -50.3 | 9.6 dB |
+
+Boost 6 gave the largest difference of the three. The noise was dominated by mains hum at 50,
+100 and 150 Hz, which is also present in the stock state, and each value is a single take, so
+the ranking is indicative only. The vendor boost of 4 gives a speech level of about -57 dBFS in
+this test.
+
 In the recordings the largest 10 ms peaks were the same size at the toggle times as elsewhere
 (-42 dBFS at boost 6 with NR off, -36 dBFS at boost 7), so no switching transient was seen in
 the microphone recordings. Nothing was recorded or listened to on the playback side: a click
@@ -424,7 +438,7 @@ holds the last gain afterwards).
 
 Not tested: a listening test of sidetone or AGC; the playback side of a NEWC request (a
 click while audio plays); capture formats other than 48 kHz mono
-shared mode (the gate compares a format value with `$115A`); a physical replug (the saved
+shared mode (the gate compares a format value with `$115A`); a physical replug and a real sleep and resume (the saved
 settings are applied by the same writes, which were exercised at idle and with streams open).
 
 ## Hazards

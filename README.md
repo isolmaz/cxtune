@@ -2,11 +2,15 @@
 
 **Silence the hiss of the HyperX Cloud II USB sound card. No firmware flashing, nothing permanent.**
 
+Unofficial, use at your own risk. Changes are RAM-only and a replug undoes them; see
+[Disclaimer](#disclaimer).
+
 ## The problem
 
 The USB sound card of the HyperX Cloud II keeps its headphone driver powered at all times. With
 sensitive in-ear monitors (IEMs) that is a constant hiss, even when nothing is playing. Turning the
-driver down trades the hiss for pops when audio starts and stops, and the microphone is weak.
+driver down trades the hiss for pops when audio starts and stops. The vendor mic boost is low
+as well: speech sits around -57 dBFS in our test.
 
 ## What cxtune does
 
@@ -14,7 +18,8 @@ cxtune is a small Windows 11 command-line tool (Rust) for the dongle's CX20773 c
 
 - **Output modes** with an explicit trade-off between idle hiss and the noise when a stream
   starts (`stock`, `quiet`, `balanced`, `min-hiss`; details below).
-- **Mic boost** in eight analog steps.
+- **Mic boost** in eight analog steps (boost 6 gave 12.6 dB speech-to-noise against 8 dB at the
+  vendor setting in a single measurement; see `docs/firmware-notes.md`).
 - **Mic noise reduction** switch. Measured on the device: stationary noise 11.9 dB lower with it
   on. Speech quality was not measured.
 - **Mic AGC and sidetone** (experimental): the firmware applies them, but their effect is not
@@ -37,10 +42,17 @@ reads and changes a few bytes of that patch RAM over HID, using the memory-acces
 fwupd's `synaptics-cxaudio` plugin. Nothing is written to the EEPROM or to DSP memory, so every
 change is volatile: unplug the dongle and it is stock again.
 
+## Disclaimer
+
+cxtune is an independent project. It is not affiliated with, endorsed by or supported by
+HyperX, HP or Synaptics (Conexant). Use it at your own risk; the software is provided without
+warranty and without liability, as stated in the [license](LICENSE). The changes it makes are
+temporary (RAM only), and replugging the dongle restores the vendor behaviour.
+
 ## Quick start
 
-Requires Windows 11 and the Rust MSVC toolchain (the Visual Studio C++ build tools are needed
-for the bundled hidapi).
+Requires Windows 11 and the Rust MSVC toolchain, version 1.88 or newer (the Visual Studio C++
+build tools are needed for the bundled hidapi).
 
 ```
 cargo build --release
@@ -50,15 +62,15 @@ target\release\cxtune.exe mic-boost 6
 target\release\cxtune.exe watch
 ```
 
-`status` only reads. `apply` and the mic commands change the dongle and remember the choice in
-`%APPDATA%\cxtune\config.toml`. `watch` keeps the remembered settings applied until you stop
+`status` only reads. Every other command except `watch` changes the dongle and remembers the
+choice in `%APPDATA%\cxtune\config.toml`. `watch` keeps the remembered settings applied until you stop
 it.
 
 ```
 cxtune status                   read and show the device state and detected mode
 cxtune apply <mode>             apply stock | quiet | balanced | min-hiss and remember it
 cxtune tune <ms>                set the min-hiss settle time (20-2000 ms in steps of 10)
-cxtune mic-boost <0-7>          set mic boost (vendor value 4, best measured SNR 6)
+cxtune mic-boost <0-7>          set mic boost (vendor value 4; 6 had the best SNR in our measurement)
 cxtune mic-nr <on|off>          set microphone noise reduction
 cxtune mic-agc <on|off>         set microphone AGC (experimental)
 cxtune sidetone <on|off>        set sidetone (experimental)
@@ -78,13 +90,6 @@ cxtune watch                    keep the remembered settings applied across repl
 
 Any other device, or a ROM or patch RAM that does not match, is refused before anything is
 written.
-
-## Disclaimer
-
-cxtune is an independent project. It is not affiliated with, endorsed by or supported by
-HyperX, HP or Synaptics. Use it at your own risk; the software is provided without warranty
-and without liability, as stated in the [license](LICENSE). The changes it makes are temporary
-(RAM only), and replugging the dongle restores the vendor behaviour.
 
 ## Details
 
@@ -117,8 +122,8 @@ sidetone_level = 947
   guards, refuses on any mismatch, writes, reads back, and fails on a readback mismatch. It
   refuses any address outside the known writable patch-RAM regions and any device whose
   firmware version and chip id are not the ones the routines were written for.
-- Only the CPU-memory write flag (`0x40`) is ever sent. The EEPROM (`0x20`), DSP (`0x80`) and
-  high-address (`0x10`) flags are never used.
+- Only the flags `0x00` (read CPU memory) and `0x40` (write CPU memory) are ever sent. The
+  EEPROM (`0x20`), DSP (`0x80`) and high-address (`0x10`) flags are never used.
 - A mode change is planned in full before the first write, from any recognised state
   (including every half-changed state an interrupted change can leave). An unrecognised state
   is refused without writing anything.
@@ -142,9 +147,14 @@ sidetone_level = 947
 - Noise reduction was measured on stationary noise only.
 - A click in the headphones when a noise reduction or AGC change reloads the running stream
   while audio plays has not been measured.
+- Re-apply after a physical replug or a real sleep and resume has only been tested with
+  simulated restarts and absences, not on hardware.
+- The mic boost comparison is a single take per value, with mains hum dominating the noise.
 - Tested with one dongle and ROM version.
 
 ### Building from source
+
+The minimum supported Rust version is 1.88 (`rust-version` in `Cargo.toml`).
 
 ```
 cargo build --release
@@ -155,7 +165,8 @@ cargo clippy --all-targets -- -D warnings
 The binary is `target\release\cxtune.exe`. Tests run against an in-memory fake of the dongle
 and never touch real hardware. With the dongle connected,
 `cargo run --release --example trace -- <open_s> <close_s> <total_s>` opens and closes a silent
-stream and prints every change of the playback registers with a timestamp; it only reads.
+stream and prints every change of the playback registers with a timestamp; it only reads and,
+like the commands, refuses to run while another cxtune process controls the dongle.
 
 ### License
 

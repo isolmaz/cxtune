@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Hiss fix and mic boost tuner for the HyperX Cloud II USB dongle (CX20773), RAM-only"
 license = "MIT"
+rust-version = "1.88"
 publish = false
 
 [dependencies]
