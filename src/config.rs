@@ -1,9 +1,10 @@
-//! Settings in `%APPDATA%\cxtune\config.toml`: the selected mode, mic boost and min-hiss
-//! settle time. The file uses `key = value` lines (a TOML subset).
+//! Settings in `%APPDATA%\cxtune\config.toml`: the selected mode, mic boost, min-hiss settle
+//! time and the microphone DSP settings. The file uses `key = value` lines (a TOML subset).
 
 use std::path::{Path, PathBuf};
 
 use crate::mode::{self, Mode};
+use crate::patches;
 use crate::{Error, Result};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -13,6 +14,14 @@ pub struct Config {
     pub mic_boost: Option<u8>,
     /// Min-hiss settle time in ms; `None` keeps the routine's default.
     pub min_hiss_ms: Option<u16>,
+    /// Microphone noise reduction; `None` leaves it as the device has it.
+    pub mic_nr: Option<bool>,
+    /// Microphone AGC; `None` leaves it as the device has it.
+    pub mic_agc: Option<bool>,
+    /// Sidetone on or off; `None` leaves it as the device has it.
+    pub sidetone: Option<bool>,
+    /// Sidetone gain register value; `None` leaves the device's.
+    pub sidetone_level: Option<u16>,
 }
 
 pub fn path() -> Result<PathBuf> {
@@ -65,10 +74,26 @@ fn parse(text: &str) -> Result<Config> {
                 mode::settle_units(ms).map_err(|_| bad())?;
                 cfg.min_hiss_ms = Some(ms);
             }
+            "mic_nr" => cfg.mic_nr = Some(parse_bool(value).ok_or_else(bad)?),
+            "mic_agc" => cfg.mic_agc = Some(parse_bool(value).ok_or_else(bad)?),
+            "sidetone" => cfg.sidetone = Some(parse_bool(value).ok_or_else(bad)?),
+            "sidetone_level" => {
+                let level: u16 = value.parse().map_err(|_| bad())?;
+                patches::sidetone_level(level).map_err(|_| bad())?;
+                cfg.sidetone_level = Some(level);
+            }
             _ => return Err(bad()),
         }
     }
     Ok(cfg)
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 fn render(cfg: &Config) -> String {
@@ -81,6 +106,18 @@ fn render(cfg: &Config) -> String {
     }
     if let Some(ms) = cfg.min_hiss_ms {
         s += &format!("min_hiss_ms = {ms}\n");
+    }
+    for (key, value) in [
+        ("mic_nr", cfg.mic_nr),
+        ("mic_agc", cfg.mic_agc),
+        ("sidetone", cfg.sidetone),
+    ] {
+        if let Some(on) = value {
+            s += &format!("{key} = {on}\n");
+        }
+    }
+    if let Some(level) = cfg.sidetone_level {
+        s += &format!("sidetone_level = {level}\n");
     }
     s
 }
@@ -96,6 +133,10 @@ mod tests {
                 mode: Some(mode),
                 mic_boost: Some(6),
                 min_hiss_ms: Some(300),
+                mic_nr: Some(false),
+                mic_agc: Some(true),
+                sidetone: Some(true),
+                sidetone_level: Some(947),
             };
             assert_eq!(parse(&render(&cfg)).unwrap(), cfg);
         }
@@ -115,6 +156,35 @@ mod tests {
         assert!(parse("min_hiss_ms = 605").is_err());
         assert!(parse("min_hiss_ms = 20").is_ok());
         assert!(parse("min_hiss_ms = 2000").is_ok());
+    }
+
+    #[test]
+    fn dsp_settings_accept_only_booleans_and_levels_in_range() {
+        for key in ["mic_nr", "mic_agc", "sidetone"] {
+            assert!(parse(&format!("{key} = true")).is_ok());
+            assert!(parse(&format!("{key} = false")).is_ok());
+            for bad in ["on", "1", "\"maybe\"", "True", ""] {
+                assert!(parse(&format!("{key} = {bad}")).is_err(), "{key} = {bad}");
+            }
+        }
+        assert_eq!(parse("sidetone_level = 1").unwrap().sidetone_level, Some(1));
+        assert_eq!(
+            parse("sidetone_level = 4096").unwrap().sidetone_level,
+            Some(4096)
+        );
+        for bad in ["0", "4097", "32768", "-1", "loud", ""] {
+            assert!(parse(&format!("sidetone_level = {bad}")).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn dsp_settings_that_are_not_set_are_not_written() {
+        assert_eq!(render(&Config::default()), "");
+        let cfg = Config {
+            mic_nr: Some(false),
+            ..Config::default()
+        };
+        assert_eq!(render(&cfg), "mic_nr = false\n");
     }
 
     #[test]
