@@ -463,7 +463,7 @@ settings are applied by the same writes, which were exercised at idle and with s
 - **A NEWC request while audio plays.** The reload includes the DAC filter load. The ROM does
   the same at every stream open, but a request made during a call or other playback was not
   checked for a click in the headphones, because no playback was captured or listened to.
-- **Sidetone loudness.** The gain unit is not known and `0x1000` may be unity. The level
+- **Sidetone loudness.** The gain unit is not known and `0x1000` may be unity. On the other reading (USB audio 1/256 dB, see [firmware-research](firmware-research.md#8-open-questions-ranked-by-where-help-is-most-valuable)) `0x1000` is +16 dB, the top of the range, and `0x0001` is about 0 dB rather than quiet. The level
   stays in `0x0001..0x1000`, sidetone is off by default and switching it on applies the saved
   level first; start low.
 - **One program at a time** (see the protocol above).

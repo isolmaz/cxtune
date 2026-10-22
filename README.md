@@ -129,6 +129,8 @@ written.
   measurements and hazards.
 - [docs/engine.md](docs/engine.md): the background engine behind `watch`.
 - [docs/gui.md](docs/gui.md): the tray application.
+- [docs/firmware-research.md](docs/firmware-research.md): how the CX20773 firmware works, what
+  is still unknown and how to help (contributions welcome).
 
 ### Configuration
 
