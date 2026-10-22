@@ -20,8 +20,8 @@ use crate::capture::{self, Level};
 use crate::clip;
 use crate::dsp;
 use crate::engine::types::{
-    ErrorKind, Event, Failure, TestEvent, TestKind, TestOutcome, TestProgress, TestRequest,
-    TestState, TestStep,
+    ErrorKind, Event, Failure, Readback, TestEvent, TestKind, TestOutcome, TestProgress,
+    TestRequest, TestState, TestStep,
 };
 use crate::engine::watch::Watched;
 use crate::engine::{Clip, Microphone};
@@ -132,6 +132,9 @@ pub(super) struct Tests<B: Backend> {
     dev: Option<Watched<B::Dev>>,
     next_tick: Option<Instant>,
     last_progress: Option<(TestStep, Instant)>,
+    /// The noise reduction setting that a test left switched, to be put back once the dongle has
+    /// recovered from the sleep that ended the test.
+    deferred_nr: Option<bool>,
 }
 
 impl<B: Backend> Default for Tests<B> {
@@ -145,6 +148,7 @@ impl<B: Backend> Default for Tests<B> {
             dev: None,
             next_tick: None,
             last_progress: None,
+            deferred_nr: None,
         }
     }
 }
@@ -376,14 +380,24 @@ impl<B: Backend> Supervisor<B> {
             soft_start_ms: None,
         };
         if kind == TestKind::NoiseReductionAb {
-            let original = read_mem(self.test_dev()?, crate::patches::DSP_ENABLE, 1)?[0]
-                & crate::patches::DSP_NR
-                != 0;
+            let original = match self.tests.deferred_nr.take() {
+                Some(original) => original,
+                None => {
+                    read_mem(self.test_dev()?, crate::patches::DSP_ENABLE, 1)?[0]
+                        & crate::patches::DSP_NR
+                        != 0
+                }
+            };
             // From here on the setting is to be put back, whatever happens.
             job.nr_original = Some(original);
             if let Err(error) = self.switch_noise_reduction(true) {
                 self.put_back_noise_reduction(&job);
                 return Err(error);
+            }
+            // a microphone that is open already has had its warm-up: the level still settles
+            // after the switch
+            if let Step::WarmUp { until } = &mut job.step {
+                *until = (*until).max(self.now() + SWITCH_SETTLE);
             }
         }
         self.progress(kind, TestStep::WarmingUp, None, now);
@@ -453,6 +467,33 @@ impl<B: Backend> Supervisor<B> {
         self.after_job(now);
     }
 
+    /// Puts back the noise reduction that a test left switched when a sleep ended it, with the
+    /// handle and the reading of the settings pass that follows the dongle's recovery.
+    pub(super) fn put_back_deferred_noise_reduction(
+        &mut self,
+        dev: &mut Watched<B::Dev>,
+        seen: &mut Readback,
+    ) {
+        let Some(original) = self.tests.deferred_nr.take() else {
+            return;
+        };
+        if seen.noise_reduction == original {
+            return;
+        }
+        match dsp::set_noise_reduction(dev, original) {
+            Ok(applied) => {
+                seen.noise_reduction = original;
+                self.device = Some(seen.clone());
+                if let Some(event) = applied.stream_event {
+                    self.warn(event.to_string());
+                }
+            }
+            Err(error) => self.warn(format!(
+                "could not put noise reduction back after the test: {error}"
+            )),
+        }
+    }
+
     fn put_back_noise_reduction(&mut self, job: &Job<B::Playback>) {
         if let Some(original) = job.nr_original
             && let Err(error) = self.switch_noise_reduction(original)
@@ -481,12 +522,20 @@ impl<B: Backend> Supervisor<B> {
     }
 
     /// Stops everything a test has open, because the dongle or the engine went away.
-    pub(super) fn abort_tests(&mut self, reason: &str) {
+    ///
+    /// `defer_put_back` keeps the noise reduction put-back for the first settings pass after the
+    /// dongle has recovered, instead of writing it now: after a sleep the firmware is not ready.
+    pub(super) fn abort_tests(&mut self, reason: &str, defer_put_back: bool) {
         let was_running = self.tests.job.is_some() || self.tests.meter;
         let kind = self.tests.job.as_ref().map(|job| job.kind);
         let job = self.tests.job.take();
+        self.tests.deferred_nr = None;
         if let Some(job) = &job {
-            self.put_back_noise_reduction(job);
+            if defer_put_back {
+                self.tests.deferred_nr = job.nr_original;
+            } else {
+                self.put_back_noise_reduction(job);
+            }
         }
         drop(job);
         self.tests.meter = false;
@@ -522,6 +571,9 @@ impl<B: Backend> Supervisor<B> {
         self.tests.capture = None;
         self.tests.last_progress = None;
         self.start_settling_after_loss(now);
+        if self.tests.settling.is_none() {
+            self.tests.dev = None;
+        }
         self.reschedule_tests();
     }
 

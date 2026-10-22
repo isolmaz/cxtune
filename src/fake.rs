@@ -685,6 +685,12 @@ impl FakeDevice {
         self.lock().no_endpoint = true;
     }
 
+    /// The handles to this device that are alive: the fake itself, every one the engine opened
+    /// and has not dropped, and what they hand out.
+    pub fn handles(&self) -> usize {
+        Arc::strong_count(&self.0)
+    }
+
     pub fn streams_opened(&self) -> usize {
         self.lock().streams_opened
     }

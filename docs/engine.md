@@ -178,11 +178,16 @@ closed by the engine as soon as nothing needs it. A request that cannot be run i
   `NoiseListen`, `Cancelled`).
 - **The dongle while a test runs.** A running test holds the dongle: the saved settings wait until
   it ends. The meter alone does not, so a setting can be changed and watched on the meter. A
-  disconnect, a sleep or `Engine::stop` ends the test and closes everything it opened.
+  disconnect, a sleep or `Engine::stop` ends the test and closes everything it opened. A
+  noise reduction comparison that a sleep ends leaves the dongle alone until the settling wait of
+  2 s after the wake is over; the first settings pass after it puts the setting back. After a
+  disconnect or a stop nothing is written.
 - **Warm-up.** The first 4 s after the microphone opens are not measured or recorded: the codec
   delivers digital silence and a click first, and in balanced mode the meter showed higher
   levels for a while longer (`docs/firmware-notes.md`; the 4 s is provisional until it is
-  checked in a quiet room). A test started while the meter is on does not wait again. A microphone that delivers nothing for 3 s ends the test with an `Audio`
+  checked in a quiet room). A test started while the meter is on does not wait again, except that
+  a noise reduction comparison lets the level settle for 1 s after its first switch, as it does
+  after its second. A microphone that delivers nothing for 3 s ends the test with an `Audio`
   error.
 - **The output after a capture.** In balanced mode a capture opens the driver, and the output is
   idle again only after the stop decay time. After every microphone close the engine reads the

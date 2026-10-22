@@ -2,6 +2,7 @@ use std::sync::atomic::Ordering;
 
 use super::*;
 use crate::config::Config;
+use crate::engine::supervisor::SETTLE;
 use crate::engine::testing::Rig;
 use crate::engine::types::{Command, Phase};
 use crate::fake::FakeDevice;
@@ -593,6 +594,24 @@ fn the_noise_reduction_comparison_measures_both_halves_and_puts_the_setting_back
 }
 
 #[test]
+fn a_comparison_started_with_the_meter_on_lets_the_level_settle_after_the_first_switch() {
+    for original in [true, false] {
+        let mut rig = rig_with(Mode::Quiet, original);
+        test(&mut rig, TestRequest::Meter(true));
+        rig.run(WARMUP.as_secs_f64() + 1.0);
+        test(&mut rig, TestRequest::NoiseReductionAb { seconds: 1 });
+        let waited = until_over(&mut rig, 15.0);
+        // the first settle, 1 s with, the second settle and 1 s without
+        assert!(
+            (waited - (2.0 * SWITCH_SETTLE.as_secs_f64() + 2.0)).abs() < 0.2,
+            "{original}: {waited}"
+        );
+        assert_eq!(rig.dev.byte(0x1151) & 0x04 != 0, original);
+        assert!(mic_open(&rig), "the meter keeps the microphone");
+    }
+}
+
+#[test]
 fn a_comparison_that_is_cancelled_puts_the_setting_back() {
     let mut rig = rig_in(Mode::Quiet);
     test(&mut rig, TestRequest::NoiseReductionAb { seconds: 5 });
@@ -933,6 +952,27 @@ fn a_microphone_that_stops_by_itself_ends_the_test_with_an_error() {
 }
 
 #[test]
+fn a_microphone_failure_lets_go_of_the_dongle_in_every_mode() {
+    for mode in Mode::ALL {
+        let mut rig = rig_in(mode);
+        let before = rig.dev.handles();
+        test(&mut rig, TestRequest::NoiseReductionAb { seconds: 3 });
+        rig.run(WARMUP.as_secs_f64() + 0.5);
+        assert!(
+            rig.dev.handles() > before,
+            "{mode:?}: the test reads the dongle"
+        );
+        rig.mic.lock().unwrap().fail = true;
+        rig.run(0.2);
+        assert_eq!(failures(&rig).len(), 1, "{mode:?}");
+        // long enough for the balanced mode to settle, short of the next pass over the dongle
+        rig.run(3.0);
+        assert_eq!(rig.dev.handles(), before, "{mode:?}: a handle stays open");
+        assert_eq!(rig.snapshot().test, TestState::default());
+    }
+}
+
+#[test]
 fn a_microphone_that_delivers_nothing_ends_the_test_after_three_seconds() {
     let mut rig = rig_in(Mode::Quiet);
     rig.mic.lock().unwrap().stall = true;
@@ -1059,7 +1099,6 @@ fn waking_from_sleep_and_stopping_the_engine_end_the_test() {
     rig.run(7.5);
     rig.sup.resumed();
     assert!(!mic_open(&rig));
-    assert_eq!(rig.dev.byte(0x1151) & 0x04, 0x04, "put back");
     let [(Some(TestKind::NoiseReductionAb), failure)] = &failures(&rig)[..] else {
         panic!("{:?}", failures(&rig));
     };
@@ -1072,6 +1111,84 @@ fn waking_from_sleep_and_stopping_the_engine_end_the_test() {
     assert_eq!(failures(&rig).len(), 2);
     assert_eq!(failures(&rig)[1].0, None);
     assert!(failures(&rig)[1].1.message.contains("stopped"));
+}
+
+/// The noise reduction bit of the dongle, and the number of writes to `$1151` so far.
+fn nr_state(rig: &Rig) -> (bool, usize) {
+    let writes = rig
+        .dev
+        .writes()
+        .iter()
+        .filter(|(a, _)| *a == 0x1151)
+        .count();
+    (rig.dev.byte(0x1151) & 0x04 != 0, writes)
+}
+
+#[test]
+fn after_a_sleep_noise_reduction_is_put_back_once_the_dongle_has_recovered() {
+    // chosen (the settings pass would correct it) and not chosen (only the put-back can)
+    for chosen in [Some(true), None] {
+        let cfg = Config {
+            mode: Some(Mode::Quiet),
+            mic_nr: chosen,
+            ..Config::default()
+        };
+        let mut rig = Rig::with_device(FakeDevice::in_mode(Mode::Quiet), cfg, true);
+        rig.run(5.0);
+        assert!(rig.snapshot().in_sync());
+        test(&mut rig, TestRequest::NoiseReductionAb { seconds: 3 });
+        // in the second half, with noise reduction off
+        rig.run(WARMUP.as_secs_f64() + 3.0 + 1.5);
+        let (on, writes) = nr_state(&rig);
+        assert!(!on, "{chosen:?}: the comparison is in its second half");
+
+        rig.sup.resumed();
+        assert!(!mic_open(&rig));
+        assert_eq!(
+            nr_state(&rig),
+            (false, writes),
+            "{chosen:?}: no write at the wake"
+        );
+        rig.run(SETTLE.as_secs_f64() - 0.5);
+        assert_eq!(
+            nr_state(&rig),
+            (false, writes),
+            "{chosen:?}: the dongle is still left alone"
+        );
+        rig.run(2.0);
+        assert_eq!(nr_state(&rig), (true, writes + 1), "{chosen:?}: put back");
+        assert!(rig.snapshot().in_sync(), "{chosen:?}");
+        assert!(
+            rig.warnings().is_empty(),
+            "{chosen:?}: {:?}",
+            rig.warnings()
+        );
+        assert!(rig.errors().is_empty(), "{chosen:?}");
+    }
+}
+
+#[test]
+fn a_second_sleep_before_the_put_back_still_puts_the_original_setting_back() {
+    let cfg = Config {
+        mode: Some(Mode::Quiet),
+        ..Config::default()
+    };
+    let mut rig = Rig::with_device(FakeDevice::in_mode(Mode::Quiet), cfg, true);
+    rig.run(5.0);
+    assert!(nr_state(&rig).0);
+    let second_half = WARMUP.as_secs_f64() + 1.0 + 1.5;
+    test(&mut rig, TestRequest::NoiseReductionAb { seconds: 1 });
+    rig.run(second_half);
+    assert!(!nr_state(&rig).0);
+    rig.sup.resumed();
+    // a comparison that starts before the put-back sees noise reduction off, which is not the
+    // user's setting
+    test(&mut rig, TestRequest::NoiseReductionAb { seconds: 1 });
+    rig.run(second_half);
+    rig.sup.resumed();
+    rig.run(SETTLE.as_secs_f64() + 1.0);
+    assert!(nr_state(&rig).0, "the user's setting is back");
+    assert!(rig.warnings().is_empty(), "{:?}", rig.warnings());
 }
 
 #[test]

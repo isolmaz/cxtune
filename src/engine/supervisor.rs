@@ -281,7 +281,7 @@ impl<B: Backend> Supervisor<B> {
     /// left alone for [`SETTLE`] and then verified.
     pub(super) fn resumed(&mut self) {
         self.note("the computer resumed");
-        self.abort_tests("the computer went to sleep");
+        self.abort_tests("the computer went to sleep", true);
         if self.present {
             let now = self.now();
             self.wait_for_firmware(now);
@@ -321,7 +321,7 @@ impl<B: Backend> Supervisor<B> {
 
     /// Writes what is still unsaved. Called when the engine stops.
     pub(super) fn finish(&mut self) {
-        self.abort_tests("the engine was stopped");
+        self.abort_tests("the engine was stopped", false);
         if self.saved != self.cfg {
             self.save();
         }
@@ -380,7 +380,7 @@ impl<B: Backend> Supervisor<B> {
             self.wait_for_firmware(now);
         } else {
             self.note("the dongle disconnected");
-            self.abort_tests("the dongle was disconnected");
+            self.abort_tests("the dongle was disconnected", false);
             self.forget_device();
             self.phase = Phase::Disconnected;
         }
@@ -461,7 +461,7 @@ impl<B: Backend> Supervisor<B> {
     }
 
     fn sync(&mut self, force: bool) -> Result<Pass, Failure> {
-        let (mut dev, seen) = self.read()?;
+        let (mut dev, mut seen) = self.read()?;
         let now = self.now();
         if !force && self.restarted(&seen) {
             self.note(
@@ -471,6 +471,7 @@ impl<B: Backend> Supervisor<B> {
             self.wait_for_firmware(now);
             return Ok(Pass::Restarted);
         }
+        self.put_back_deferred_noise_reduction(&mut dev, &mut seen);
         if !force {
             self.follow_surround(&seen, now);
         }
