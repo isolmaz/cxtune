@@ -168,7 +168,7 @@ decay_ms = 800         # balanced stop decay time
 mic_nr = true
 mic_agc = false
 sidetone = false
-sidetone_level = 947   # register, reported to the host in 1/256 dB: +3.7 dB
+sidetone_level = 947   # register in UAC 1/256 dB units per the ROM: +3.7 dB
 surround = false
 surround_level = 4
 ```
@@ -209,11 +209,11 @@ surround_level = 4
 - Mic AGC, sidetone and virtual surround are experimental; their effect on speech and loudness
   was not measured. The surround setting was checked on the device only at register level (the
   codec reports it applied while a stream plays); what it sounds like was not listened to.
-  The sidetone gain register is reported to the host as a USB audio class volume in 1/256 dB,
-  from 0 to +16 dB, with +3.7 dB (947) as the vendor value. Read that way, every setting
-  amplifies and there is no quiet end, so a low value is not a quiet one and only sidetone off
-  is silent. How the DSP applies the value was not measured and nothing was listened to.
-  Sidetone can be loud in IEMs.
+  The sidetone gain register is in USB audio class 1/256 dB units according to the ROM, from 0
+  to +16 dB, with +3.7 dB (947) as the vendor value; it is not exposed to the host, because the
+  descriptor declares no sidetone feature unit. Read that way, every setting amplifies and there
+  is no quiet end, so a low value is not a quiet one and only sidetone off is silent. How the DSP
+  applies the value was not measured and nothing was listened to. Sidetone can be loud in IEMs.
 - Noise reduction was measured on stationary noise only.
 - The Test tab of the engine was checked on the device for function only (streams, registers,
   timing of the idle state). Its acoustic results (noise floor, noise reduction comparison, the

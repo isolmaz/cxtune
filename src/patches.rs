@@ -74,8 +74,9 @@ const DSP_BITS: u8 = DSP_NR | DSP_AGC | DSP_SIDETONE;
 /// The other bits of the byte are stream state owned by the ROM.
 pub const NEWC_ADDR: u16 = 0x1154;
 pub const NEWC: u8 = 0x01;
-/// Sidetone gain, little endian. The ROM serves it to the host as a USB audio class volume control
-/// in 1/256 dB (minimum 0, maximum 0x1000 = +16 dB, resolution 1); how the DSP applies the value
+/// Sidetone gain, little endian. The ROM's class-request handler encodes it as a USB audio class
+/// volume in 1/256 dB (minimum 0, maximum 0x1000 = +16 dB, resolution 1), but this unit's
+/// descriptor does not declare the feature unit, so no host sees it. How the DSP applies the value
 /// was not measured and nothing was listened to. Read as dB, every value is a gain of 0 dB or
 /// more: there is no quiet end, and the vendor default is +3.70 dB. cxtune writes 0x0001..=0x1000
 /// and never a value with the high bit set, which the class uses for silence.

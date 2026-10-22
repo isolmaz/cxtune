@@ -492,7 +492,9 @@ before each call; the parameter semantics are not decoded.
   RAM writes are the only route here. The Linux driver `cx2070x` (GPL, Conexant, 2012) sets
   `DSP_PROCESSING_ENABLE_1/2` and NEWC the same way.
 - *Stage enhancer / `$1152` bit 3.* One read showed `$1152 = 0x08`; other readings (idle and
-  with streams) show `0x00` (firmware-notes). What sets the bit and when is UNKNOWN.
+  with streams) show `0x00` (firmware-notes). What sets the bit and when is UNKNOWN: the vendor
+  patch (`$18BA..$18C5`) and ROM `$DA30` contain code that toggles it, but which control calls
+  them was not tested (firmware-notes, "Virtual surround").
 
 **Sidetone gain unit.** See section 8, item 2: the evidence points to USB audio class units,
 in which case small register values are not necessarily quiet.
