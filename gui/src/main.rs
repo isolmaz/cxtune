@@ -77,6 +77,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         snapshot::schedule(&window, folder);
     }
     tray.show()?;
+    app::start();
     slint::run_event_loop_until_quit()?;
     Ok(())
 }

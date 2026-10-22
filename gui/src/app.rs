@@ -1,5 +1,6 @@
 //! The behaviour behind the window: the user's choices go to the engine as commands, and what
-//! the engine reports is shown. The window never touches the dongle.
+//! the engine reports is shown. The thread of the window never touches the dongle: the engine
+//! is started and stopped on threads of their own.
 
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -26,6 +27,9 @@ const PACE: Duration = Duration::from_millis(100);
 /// After the user moves a volume slider, what the thread reads is ignored for this long, so that
 /// the slider does not jump back to a value from before the move.
 const VOLUME_HOLD: Duration = Duration::from_millis(1200);
+/// How long Quit waits for an engine that is still being started, which it stops first, before
+/// it gives up on a start that does not return.
+const START_GRACE: Duration = Duration::from_secs(3);
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
@@ -72,8 +76,11 @@ pub struct App {
     tray: Weak<Tray>,
     engine: Option<Engine>,
     handle: Option<Handle>,
-    /// Tells the events of an engine that was replaced from those of the current one.
+    /// Tells the events and the result of an engine that was replaced from those of the current
+    /// one.
     generation: usize,
+    /// Whether an engine is being started; its result comes back to `on_started`.
+    starting: bool,
     snapshot: Option<Snapshot>,
     start_problem: Option<Problem>,
     /// Whether the engine reported something unusual that Re-apply has not acknowledged yet.
@@ -87,8 +94,7 @@ pub struct App {
     quitting: bool,
 }
 
-/// Builds the application state, starts the engine and connects the window and the tray icon to
-/// it.
+/// Builds the application state and connects the window and the tray icon to it.
 pub fn install(
     window: &MainWindow,
     tray: &Tray,
@@ -115,6 +121,7 @@ pub fn install(
         engine: None,
         handle: None,
         generation: 0,
+        starting: false,
         snapshot: None,
         start_problem: None,
         warned: false,
@@ -129,13 +136,18 @@ pub fn install(
     };
     app.sound.watch(visible);
     app.apply_language(lang);
-    app.start_engine();
     APP.with(|slot| *slot.borrow_mut() = Some(app));
 
     connect(window, tray);
     guard.listen(|| {
         let _ = slint::invoke_from_event_loop(|| with_app(App::show_window));
     });
+}
+
+/// Starts the engine. Called once the window and the tray icon are shown, so that a start that
+/// is slow does not keep them from appearing.
+pub fn start() {
+    with_app(|app| app.start_engine(None));
 }
 
 fn connect(window: &MainWindow, tray: &Tray) {
@@ -196,26 +208,75 @@ fn open_log_folder() {
     }
 }
 
+/// Drops `engine` on a thread of its own: stopping one can take seconds.
+fn release(engine: Option<Engine>) {
+    if engine.is_some() {
+        std::thread::spawn(move || drop(engine));
+    }
+}
+
+/// Stops `engine` on a thread of its own, because finishing a mode change takes seconds, and
+/// ends the event loop when it has let go of the dongle.
+fn stop_and_quit(engine: Option<Engine>) {
+    std::thread::spawn(move || {
+        drop(engine);
+        let _ = slint::invoke_from_event_loop(|| {
+            let _ = slint::quit_event_loop();
+        });
+    });
+}
+
 impl App {
-    fn start_engine(&mut self) {
+    /// Starts an engine on a thread of its own, because making one enumerates the HID devices
+    /// and a device that is slow to answer would freeze the window. The `previous` engine is
+    /// stopped there first, so that the lock it holds is free, or known to be stuck, by then.
+    /// The result comes back to `on_started`.
+    fn start_engine(&mut self, previous: Option<Engine>) {
         self.generation += 1;
         let generation = self.generation;
+        self.starting = true;
+        self.handle = None;
         self.snapshot = None;
         self.start_problem = None;
         self.touched = Touched::default();
-        let started = Engine::start(move |event| {
-            let _ = slint::invoke_from_event_loop(move || {
-                with_app(|app| app.on_event(generation, event));
+        let spawned = std::thread::Builder::new()
+            .name("cxtune-start".into())
+            .spawn(move || {
+                drop(previous);
+                let started = Engine::start(move |event| {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        with_app(|app| app.on_event(generation, event));
+                    });
+                });
+                // an engine that cannot be delivered because the loop has ended is dropped here
+                let _ = slint::invoke_from_event_loop(move || {
+                    with_app(|app| app.on_started(generation, started));
+                });
             });
-        });
+        if let Err(error) = spawned {
+            self.starting = false;
+            log(&format!("could not start the engine thread: {error}"));
+            self.start_problem = Some(Problem::StartFailed);
+        }
+        self.render();
+    }
+
+    fn on_started(&mut self, generation: usize, started: cxtune::Result<Engine>) {
+        if generation != self.generation {
+            release(started.ok());
+            return;
+        }
+        self.starting = false;
+        if self.quitting {
+            stop_and_quit(started.ok());
+            return;
+        }
         match started {
             Ok(engine) => {
                 self.handle = Some(engine.handle());
                 self.engine = Some(engine);
             }
             Err(error) => {
-                self.handle = None;
-                self.engine = None;
                 log(&format!("could not start the engine: {error}"));
                 self.start_problem =
                     Some(status::start_problem(&error, engine::worker_left_behind()));
@@ -533,12 +594,15 @@ impl App {
 
     fn reapply(&mut self) {
         self.warned = false;
+        if self.starting {
+            return;
+        }
         if self.engine.as_ref().is_some_and(Engine::is_running) {
             self.send(Command::Reapply);
             self.render();
         } else {
-            self.engine = None;
-            self.start_engine();
+            let previous = self.engine.take();
+            self.start_engine(previous);
         }
     }
 
@@ -557,8 +621,9 @@ impl App {
         }
     }
 
-    /// Hides the window and the icon, stops the engine on a thread of its own (finishing a mode
-    /// change takes seconds) and ends the event loop when the engine has let go of the dongle.
+    /// Hides the window and the icon and stops the engine (see `stop_and_quit`). An engine that
+    /// is still being started is stopped when it arrives, and a start that does not return does
+    /// not keep the program alive for longer than `START_GRACE`.
     pub fn quit(&mut self) {
         if self.quitting {
             return;
@@ -570,12 +635,16 @@ impl App {
         if let Some(tray) = self.tray.upgrade() {
             let _ = tray.hide();
         }
-        let engine = self.engine.take();
-        std::thread::spawn(move || {
-            drop(engine);
-            let _ = slint::invoke_from_event_loop(|| {
-                let _ = slint::quit_event_loop();
+        if self.starting {
+            Timer::single_shot(START_GRACE, || {
+                with_app(|app| {
+                    if app.starting {
+                        let _ = slint::quit_event_loop();
+                    }
+                });
             });
-        });
+        } else {
+            stop_and_quit(self.engine.take());
+        }
     }
 }

@@ -45,7 +45,14 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
 ## Threads
 
 - The **UI thread** runs the Slint event loop and the handlers of the window. It never reads or
-  writes the dongle.
+  writes the dongle and never waits for it. The window and the icon are shown first, and the
+  engine is started on a short-lived thread (`cxtune-start`), because making one enumerates the
+  HID devices, which takes long when one of them is slow. Its result comes back through
+  `slint::invoke_from_event_loop` with the generation number, and until then the status says
+  that the application is starting. Re-apply starts a new engine the same way and stops the old
+  one on that thread first. Quit hides the window and the icon at once and stops the engine on a
+  thread of its own; an engine that is still being started is stopped when it arrives, and a
+  start that does not return ends the program after 3 s.
 - The **engine** (`cxtune-engine`, with its watchdog) does all HID and silent-stream work. Its
   events reach the UI thread through `slint::invoke_from_event_loop`, tagged with a generation
   number so that events of an engine that was replaced are ignored. The user's choices go to
