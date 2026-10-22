@@ -282,10 +282,19 @@ build 26200):
   for good: its callbacks ended, and the idle one could not be started afterwards.
 
 So `audio::open_silence` opens an exclusive 16-bit stereo stream (48, 44.1 or 96 kHz) only when
-no program other than the system sounds has a session on the endpoint, active or not, and a
-shared-mode stream otherwise (also when the endpoint offers no such exclusive format). With a
-program's session open the output is in use anyway, and a shared stream next to it left both an
-active and an idle Python client running. The buffer is filled with zeros and flagged silent.
+no program other than the system sounds and cxtune's own process has a session on the endpoint,
+active or not, and a shared-mode stream otherwise (also when the endpoint offers no such
+exclusive format). With a program's session open the output is in use anyway, and a shared
+stream next to it left both an active and an idle Python client running. The buffer is filled
+with zeros and flagged silent.
+
+The format and the device period are probed first and the session check runs immediately
+before the exclusive `Initialize`. A program that opens a session after the check but before
+`Initialize` returns is still cut off: WASAPI offers no way to make the two one step. The
+exclusive buffer is requested as four device periods and refilled every 20 ms; on this machine
+the device period is 10 ms and the buffer came back as 3840 frames (80 ms at 48 kHz), so a late
+refill cannot underrun. If the stream fails, the failure is recorded before the stream is
+stopped.
 
 Writes do not depend on the pin: the planner runs from either state. `status` shows
 `$0F18`/`$0F1A`, which tells a held pin from a real idle.
