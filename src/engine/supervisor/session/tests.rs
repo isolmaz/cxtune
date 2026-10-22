@@ -142,6 +142,86 @@ fn turning_the_meter_off_does_not_take_the_microphone_from_a_running_test() {
 }
 
 #[test]
+fn the_meter_cannot_be_turned_on_during_a_test_that_needs_the_output_at_rest() {
+    for mode in [Mode::Balanced, Mode::Quiet] {
+        for (kind, request) in [
+            (TestKind::ClickTest, TestRequest::ClickTest),
+            (TestKind::NoiseListen, TestRequest::NoiseListen),
+            (TestKind::PlayRecording, TestRequest::PlayRecording),
+        ] {
+            let mut rig = rig_in(mode);
+            if kind == TestKind::PlayRecording {
+                test(&mut rig, TestRequest::Record { seconds: 1 });
+                until_over(&mut rig, 10.0);
+            }
+            let refused = failures(&rig).len();
+            let done = outcomes(&rig).len();
+            test(&mut rig, request);
+            // in the same pass as the request, and again while the test is under way
+            test(&mut rig, TestRequest::Meter(true));
+            rig.run(0.2);
+            if outcomes(&rig).len() == done {
+                test(&mut rig, TestRequest::Meter(true));
+            }
+            let mut waited = 0.0;
+            while outcomes(&rig).len() == done {
+                rig.run(0.05);
+                waited += 0.05;
+                assert!(waited < 20.0, "{mode:?} {kind:?} did not end");
+                assert!(!mic_open(&rig), "{mode:?} {kind:?}: the microphone is open");
+                assert!(!rig.snapshot().test.meter, "{mode:?} {kind:?}");
+            }
+            let got = failures(&rig);
+            assert!(
+                got.len() > refused,
+                "{mode:?} {kind:?}: nothing was refused"
+            );
+            for (failed_kind, failure) in &got[refused..] {
+                assert_eq!(*failed_kind, None, "{mode:?} {kind:?}");
+                assert_eq!(failure.kind, ErrorKind::Invalid, "{mode:?} {kind:?}");
+                assert!(
+                    failure.message.contains("output test"),
+                    "{}",
+                    failure.message
+                );
+            }
+            let outcome = outcomes(&rig).last().copied();
+            match kind {
+                TestKind::ClickTest => {
+                    assert!(
+                        matches!(outcome, Some(TestOutcome::ClickTest { .. })),
+                        "{mode:?}"
+                    );
+                    assert_eq!(played(&rig).len(), 1, "{mode:?}");
+                }
+                TestKind::NoiseListen => {
+                    assert!(
+                        matches!(outcome, Some(TestOutcome::NoiseListen { .. })),
+                        "{mode:?}"
+                    );
+                }
+                _ => assert_eq!(outcome, Some(TestOutcome::Played), "{mode:?}"),
+            }
+            assert!(!mic_open(&rig));
+            assert!(!rig.snapshot().test.meter);
+        }
+    }
+}
+
+#[test]
+fn the_meter_can_be_turned_on_during_a_measurement_and_keeps_the_microphone_after_it() {
+    let mut rig = rig_in(Mode::Quiet);
+    test(&mut rig, TestRequest::NoiseFloor { seconds: 1 });
+    rig.run(0.5);
+    test(&mut rig, TestRequest::Meter(true));
+    rig.run(0.1);
+    assert!(rig.snapshot().test.meter);
+    until_over(&mut rig, 20.0);
+    assert!(failures(&rig).is_empty());
+    assert!(mic_open(&rig));
+}
+
+#[test]
 fn the_meter_opens_the_microphone_reports_its_level_and_closes_it_when_told_to() {
     let mut rig = rig_in(Mode::Quiet);
     assert!(!mic_open(&rig));

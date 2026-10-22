@@ -7,8 +7,8 @@ use cxtune::lock::NamedLock;
 use cxtune::mode::{self, Mode, State};
 use cxtune::patches::{
     APPLIED_AGC, APPLIED_NR, DSP_AGC, DSP_NR, DSP_SIDETONE, MIXER_SIDETONE, ROM_ID, SIDETONE_MAX,
-    SIDETONE_MIN, SURROUND_BIT, SURROUND_LEVEL_MAX, SURROUND_LEVEL_MIN, sidetone_db,
-    sidetone_register,
+    SIDETONE_MIN, SURROUND_BIT, SURROUND_LEVEL_MAX, SURROUND_LEVEL_MIN,
+    SURROUND_LEVEL_UNKNOWN_BITS, sidetone_db, sidetone_register,
 };
 use cxtune::{Error, Result, audio, dsp, hex, hid, settings};
 
@@ -268,8 +268,11 @@ fn dsp_text(bits: u8) -> String {
 fn surround_level_text(s: &State) -> String {
     match s.surround_level() {
         Some(level) => format!("level {level} of {SURROUND_LEVEL_MAX}"),
+        None if s.surround_level & SURROUND_LEVEL_UNKNOWN_BITS != 0 => {
+            "bits 7:5 are set, cxtune leaves the byte alone".into()
+        }
         None => format!(
-            "outside {SURROUND_LEVEL_MIN}..={SURROUND_LEVEL_MAX} or other bits set, cxtune will not change it"
+            "low nibble outside {SURROUND_LEVEL_MIN}..={SURROUND_LEVEL_MAX} (the ROM clamps it),              cxtune overwrites it when it sets a level"
         ),
     }
 }
@@ -482,6 +485,29 @@ mod tests {
             appliers: 0,
             mixer: 0,
             mic_stream: 0,
+        }
+    }
+
+    #[test]
+    fn the_surround_level_text_says_what_cxtune_would_do_with_the_byte() {
+        let text = |byte: u8| {
+            let mut s = balanced(ROM_ID);
+            s.surround_level = byte;
+            surround_level_text(&s)
+        };
+        assert_eq!(text(0x04), "level 4 of 10");
+        assert_eq!(text(0x1A), "level 10 of 10");
+        for byte in [0x00, 0x0B, 0x0F, 0x1B] {
+            let t = text(byte);
+            assert!(
+                t.contains("low nibble") && t.contains("overwrites"),
+                "{byte:#04x}: {t}"
+            );
+            assert!(!t.contains("will not change"), "{byte:#04x}: {t}");
+        }
+        for byte in [0x24, 0x44, 0x84, 0xE4, 0x20] {
+            let t = text(byte);
+            assert!(t.contains("leaves the byte alone"), "{byte:#04x}: {t}");
         }
     }
 

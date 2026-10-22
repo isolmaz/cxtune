@@ -370,7 +370,8 @@ impl Snapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TestRequest {
     /// Opens the microphone and reports its level every 50 ms ([`TestEvent::Level`]), or closes it
-    /// again. A running test keeps the microphone open until it ends.
+    /// again. A running test keeps the microphone open until it ends. Opening it is refused
+    /// while a test that needs the output at rest runs (click test, noise listening, playback).
     Meter(bool),
     /// Measures the noise floor: the median of the 50 ms levels over `seconds` (1-60).
     NoiseFloor { seconds: u8 },
@@ -408,6 +409,17 @@ pub enum TestKind {
     NoiseReductionAb,
     ClickTest,
     NoiseListen,
+}
+
+impl TestKind {
+    /// True for the tests that keep the microphone open while they run. The others need it
+    /// closed, so that the output is at rest.
+    pub fn uses_microphone(self) -> bool {
+        matches!(
+            self,
+            TestKind::NoiseFloor | TestKind::Record | TestKind::NoiseReductionAb
+        )
+    }
 }
 
 /// What the Test tab has running.

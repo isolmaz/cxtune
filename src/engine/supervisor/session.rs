@@ -258,12 +258,11 @@ impl<B: Backend> Supervisor<B> {
     /// watches the output settle.
     fn close_microphone(&mut self, now: Instant) {
         let needed = self.tests.meter
-            || self.tests.job.as_ref().is_some_and(|job| {
-                matches!(
-                    job.kind,
-                    TestKind::NoiseFloor | TestKind::Record | TestKind::NoiseReductionAb
-                )
-            });
+            || self
+                .tests
+                .job
+                .as_ref()
+                .is_some_and(|job| job.kind.uses_microphone());
         if needed || self.tests.capture.take().is_none() {
             return;
         }
@@ -294,6 +293,18 @@ impl<B: Backend> Supervisor<B> {
             );
         }
         match request {
+            TestRequest::Meter(true)
+                if self
+                    .tests
+                    .job
+                    .as_ref()
+                    .is_some_and(|job| !job.kind.uses_microphone()) =>
+            {
+                self.test_failed(
+                    None,
+                    invalid("the output test needs the microphone closed; cancel it first"),
+                );
+            }
             TestRequest::Meter(on) => self.set_meter(on, now),
             TestRequest::Cancel => self.cancel_job(now),
             _ if self.tests.job.is_some() => {

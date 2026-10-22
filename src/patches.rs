@@ -132,7 +132,7 @@ pub const SURROUND_LEVEL_MIN: u8 = 1;
 pub const SURROUND_LEVEL_MAX: u8 = 10;
 pub const SURROUND_LEVEL_DEFAULT: u8 = 4;
 const SURROUND_LEVEL_MASK: u8 = 0x0F;
-const SURROUND_LEVEL_UNKNOWN_BITS: u8 = 0xE0;
+pub const SURROUND_LEVEL_UNKNOWN_BITS: u8 = 0xE0;
 /// Mixer flags of the ROM, read-only: bit 3 is set while the sidetone path runs.
 pub const MIXER: u16 = 0x00A8;
 pub const MIXER_SIDETONE: u8 = 0x08;
@@ -1674,6 +1674,21 @@ mod tests {
             let dev = FakeDevice::stock();
             dev.poke(0x10D3, &[0x04 | other]);
             assert_refused(&dev, &surround_level(6).unwrap());
+        }
+    }
+
+    #[test]
+    fn a_surround_level_nibble_outside_the_range_is_overwritten_and_the_variant_bit_kept() {
+        // the ROM clamps these, so setting a level replaces them; only bits 7:5 stop the write
+        for (before, after) in [(0x00, 0x06), (0x0B, 0x06), (0x0F, 0x06), (0x1B, 0x16)] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x10D3, &[before]);
+            assert_eq!(
+                apply(&dev, &surround_level(6).unwrap()).unwrap(),
+                Outcome::Written,
+                "{before:#04x}"
+            );
+            assert_eq!(dev.writes(), vec![(0x10D3, vec![after])], "{before:#04x}");
         }
     }
 

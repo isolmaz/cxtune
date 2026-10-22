@@ -160,7 +160,7 @@ closed by the engine as soon as nothing needs it. A request that cannot be run i
 
 | `TestRequest` | What it does |
 |---|---|
-| `Meter(bool)` | opens or closes the microphone; while it is open `TestEvent::Level` reports the RMS and peak level of every 50 ms (about 20 per second) |
+| `Meter(bool)` | opens or closes the microphone; while it is open `TestEvent::Level` reports the RMS and peak level of every 50 ms (about 20 per second). Opening it is refused (`Invalid`) while a click test, noise listening or playback runs, because those need the output at rest |
 | `NoiseFloor { seconds }` | the median of the 50 ms levels over 1-60 s, after the warm-up |
 | `Record { seconds }` | records 1-30 s into memory, after the warm-up |
 | `PlayRecording` | plays the recording through the dongle, scaled down as a whole if its peak is above -12 dBFS |
