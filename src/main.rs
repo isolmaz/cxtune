@@ -272,7 +272,8 @@ fn surround_level_text(s: &State) -> String {
             "bits 7:5 are set, cxtune leaves the byte alone".into()
         }
         None => format!(
-            "low nibble outside {SURROUND_LEVEL_MIN}..={SURROUND_LEVEL_MAX} (the ROM clamps it),              cxtune overwrites it when it sets a level"
+            "low nibble outside {SURROUND_LEVEL_MIN}..={SURROUND_LEVEL_MAX} (the ROM clamps it), \
+             cxtune overwrites it when it sets a level"
         ),
     }
 }
@@ -498,16 +499,18 @@ mod tests {
         assert_eq!(text(0x04), "level 4 of 10");
         assert_eq!(text(0x1A), "level 10 of 10");
         for byte in [0x00, 0x0B, 0x0F, 0x1B] {
-            let t = text(byte);
-            assert!(
-                t.contains("low nibble") && t.contains("overwrites"),
-                "{byte:#04x}: {t}"
+            assert_eq!(
+                text(byte),
+                "low nibble outside 1..=10 (the ROM clamps it), cxtune overwrites it when it sets a level",
+                "{byte:#04x}"
             );
-            assert!(!t.contains("will not change"), "{byte:#04x}: {t}");
         }
         for byte in [0x24, 0x44, 0x84, 0xE4, 0x20] {
-            let t = text(byte);
-            assert!(t.contains("leaves the byte alone"), "{byte:#04x}: {t}");
+            assert_eq!(
+                text(byte),
+                "bits 7:5 are set, cxtune leaves the byte alone",
+                "{byte:#04x}"
+            );
         }
     }
 
