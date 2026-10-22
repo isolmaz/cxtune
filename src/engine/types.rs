@@ -42,6 +42,9 @@ pub enum Phase {
     Applying,
     /// The dongle is connected and the engine is not busy with it.
     Connected,
+    /// The engine has stopped working after an internal error. [`Snapshot::error`] says why;
+    /// nothing is applied any more.
+    Stopped,
 }
 
 impl Phase {
@@ -49,6 +52,33 @@ impl Phase {
     pub fn is_busy(self) -> bool {
         self == Phase::Applying
     }
+}
+
+const MODE: &str = "mode";
+const SETTLE_TIME: &str = "min-hiss settle time";
+const MIC_BOOST: &str = "mic boost";
+const NOISE_REDUCTION: &str = "noise reduction";
+const AGC: &str = "AGC";
+const SIDETONE: &str = "sidetone";
+const SIDETONE_LEVEL: &str = "sidetone level";
+
+/// `cfg` without the settings that [`Readback::differences`] calls `names`: those are left as
+/// the device has them.
+pub(super) fn without(cfg: &Config, names: &[&str]) -> Config {
+    let mut cfg = cfg.clone();
+    for name in names {
+        match *name {
+            MODE => cfg.mode = None,
+            SETTLE_TIME => cfg.min_hiss_ms = None,
+            MIC_BOOST => cfg.mic_boost = None,
+            NOISE_REDUCTION => cfg.mic_nr = None,
+            AGC => cfg.mic_agc = None,
+            SIDETONE => cfg.sidetone = None,
+            SIDETONE_LEVEL => cfg.sidetone_level = None,
+            _ => {}
+        }
+    }
+    cfg
 }
 
 /// What the dongle holds, read back from its memory.
@@ -83,8 +113,8 @@ impl Readback {
         }
     }
 
-    /// The saved settings that the device does not hold. Settings that are not saved are left as
-    /// the device has them, and the settle time only counts while the saved mode is min-hiss.
+    /// The chosen settings that the device does not hold. Settings that are not chosen are left
+    /// as the device has them, and the settle time only counts while the chosen mode is min-hiss.
     pub fn differences(&self, cfg: &Config) -> Vec<&'static str> {
         let mut differs = Vec::new();
         let mut check = |name, differs_from_saved: bool| {
@@ -92,29 +122,26 @@ impl Readback {
                 differs.push(name);
             }
         };
-        check("mode", cfg.mode.is_some_and(|m| self.mode != Some(m)));
+        check(MODE, cfg.mode.is_some_and(|m| self.mode != Some(m)));
         check(
-            "min-hiss settle time",
+            SETTLE_TIME,
             cfg.mode == Some(Mode::MinHiss)
                 && cfg
                     .min_hiss_ms
                     .is_some_and(|ms| self.min_hiss_ms != Some(ms)),
         );
         check(
-            "mic boost",
+            MIC_BOOST,
             cfg.mic_boost.is_some_and(|n| self.mic_boost != Some(n)),
         );
         check(
-            "noise reduction",
+            NOISE_REDUCTION,
             cfg.mic_nr.is_some_and(|on| self.noise_reduction != on),
         );
-        check("AGC", cfg.mic_agc.is_some_and(|on| self.agc != on));
+        check(AGC, cfg.mic_agc.is_some_and(|on| self.agc != on));
+        check(SIDETONE, cfg.sidetone.is_some_and(|on| self.sidetone != on));
         check(
-            "sidetone",
-            cfg.sidetone.is_some_and(|on| self.sidetone != on),
-        );
-        check(
-            "sidetone level",
+            SIDETONE_LEVEL,
             cfg.sidetone_level
                 .is_some_and(|level| self.sidetone_level != level),
         );
@@ -168,6 +195,14 @@ pub enum ErrorKind {
     Config,
     /// A command carried a value outside its range.
     Invalid,
+    /// Something else keeps changing a setting on the dongle. The engine corrected it a few
+    /// times, then stopped correcting that setting.
+    Drift,
+    /// The dongle or its driver does not answer a request (a stuck request never returns until
+    /// the dongle is replugged). Clears when the request returns.
+    Unresponsive,
+    /// The engine stopped after an internal error.
+    Fatal,
 }
 
 impl ErrorKind {
@@ -189,6 +224,9 @@ impl ErrorKind {
             ErrorKind::Verify => "verify",
             ErrorKind::Config => "config",
             ErrorKind::Invalid => "invalid",
+            ErrorKind::Drift => "drift",
+            ErrorKind::Unresponsive => "unresponsive",
+            ErrorKind::Fatal => "fatal",
         }
     }
 }
@@ -225,17 +263,24 @@ impl From<Error> for Failure {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub phase: Phase,
-    /// The saved settings: what the engine keeps the dongle at.
+    /// The settings the user chose: what the engine keeps the dongle at. They are written to the
+    /// settings file shortly after each change; [`Snapshot::settings_saved`] says whether that
+    /// has happened.
     pub settings: Config,
+    /// True when the settings file holds `settings`. False between a change and the write, and
+    /// while the write keeps failing ([`Snapshot::save_error`]); the engine keeps trying.
+    pub settings_saved: bool,
+    /// Why the settings file could not be written, until a write succeeds.
+    pub save_error: Option<Failure>,
     /// What the dongle held when it was last read; `None` while it is disconnected or has not
     /// been read since it was connected.
     pub device: Option<Readback>,
-    /// The problem that is still open: cleared by the next successful pass.
+    /// The problem with the dongle that is still open: cleared by the next successful pass.
     pub error: Option<Failure>,
 }
 
 impl Snapshot {
-    /// True if the dongle was read and holds every saved setting.
+    /// True if the dongle was read and holds every chosen setting.
     pub fn in_sync(&self) -> bool {
         self.device
             .as_ref()
@@ -371,6 +416,34 @@ mod tests {
     }
 
     #[test]
+    fn settings_can_be_left_out_by_the_names_the_differences_use() {
+        let all = Config {
+            mode: Some(Mode::MinHiss),
+            mic_boost: Some(7),
+            min_hiss_ms: Some(300),
+            mic_nr: Some(false),
+            mic_agc: Some(true),
+            sidetone: Some(true),
+            sidetone_level: Some(100),
+        };
+        // a dongle that differs in everything
+        let names = readback(Mode::Quiet).differences(&all);
+        assert_eq!(names.len(), 7, "{names:?}");
+        assert_eq!(without(&all, &names), Config::default());
+        for name in &names {
+            let rest = without(&all, &[name]);
+            assert_ne!(rest, all, "{name}");
+            // the one that was left out no longer differs (and without the mode the settle time
+            // is not compared either)
+            let left = readback(Mode::Quiet).differences(&rest);
+            assert!(!left.contains(name), "{name}");
+            let gone = if *name == "mode" { 2 } else { 1 };
+            assert_eq!(left.len(), names.len() - gone, "{name}");
+        }
+        assert_eq!(without(&all, &["no such setting"]), all);
+    }
+
+    #[test]
     fn the_settle_time_counts_in_min_hiss() {
         let r = readback(Mode::MinHiss);
         let cfg = |ms| Config {
@@ -395,6 +468,8 @@ mod tests {
                 mode: Some(Mode::Balanced),
                 ..Config::default()
             },
+            settings_saved: true,
+            save_error: None,
             device: None,
             error: None,
         };

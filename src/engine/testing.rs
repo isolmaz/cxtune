@@ -11,8 +11,10 @@ use std::time::{Duration, Instant};
 use super::Backend;
 use super::supervisor::Supervisor;
 use super::types::{Command, Event, Failure, Phase, Snapshot};
+use super::watch::CallWatch;
 use crate::config::{self, Config};
 use crate::fake::{FakeDevice, FakeStream};
+use crate::testdir::TempDir;
 use crate::{Error, Result};
 
 /// The fake dongle behind the engine's [`Backend`], with switches the test flips.
@@ -28,6 +30,10 @@ pub(super) struct TestBackend {
     pub opens: Arc<AtomicUsize>,
     /// Runs when a silent stream is requested, before it is opened.
     pub on_stream: Arc<Mutex<Box<dyn Fn() + Send>>>,
+    /// Runs when the dongle is opened, before it is handed out.
+    pub on_open: Arc<Mutex<Box<dyn Fn() + Send>>>,
+    /// Runs when the connected devices are listed.
+    pub on_present: Arc<Mutex<Box<dyn Fn() + Send>>>,
 }
 
 impl TestBackend {
@@ -39,6 +45,8 @@ impl TestBackend {
             vanish_on_open: Arc::new(AtomicBool::new(false)),
             opens: Arc::new(AtomicUsize::new(0)),
             on_stream: Arc::new(Mutex::new(Box::new(|| {}))),
+            on_open: Arc::new(Mutex::new(Box::new(|| {}))),
+            on_present: Arc::new(Mutex::new(Box::new(|| {}))),
         }
     }
 }
@@ -48,6 +56,7 @@ impl Backend for TestBackend {
     type Stream = FakeStream;
 
     fn present(&mut self) -> Result<bool> {
+        (self.on_present.lock().unwrap())();
         if self.present_fails.load(Ordering::SeqCst) {
             return Err(Error::Device("the device list cannot be read".into()));
         }
@@ -55,6 +64,7 @@ impl Backend for TestBackend {
     }
 
     fn open(&mut self) -> Result<FakeDevice> {
+        (self.on_open.lock().unwrap())();
         self.opens.fetch_add(1, Ordering::SeqCst);
         if self.vanish_on_open.load(Ordering::SeqCst) {
             self.present.store(false, Ordering::SeqCst);
@@ -82,6 +92,7 @@ pub(super) struct Rig {
     pub vanish_on_open: Arc<AtomicBool>,
     pub opens: Arc<AtomicUsize>,
     on_stream: Arc<Mutex<Box<dyn Fn() + Send>>>,
+    _dir: TempDir,
     pub config_path: PathBuf,
     now: Rc<Cell<Instant>>,
     events: Rc<RefCell<Vec<Event>>>,
@@ -94,13 +105,7 @@ impl Rig {
     }
 
     pub fn with_device(dev: FakeDevice, cfg: Config, present: bool) -> Rig {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "cxtune-engine-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::SeqCst)
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = TempDir::new("engine-rig");
         let config_path = dir.join("config.toml");
 
         let backend = TestBackend::new(dev.clone(), present);
@@ -130,6 +135,7 @@ impl Rig {
                 let now = Rc::clone(&now);
                 move || now.get()
             }),
+            CallWatch::default(),
         );
         Rig {
             sup,
@@ -139,6 +145,7 @@ impl Rig {
             vanish_on_open,
             opens,
             on_stream,
+            _dir: dir,
             config_path,
             now,
             events,
@@ -236,13 +243,5 @@ impl Rig {
     /// The settings file as it is on disk.
     pub fn saved(&self) -> Config {
         config::load_from(&self.config_path).unwrap()
-    }
-}
-
-impl Drop for Rig {
-    fn drop(&mut self) {
-        if let Some(dir) = self.config_path.parent() {
-            let _ = std::fs::remove_dir_all(dir);
-        }
     }
 }

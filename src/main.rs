@@ -336,11 +336,12 @@ fn sidetone_level(arg: &str) -> Result<()> {
 }
 
 fn watch() -> Result<()> {
-    let _engine = Engine::start(report)?;
+    let engine = Engine::start(report)?;
     println!("watching for the dongle (Ctrl+C to stop)");
-    loop {
-        std::thread::park();
+    while engine.is_running() {
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
+    Err(Error::Device("the engine stopped".into()))
 }
 
 fn report(event: Event) {
@@ -353,6 +354,7 @@ fn report(event: Event) {
 
 fn describe(state: &Snapshot) -> String {
     let phase = match (state.phase, &state.device) {
+        (Phase::Stopped, _) => "engine stopped",
         (Phase::Disconnected, _) => "dongle not connected",
         (Phase::Waiting, _) => "dongle connected, waiting for its firmware",
         (Phase::Applying, _) => "applying the saved settings",
@@ -420,12 +422,18 @@ mod tests {
                 mode,
                 ..Config::default()
             },
+            settings_saved: true,
+            save_error: None,
             device,
             error: None,
         };
         assert_eq!(
             describe(&state(Phase::Disconnected, None, None)),
             "dongle not connected"
+        );
+        assert_eq!(
+            describe(&state(Phase::Stopped, None, None)),
+            "engine stopped"
         );
         assert_eq!(
             describe(&state(Phase::Waiting, None, None)),

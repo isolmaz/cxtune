@@ -175,7 +175,10 @@ all HID and audio-stream access, and it holds the device lock for as long as it 
   2 s is never touched, so a flapping cable causes no writes and no errors.
 - **Drift.** A connected dongle is read every 15 s and compared with the saved settings; only
   a difference leads to writes. This also catches a USB reset that happened between two polls,
-  or another tool changing the patch RAM.
+  or another tool changing the patch RAM. Each such correction is reported as a warning. Because
+  a correction of a microphone DSP setting reloads the codec's DSP, a setting that something
+  keeps changing is corrected three times within ten minutes and then left alone, with an error
+  that says so, until a setting is changed, re-applied or the dongle is replugged.
 - **Sleep.** The computer waking from sleep or hibernation is noticed as a gap of more than
   5 s in the engine's wall-clock rhythm. The dongle may have restarted, so it is left alone for
   2 s and then verified.
@@ -187,7 +190,13 @@ all HID and audio-stream access, and it holds the device lock for as long as it 
   replug. A dongle that disappears while it is being used is a disconnect, not an error.
 - **Commands.** Setting commands change the saved settings at once and the dongle at most
   150 ms later, with the latest values: a slider moved for a second causes a handful of
-  writes, not one per step. The settings file is rewritten once per burst.
+  writes, not one per step. The settings file is rewritten once per burst. If it cannot be
+  written (another program holds it open), the state says the settings are not saved, the write
+  is tried again with growing pauses and once more when the engine stops.
+- **Failure of the engine.** A request to the dongle that never returns (hidapi has no time
+  limit and cannot cancel it) is reported after 10 s as an error that asks for a replug, and
+  stopping the engine does not wait for it. A panic ends the engine with a last error state;
+  the user interface can ask whether the engine is still running.
 
 Applying is idempotent: if the device already matches, nothing is written and no stream is
 opened. A stream event near a DSP reload request is printed as a warning and does not stop

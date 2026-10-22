@@ -14,12 +14,17 @@
 //!   with the latest values, however many arrived.
 //! - **Failures** are retried by a schedule that depends on their kind ([`retry_delay`]) and
 //!   reported once while they persist. A failure while the dongle is gone is a disconnect.
+//! - **Drift** that nobody asked for is corrected and reported, a few times; a setting that
+//!   something else keeps changing is then left alone ([`MAX_CORRECTIONS`]).
+//! - **The settings file** is written shortly after a change and written again, with growing
+//!   pauses, for as long as that fails.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::Backend;
-use super::types::{Command, ErrorKind, Event, Failure, Phase, Readback, Snapshot};
+use super::types::{Command, ErrorKind, Event, Failure, Phase, Readback, Snapshot, without};
+use super::watch::{CallWatch, Watched};
 use crate::config::{self, Config};
 use crate::dsp::Attempt;
 use crate::{Error, mode, patches, settings};
@@ -33,6 +38,11 @@ pub(super) const SETTLE: Duration = Duration::from_secs(2);
 pub(super) const COALESCE: Duration = Duration::from_millis(150);
 /// How often a connected dongle is compared with the saved settings.
 pub(super) const VERIFY: Duration = Duration::from_secs(15);
+/// How many times something that changed a setting without cxtune is corrected within
+/// [`DRIFT_WINDOW`] before the setting is left alone.
+pub(super) const MAX_CORRECTIONS: usize = 3;
+/// The time in which [`MAX_CORRECTIONS`] corrections of one setting are allowed.
+pub(super) const DRIFT_WINDOW: Duration = Duration::from_secs(10 * 60);
 
 /// How long to wait before the next attempt after `failures` failed attempts in a row (at least
 /// one), or `None` to stop until something changes: a command, a re-apply, or the dongle coming
@@ -48,17 +58,21 @@ pub(super) fn retry_delay(kind: ErrorKind, failures: u32) -> Option<Duration> {
         // not worth more than a few looks
         ErrorKind::Refused => steps(&[5, 15, 60]),
         ErrorKind::Verify => steps(&[10, 60]),
-        ErrorKind::Config | ErrorKind::Invalid => None,
+        ErrorKind::Config => backoff(2, 30),
+        ErrorKind::Invalid | ErrorKind::Drift | ErrorKind::Unresponsive | ErrorKind::Fatal => None,
     }
 }
 
 pub(super) struct Supervisor<B: Backend> {
     backend: B,
     cfg: Config,
+    /// What the settings file holds, as far as this process knows.
+    saved: Config,
     cfg_path: PathBuf,
     sink: Box<dyn FnMut(Event)>,
     log: Box<dyn FnMut(&str)>,
     clock: Box<dyn Fn() -> Instant>,
+    watch: CallWatch,
 
     present: bool,
     next_poll: Instant,
@@ -67,12 +81,23 @@ pub(super) struct Supervisor<B: Backend> {
     work_at: Option<Instant>,
     /// When the settings file is next written.
     save_at: Option<Instant>,
+    /// Failed attempts to write the settings file in a row.
+    save_failures: u32,
+    save_error: Option<Failure>,
     /// The next pass applies the saved settings whether or not the dongle seems to hold them.
     force: bool,
     /// The next opportunity reads the dongle.
     refresh: bool,
     /// Failed passes in a row.
     failures: u32,
+    /// The settings that the dongle was last found to hold, if it has held them since it
+    /// connected. A difference while these are still the chosen settings is not the user's doing.
+    synced: Option<Config>,
+    /// When settings were corrected after something else changed them.
+    corrections: Vec<(&'static str, Instant)>,
+    /// Settings that are no longer corrected because something keeps changing them.
+    muted: Vec<&'static str>,
+    drift_error: Option<Failure>,
 
     phase: Phase,
     device: Option<Readback>,
@@ -88,23 +113,32 @@ impl<B: Backend> Supervisor<B> {
         sink: Box<dyn FnMut(Event)>,
         log: Box<dyn FnMut(&str)>,
         clock: Box<dyn Fn() -> Instant>,
+        watch: CallWatch,
     ) -> Self {
         let now = clock();
         let mut supervisor = Supervisor {
             backend,
+            saved: cfg.clone(),
             cfg,
             cfg_path,
             sink,
             log,
             clock,
+            watch,
             present: false,
             next_poll: now,
             enumeration_error: None,
             work_at: None,
             save_at: None,
+            save_failures: 0,
+            save_error: None,
             force: false,
             refresh: false,
             failures: 0,
+            synced: None,
+            corrections: Vec::new(),
+            muted: Vec::new(),
+            drift_error: None,
             phase: Phase::Disconnected,
             device: None,
             error: None,
@@ -165,6 +199,7 @@ impl<B: Backend> Supervisor<B> {
             Command::Reapply => {
                 if self.present {
                     self.force = true;
+                    self.forget_drift();
                     self.schedule(now);
                 } else {
                     self.note("re-apply ignored: the dongle is not connected");
@@ -189,7 +224,10 @@ impl<B: Backend> Supervisor<B> {
         }
         if next != self.cfg {
             self.cfg = next;
-            self.save_at.get_or_insert(now + COALESCE);
+            self.forget_drift();
+            self.save_failures = 0;
+            let due = now + COALESCE;
+            self.save_at = Some(self.save_at.map_or(due, |at| at.min(due)));
         }
         self.schedule(now + COALESCE);
     }
@@ -208,6 +246,13 @@ impl<B: Backend> Supervisor<B> {
     /// writes the dongle. Then publishes the state if it changed.
     pub(super) fn step(&mut self) {
         let now = self.now();
+        if let Some(took) = self.watch.take_recovered() {
+            self.note(format!(
+                "the dongle answered again after {} s",
+                took.as_secs()
+            ));
+            self.published = None;
+        }
         if now >= self.next_poll {
             self.next_poll = now + POLL;
             self.poll(now);
@@ -227,10 +272,22 @@ impl<B: Backend> Supervisor<B> {
 
     /// Writes what is still unsaved. Called when the engine stops.
     pub(super) fn finish(&mut self) {
-        if self.save_at.is_some() {
+        if self.saved != self.cfg {
             self.save();
         }
         self.note("engine stopped");
+    }
+
+    /// The worker thread failed: saves what is unsaved and publishes a last state that says the
+    /// engine does nothing any more.
+    pub(super) fn stopped(&mut self, failure: Failure) {
+        self.note(format!("error ({}): {}", failure.kind, failure.message));
+        let saving = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.finish()));
+        self.phase = Phase::Stopped;
+        self.error = Some(failure.clone());
+        self.emit(Event::Error(failure));
+        self.publish();
+        drop(saving);
     }
 
     /// Brings the next pass forward to `due` unless one is already due earlier. A dongle that is
@@ -242,8 +299,13 @@ impl<B: Backend> Supervisor<B> {
         }
     }
 
+    fn present_now(&mut self) -> crate::Result<bool> {
+        let _call = self.watch.enter("listing the connected devices");
+        self.backend.present()
+    }
+
     fn poll(&mut self, now: Instant) {
-        match self.backend.present() {
+        match self.present_now() {
             Ok(present) => {
                 self.enumeration_error = None;
                 self.presence(present, now);
@@ -286,6 +348,15 @@ impl<B: Backend> Supervisor<B> {
         self.failures = 0;
         self.force = false;
         self.refresh = false;
+        self.synced = None;
+        self.forget_drift();
+    }
+
+    /// Forgets which settings something else keeps changing, so that they are corrected again.
+    fn forget_drift(&mut self) {
+        self.corrections.clear();
+        self.muted.clear();
+        self.drift_error = None;
     }
 
     /// Reads the dongle and, if it differs from the saved settings, writes them.
@@ -316,8 +387,11 @@ impl<B: Backend> Supervisor<B> {
         }
     }
 
-    fn read(&mut self) -> Result<(B::Dev, Readback), Failure> {
-        let mut dev = self.backend.open()?;
+    fn read(&mut self) -> Result<(Watched<B::Dev>, Readback), Failure> {
+        let mut dev = {
+            let _call = self.watch.enter("opening the dongle");
+            Watched::new(self.backend.open()?, self.watch.clone())
+        };
         let state = mode::read_state(&mut dev)?;
         let seen = Readback::of(&state);
         self.device = Some(seen.clone());
@@ -326,8 +400,19 @@ impl<B: Backend> Supervisor<B> {
 
     fn sync(&mut self, force: bool) -> Result<(), Failure> {
         let (mut dev, seen) = self.read()?;
-        let drift = seen.differences(&self.cfg);
+        let now = self.now();
+        // a setting that the dongle holds again is corrected again if it drifts again
+        let held_back = seen.differences(&self.cfg);
+        self.muted.retain(|name| held_back.contains(name));
+        if self.muted.is_empty() {
+            self.drift_error = None;
+        }
+        let mut drift = seen.differences(&without(&self.cfg, &self.muted));
+        if !force && !drift.is_empty() && self.synced.as_ref() == Some(&self.cfg) {
+            drift = self.changed_by_something_else(drift, now);
+        }
         if drift.is_empty() && !force {
+            self.synced = Some(self.cfg.clone());
             return Ok(());
         }
         self.phase = Phase::Applying;
@@ -341,8 +426,12 @@ impl<B: Backend> Supervisor<B> {
             )
         });
 
-        let Attempt { report, error } =
-            settings::ensure(&mut dev, &self.cfg, || self.backend.open_stream());
+        let cfg = without(&self.cfg, &self.muted);
+        let watch = self.watch.clone();
+        let Attempt { report, error } = settings::ensure(&mut dev, &cfg, || {
+            let _call = watch.enter("opening the silent stream");
+            self.backend.open_stream()
+        });
         self.note(format!("{} writes made", report.writes));
         for event in &report.stream_events {
             self.warn(event.to_string());
@@ -354,8 +443,9 @@ impl<B: Backend> Supervisor<B> {
         if let Some(error) = error {
             return Err(error.into());
         }
-        let left = after?.differences(&self.cfg);
+        let left = after?.differences(&cfg);
         if left.is_empty() {
+            self.synced = Some(self.cfg.clone());
             Ok(())
         } else {
             Err(Failure {
@@ -368,9 +458,58 @@ impl<B: Backend> Supervisor<B> {
         }
     }
 
+    /// Something changed settings on a dongle that was holding them, and the user did not ask for
+    /// it. Each such change is corrected and reported, up to [`MAX_CORRECTIONS`] times within
+    /// [`DRIFT_WINDOW`]; after that the setting is left alone and the problem is reported, because
+    /// every correction can reload the codec's DSP and another program would be fought for ever.
+    /// Returns the settings to correct.
+    fn changed_by_something_else(
+        &mut self,
+        drift: Vec<&'static str>,
+        now: Instant,
+    ) -> Vec<&'static str> {
+        let minutes = DRIFT_WINDOW.as_secs() / 60;
+        self.corrections
+            .retain(|(_, at)| now.saturating_duration_since(*at) < DRIFT_WINDOW);
+        let (mut correct, mut leave) = (Vec::new(), Vec::new());
+        for name in drift {
+            let times = self.corrections.iter().filter(|(n, _)| *n == name).count();
+            if times >= MAX_CORRECTIONS {
+                leave.push(name);
+            } else {
+                self.corrections.push((name, now));
+                self.warn(format!(
+                    "{name} changed on the dongle without cxtune; correcting it \
+                     ({} of {MAX_CORRECTIONS} allowed in {minutes} minutes)",
+                    times + 1
+                ));
+                correct.push(name);
+            }
+        }
+        if !leave.is_empty() {
+            self.muted.extend(&leave);
+            let failure = Failure {
+                kind: ErrorKind::Drift,
+                message: format!(
+                    "{} keeps changing on the dongle without cxtune (another program, or a \
+                     dongle that keeps restarting): corrected {MAX_CORRECTIONS} times in \
+                     {minutes} minutes, now left alone. Close the other program, or change a \
+                     setting, re-apply or replug the dongle to start again",
+                    leave.join(", ")
+                ),
+            };
+            if self.drift_error.as_ref() != Some(&failure) {
+                self.note(format!("error ({}): {}", failure.kind, failure.message));
+                self.emit(Event::Error(failure.clone()));
+            }
+            self.drift_error = Some(failure);
+        }
+        correct
+    }
+
     fn failed(&mut self, failure: Failure, now: Instant) {
         // A dongle that went away while it was being used is a disconnect, not an error.
-        if failure.kind == ErrorKind::Communication && matches!(self.backend.present(), Ok(false)) {
+        if failure.kind == ErrorKind::Communication && matches!(self.present_now(), Ok(false)) {
             self.note(format!("the dongle went away: {}", failure.message));
             self.presence(false, now);
             return;
@@ -393,14 +532,34 @@ impl<B: Backend> Supervisor<B> {
         self.error = Some(failure);
     }
 
+    /// Writes the settings file; if that fails, tries again after a pause that grows with each
+    /// failure, for as long as the file does not hold the settings.
     fn save(&mut self) {
         self.save_at = None;
+        if self.saved == self.cfg {
+            self.save_error = None;
+            return;
+        }
         match config::save_to(&self.cfg_path, &self.cfg) {
-            Ok(()) => self.note(format!("saved settings: {:?}", self.cfg)),
+            Ok(()) => {
+                self.saved = self.cfg.clone();
+                self.save_failures = 0;
+                if self.save_error.take().is_some() {
+                    self.note("the settings file was written after earlier failures");
+                }
+                self.note(format!("saved settings: {:?}", self.cfg));
+            }
             Err(error) => {
                 let failure = Failure::from(error);
-                self.note(format!("error ({}): {}", failure.kind, failure.message));
-                self.emit(Event::Error(failure));
+                self.save_failures += 1;
+                let now = self.now();
+                self.save_at =
+                    retry_delay(failure.kind, self.save_failures).map(|delay| now + delay);
+                if self.save_error.as_ref() != Some(&failure) {
+                    self.note(format!("error ({}): {}", failure.kind, failure.message));
+                    self.emit(Event::Error(failure.clone()));
+                }
+                self.save_error = Some(failure);
             }
         }
     }
@@ -409,8 +568,10 @@ impl<B: Backend> Supervisor<B> {
         let snapshot = Snapshot {
             phase: self.phase,
             settings: self.cfg.clone(),
+            settings_saved: self.saved == self.cfg,
+            save_error: self.save_error.clone(),
             device: self.device.clone(),
-            error: self.error.clone(),
+            error: self.error.clone().or_else(|| self.drift_error.clone()),
         };
         if self.published.as_ref() != Some(&snapshot) {
             self.published = Some(snapshot.clone());
@@ -633,6 +794,202 @@ mod tests {
         );
     }
 
+    /// What the dongle's AGC bit does while something else fights cxtune over it.
+    fn agc_is_switched_on_behind_the_engine(rig: &Rig) {
+        rig.dev.poke(0x1151, &[0x14]);
+    }
+
+    fn corrections(rig: &Rig) -> usize {
+        rig.warnings()
+            .iter()
+            .filter(|w| w.contains("changed on the dongle without cxtune"))
+            .count()
+    }
+
+    fn drift_errors(rig: &Rig) -> Vec<Failure> {
+        rig.errors()
+            .into_iter()
+            .filter(|e| e.kind == ErrorKind::Drift)
+            .collect()
+    }
+
+    /// Lets the dongle drift and the engine find it, `times` times.
+    fn fight(rig: &mut Rig, times: usize) {
+        for _ in 0..times {
+            agc_is_switched_on_behind_the_engine(rig);
+            rig.run(VERIFY.as_secs_f64() + 1.0);
+        }
+    }
+
+    #[test]
+    fn every_correction_of_drift_is_a_warning() {
+        let mut rig = connected();
+        fight(&mut rig, 1);
+        assert!(rig.snapshot().in_sync());
+        let warnings = rig.warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("AGC changed on the dongle without cxtune"));
+        assert!(warnings[0].contains("1 of 3"), "{}", warnings[0]);
+        fight(&mut rig, 1);
+        assert!(rig.warnings()[1].contains("2 of 3"));
+        assert!(rig.errors().is_empty());
+    }
+
+    #[test]
+    fn something_that_keeps_changing_a_setting_is_corrected_a_few_times_and_then_left_alone() {
+        let mut rig = connected();
+        fight(&mut rig, MAX_CORRECTIONS);
+        assert_eq!(corrections(&rig), MAX_CORRECTIONS);
+        assert!(rig.snapshot().in_sync());
+        assert!(rig.errors().is_empty());
+
+        let writes = rig.dev.writes().len();
+        fight(&mut rig, 1);
+        assert_eq!(rig.dev.writes().len(), writes, "not corrected again");
+        assert_eq!(rig.dev.byte(0x1151), 0x14);
+        let errors = drift_errors(&rig);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("AGC"), "{}", errors[0].message);
+        let state = rig.snapshot();
+        assert_eq!(state.error.as_ref(), Some(&errors[0]));
+        assert!(
+            !state.in_sync(),
+            "the snapshot does not claim the dongle holds AGC off"
+        );
+        assert_eq!(state.phase, Phase::Connected);
+
+        // it stays quiet: no more writes, warnings or errors however long this goes on
+        rig.run(600.0);
+        assert_eq!(rig.dev.writes().len(), writes);
+        assert_eq!(corrections(&rig), MAX_CORRECTIONS);
+        assert_eq!(drift_errors(&rig).len(), 1);
+        assert_eq!(rig.snapshot().error.as_ref(), Some(&errors[0]));
+    }
+
+    #[test]
+    fn other_settings_are_still_corrected_while_one_is_left_alone() {
+        let mut rig = connected();
+        fight(&mut rig, MAX_CORRECTIONS + 1);
+        assert_eq!(drift_errors(&rig).len(), 1);
+
+        rig.dev.poke(0x1017, &[0x3C]);
+        rig.run(VERIFY.as_secs_f64() + 1.0);
+        assert_eq!(rig.dev.byte(0x1017), 0x3E);
+        assert_eq!(rig.dev.byte(0x1151), 0x14);
+        assert_eq!(drift_errors(&rig).len(), 1);
+    }
+
+    #[test]
+    fn a_choice_a_re_apply_or_a_replug_starts_the_corrections_again() {
+        let leave_agc_alone = || {
+            let mut rig = connected();
+            fight(&mut rig, MAX_CORRECTIONS + 1);
+            assert!(rig.snapshot().error.is_some());
+            rig
+        };
+
+        // a command (any setting)
+        let mut rig = leave_agc_alone();
+        rig.send(Command::SetMicBoost(5));
+        rig.run(1.0);
+        assert!(rig.snapshot().in_sync(), "{:?}", rig.snapshot());
+        assert!(rig.snapshot().error.is_none());
+        assert_eq!(rig.dev.byte(0x1151), 0x04);
+        fight(&mut rig, 1);
+        assert_eq!(corrections(&rig), MAX_CORRECTIONS + 1);
+
+        // a re-apply
+        let mut rig = leave_agc_alone();
+        rig.send(Command::Reapply);
+        rig.run(1.0);
+        assert!(rig.snapshot().in_sync());
+        assert!(rig.snapshot().error.is_none());
+
+        // a replug
+        let mut rig = leave_agc_alone();
+        rig.set_present(false);
+        rig.run(2.0);
+        rig.set_present(true);
+        rig.dev.replug();
+        rig.run(5.0);
+        assert!(rig.snapshot().in_sync());
+        assert!(rig.snapshot().error.is_none());
+        // the corrections of the earlier connection are forgotten
+        fight(&mut rig, 1);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(corrections(&rig), MAX_CORRECTIONS + 1);
+    }
+
+    #[test]
+    fn a_setting_that_holds_again_is_no_longer_reported() {
+        let mut rig = connected();
+        fight(&mut rig, MAX_CORRECTIONS + 1);
+        assert!(rig.snapshot().error.is_some());
+
+        // the other program has gone: the dongle holds the setting by itself
+        rig.dev.poke(0x1151, &[0x04]);
+        rig.run(VERIFY.as_secs_f64() + 1.0);
+        assert!(rig.snapshot().in_sync());
+        assert!(rig.snapshot().error.is_none());
+
+        // and if it starts again the earlier corrections still count: no new attempt, and the
+        // problem is reported again
+        let writes = rig.dev.writes().len();
+        fight(&mut rig, 1);
+        assert_eq!(rig.dev.writes().len(), writes);
+        assert_eq!(drift_errors(&rig).len(), 2);
+        assert!(rig.snapshot().error.is_some());
+    }
+
+    #[test]
+    fn corrections_that_are_far_apart_are_never_given_up() {
+        let mut rig = connected();
+        for _ in 0..2 * MAX_CORRECTIONS {
+            agc_is_switched_on_behind_the_engine(&rig);
+            rig.run(DRIFT_WINDOW.as_secs_f64() / 2.0 + 20.0);
+            assert!(rig.snapshot().in_sync());
+        }
+        assert_eq!(corrections(&rig), 2 * MAX_CORRECTIONS);
+        assert!(drift_errors(&rig).is_empty());
+    }
+
+    #[test]
+    fn a_dongle_that_was_already_in_order_when_it_appeared_is_guarded_too() {
+        let cfg = Config {
+            mode: Some(Mode::Balanced),
+            mic_boost: Some(4),
+            mic_nr: Some(true),
+            mic_agc: Some(false),
+            ..Config::default()
+        };
+        let mut rig = Rig::with_device(FakeDevice::in_mode(Mode::Balanced), cfg, true);
+        rig.run(5.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.dev.writes().len(), 0, "nothing needed writing");
+        fight(&mut rig, 1);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(corrections(&rig), 1);
+    }
+
+    #[test]
+    fn changes_the_user_asked_for_and_a_restarted_dongle_are_not_counted_as_drift() {
+        let mut rig = connected();
+        for step in [1, 2, 3, 4, 5, 7, 6] {
+            rig.send(Command::SetMicBoost(step));
+            rig.send(Command::SetNoiseReduction(step % 2 == 0));
+            rig.run(1.0);
+            assert!(rig.snapshot().in_sync());
+        }
+        rig.set_present(false);
+        rig.run(2.0);
+        rig.set_present(true);
+        rig.dev.replug();
+        rig.run(5.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(corrections(&rig), 0);
+        assert!(rig.warnings().is_empty());
+    }
+
     #[test]
     fn a_restart_between_two_polls_is_found_by_the_periodic_check() {
         let mut rig = connected();
@@ -852,6 +1209,155 @@ mod tests {
             errors[0].message
         );
         assert_eq!(rig.dev.byte(0x1017), 0x3F);
+    }
+
+    fn config_errors(rig: &Rig) -> usize {
+        rig.errors()
+            .iter()
+            .filter(|e| e.kind == ErrorKind::Config)
+            .count()
+    }
+
+    #[test]
+    fn a_settings_file_that_cannot_be_written_is_pending_in_every_state_until_it_is_written() {
+        let mut rig = connected();
+        assert!(rig.snapshot().settings_saved);
+        std::fs::create_dir_all(&rig.config_path).unwrap();
+        rig.send(Command::SetMicBoost(7));
+        rig.sup.step();
+        assert!(!rig.snapshot().settings_saved, "pending before the write");
+        rig.run(1.0);
+
+        let state = rig.snapshot();
+        assert_eq!(state.settings.mic_boost, Some(7));
+        assert!(!state.settings_saved);
+        assert_eq!(
+            state.save_error.as_ref().map(|e| e.kind),
+            Some(ErrorKind::Config)
+        );
+        assert!(state.error.is_none(), "the dongle has no problem");
+
+        // the obstacle goes away between two attempts: the first retry is 2 s after the failure
+        std::fs::remove_dir(&rig.config_path).unwrap();
+        rig.run(0.9);
+        assert!(!rig.snapshot().settings_saved);
+        rig.run(0.5);
+        let state = rig.snapshot();
+        assert!(state.settings_saved);
+        assert!(state.save_error.is_none());
+        assert_eq!(rig.saved().mic_boost, Some(7));
+        // one error event for the whole time, and a note when it was over
+        assert_eq!(config_errors(&rig), 1);
+        assert!(
+            rig.log()
+                .iter()
+                .any(|l| l.contains("written after earlier failures"))
+        );
+    }
+
+    #[test]
+    fn a_settings_file_that_keeps_failing_is_tried_again_with_growing_pauses_and_reported_once() {
+        let mut rig = connected();
+        std::fs::create_dir_all(&rig.config_path).unwrap();
+        rig.send(Command::SetMicBoost(7));
+        rig.run(200.0);
+        assert_eq!(config_errors(&rig), 1);
+        assert!(!rig.snapshot().settings_saved);
+
+        // the pauses grow to 30 s: a file freed at any time is written within 30 s
+        std::fs::remove_dir(&rig.config_path).unwrap();
+        rig.run(31.0);
+        assert!(rig.snapshot().settings_saved);
+        assert_eq!(rig.saved().mic_boost, Some(7));
+    }
+
+    #[test]
+    fn the_pauses_between_attempts_to_write_the_settings_file_grow() {
+        let mut rig = connected();
+        std::fs::create_dir_all(&rig.config_path).unwrap();
+        rig.send(Command::SetMicBoost(7));
+        // attempts at 0.15 s, 2.15 s (2 s pause) and 6.15 s (4 s pause)
+        rig.run(3.0);
+        std::fs::remove_dir(&rig.config_path).unwrap();
+        rig.run(2.0);
+        assert!(
+            !rig.snapshot().settings_saved,
+            "the next attempt is at 6.15 s"
+        );
+        rig.run(1.5);
+        assert!(rig.snapshot().settings_saved);
+    }
+
+    #[test]
+    fn a_new_change_starts_the_pauses_over() {
+        let mut rig = connected();
+        std::fs::create_dir_all(&rig.config_path).unwrap();
+        rig.send(Command::SetMicBoost(7));
+        // failures at 0.15 s, 2.15 s and 6.15 s; the next would be at 14.15 s
+        rig.run(7.0);
+        rig.send(Command::SetMicBoost(5));
+        // the change is tried at 7.15 s and fails; the pause is 2 s again
+        rig.run(1.0);
+        std::fs::remove_dir(&rig.config_path).unwrap();
+        rig.run(1.5);
+        assert!(rig.snapshot().settings_saved);
+        assert_eq!(rig.saved().mic_boost, Some(5));
+    }
+
+    #[test]
+    fn a_change_made_while_the_file_cannot_be_written_brings_the_next_attempt_forward() {
+        let mut rig = connected();
+        std::fs::create_dir_all(&rig.config_path).unwrap();
+        rig.send(Command::SetMicBoost(7));
+        rig.run(1.0);
+        std::fs::remove_dir(&rig.config_path).unwrap();
+        rig.send(Command::SetMicBoost(5));
+        rig.run(0.3);
+        assert!(rig.snapshot().settings_saved);
+        assert_eq!(rig.saved().mic_boost, Some(5));
+    }
+
+    #[test]
+    fn a_setting_changed_back_while_the_file_cannot_be_written_ends_the_problem() {
+        let mut rig = connected();
+        std::fs::create_dir_all(&rig.config_path).unwrap();
+        rig.send(Command::SetMicBoost(7));
+        rig.run(1.0);
+        assert!(rig.snapshot().save_error.is_some());
+
+        // the file already holds boost 6: there is nothing left to write
+        rig.send(Command::SetMicBoost(6));
+        rig.run(1.0);
+        let state = rig.snapshot();
+        assert!(state.settings_saved);
+        assert!(state.save_error.is_none());
+    }
+
+    #[test]
+    fn the_settings_file_is_tried_once_more_when_the_engine_stops() {
+        let mut rig = Rig::new(Config::default(), false);
+        std::fs::create_dir_all(&rig.config_path).unwrap();
+        rig.send(Command::SetMicBoost(3));
+        rig.run(1.0);
+        assert!(!rig.snapshot().settings_saved);
+
+        // freed after the last attempt and before the next one
+        std::fs::remove_dir(&rig.config_path).unwrap();
+        rig.sup.finish();
+        assert_eq!(rig.saved().mic_boost, Some(3));
+    }
+
+    #[test]
+    fn a_setting_that_is_changed_back_before_the_write_leaves_the_file_alone() {
+        let mut rig = connected();
+        rig.send(Command::SetMicBoost(7));
+        rig.sup.step();
+        assert!(!rig.snapshot().settings_saved);
+        rig.send(Command::SetMicBoost(6));
+        rig.run(1.0);
+        assert!(rig.snapshot().settings_saved);
+        assert!(!rig.config_path.exists());
+        assert_eq!(config_errors(&rig), 0);
     }
 
     #[test]
@@ -1193,10 +1699,21 @@ mod tests {
             [Some(5), Some(15), Some(60), None]
         );
         assert_eq!(run(ErrorKind::Verify, 1..=3), [Some(10), Some(60), None]);
-        assert_eq!(secs(ErrorKind::Config, 1), None);
-        assert_eq!(secs(ErrorKind::Invalid, 1), None);
+        assert_eq!(
+            run(ErrorKind::Config, 1..=6),
+            [2, 4, 8, 16, 30, 30].map(Some)
+        );
+        for kind in [
+            ErrorKind::Invalid,
+            ErrorKind::Drift,
+            ErrorKind::Unresponsive,
+            ErrorKind::Fatal,
+        ] {
+            assert_eq!(secs(kind, 1), None, "{kind}");
+        }
         // a long run of failures does not overflow
         assert_eq!(secs(ErrorKind::Communication, u32::MAX), Some(30));
         assert_eq!(secs(ErrorKind::Audio, 1000), Some(60));
+        assert_eq!(secs(ErrorKind::Config, 1000), Some(30));
     }
 }
