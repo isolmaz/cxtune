@@ -141,8 +141,7 @@ fn texts_that_name_a_button_use_the_label_of_the_button() {
         assert!(turkish(text).contains(&button), "{text}");
     }
     let mode = turkish("Lowest noise");
-    let help =
-        "Used only by Lowest noise. After audio starts it stays muted for this time plus 100 ms.";
+    let help = "Used only by Lowest noise. After audio starts it stays muted for this time plus about 150 ms.";
     assert!(FILES.iter().any(|file| file.contains(help)));
     assert!(turkish(help).contains(&mode));
 }

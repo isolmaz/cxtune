@@ -2,7 +2,7 @@
 
 use cxtune::config::Config;
 use cxtune::engine::Readback;
-use cxtune::mode::{Mode, SETTLE_STEP_MS};
+use cxtune::mode::{Mode, SETTLE_STEP_MS, mute_delay_ms};
 use cxtune::patches::{
     MIC_MAX, MIC_MIN, SETTLE_DEFAULT, SETTLE_MAX, SETTLE_MIN, SIDETONE_DEFAULT, SIDETONE_MAX,
     SIDETONE_MIN,
@@ -32,22 +32,20 @@ pub fn gain_db(step: u8) -> i32 {
 pub const RECOMMENDED_MODE: Mode = Mode::Balanced;
 
 /// What a mode costs and gives, for the indicators on its card. The words are the README's; the
-/// delay is the time that the start of audio is muted, measured on the device
-/// (docs/firmware-notes.md): none in stock and quiet mode, 0.59 s plus 37 ms in balanced mode,
-/// and in minimum hiss the soft-start time plus the fixed 100 ms. The start pop of balanced mode
-/// was not measured.
+/// delay is the engine's own figure for the time that the start of audio is muted
+/// (`mode::mute_delay_ms`). The start pop of balanced mode was not measured.
 pub fn indicators(mode: Mode, settle_ms: u16) -> ModeIndicators {
     let (hiss, pop, delay) = match mode {
         Mode::Stock => (Hiss::Constant, Pop::None, Delay::None),
         Mode::Quiet => (Hiss::Some, Pop::Low, Delay::None),
-        Mode::Balanced => (Hiss::Cut, Pop::NotMeasured, Delay::About600Ms),
+        Mode::Balanced => (Hiss::Cut, Pop::NotMeasured, Delay::Fixed),
         Mode::MinHiss => (Hiss::Cut, Pop::Loud, Delay::Settle),
     };
     ModeIndicators {
         hiss,
         pop,
         delay,
-        delay_ms: i32::from(settle_ms) + 100,
+        delay_ms: mute_delay_ms(Some(mode), Some(settle_ms)) as i32,
     }
 }
 
@@ -331,18 +329,23 @@ mod tests {
     fn the_indicators_show_what_the_documentation_measured_and_say_what_it_did_not() {
         let stock = indicators(Mode::Stock, 600);
         assert_eq!(
-            (stock.hiss, stock.pop, stock.delay),
-            (Hiss::Constant, Pop::None, Delay::None)
+            (stock.hiss, stock.pop, stock.delay, stock.delay_ms),
+            (Hiss::Constant, Pop::None, Delay::None, 0)
         );
         let quiet = indicators(Mode::Quiet, 600);
         assert_eq!(
-            (quiet.hiss, quiet.pop, quiet.delay),
-            (Hiss::Some, Pop::Low, Delay::None)
+            (quiet.hiss, quiet.pop, quiet.delay, quiet.delay_ms),
+            (Hiss::Some, Pop::Low, Delay::None, 0)
         );
         let balanced = indicators(Mode::Balanced, 600);
         assert_eq!(
-            (balanced.hiss, balanced.pop, balanced.delay),
-            (Hiss::Cut, Pop::NotMeasured, Delay::About600Ms)
+            (
+                balanced.hiss,
+                balanced.pop,
+                balanced.delay,
+                balanced.delay_ms
+            ),
+            (Hiss::Cut, Pop::NotMeasured, Delay::Fixed, 650)
         );
         let min_hiss = indicators(Mode::MinHiss, 300);
         assert_eq!(
@@ -352,7 +355,7 @@ mod tests {
                 min_hiss.delay,
                 min_hiss.delay_ms
             ),
-            (Hiss::Cut, Pop::Loud, Delay::Settle, 400)
+            (Hiss::Cut, Pop::Loud, Delay::Settle, 450)
         );
     }
 

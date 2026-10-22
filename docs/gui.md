@@ -83,7 +83,7 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
   | Click | Tık | the pop when audio starts |
   | Mute delay | Açılış gecikmesi | how long the start of audio is muted |
   | Soft-start time | Yumuşak açılış süresi | the settle time of Lowest noise |
-  | Default, Low click, Balanced, Lowest noise | Varsayılan, Az tıklı, Dengeli, En sessiz | the modes stock, quiet, balanced and minimum hiss |
+  | Default, Low click, Balanced, Lowest noise | Varsayılan, Az tıklı, Dengeli, En sessiz | the modes `default`, `low-click`, `balanced` and `lowest-noise` |
 
 ## Threads
 
@@ -116,12 +116,13 @@ with the last value always sent when the slider is released.
   delay, each with a glyph in the colour of its value (a grey glyph and a dash when it was not
   measured) and the value. A legend under the cards names the glyphs once, and each line has the
   same text as a tooltip, with what is known about the value ("not measured yet", "muted for the
-  soft-start time plus 100 ms"). The values are what the documentation records
+  soft-start time plus about 150 ms"). The values are what the documentation records
   ([firmware-notes.md](firmware-notes.md), README): the noise floor as the README words it
-  (constant, some, reduced), the click as recorded (none in stock mode, low in quiet mode, loud in
-  minimum hiss) and the time that the start of audio is muted, as measured (none in stock and
-  quiet mode, about 0.6 s in balanced mode, the soft-start time plus 100 ms in minimum hiss).
-  The start click of balanced mode was not measured and says so.
+  (constant, some, reduced), the click as recorded (none in `default`, low in `low-click`, loud in
+  `lowest-noise`) and the time that the start of audio is muted, which is the figure of the engine
+  (`mode::mute_delay_ms`: none in `default` and `low-click`, 650 ms in `balanced`, the soft-start
+  time plus 150 ms in `lowest-noise`). The start click of balanced mode was not measured and
+  says so.
 - **Microphone boost** 0-7 shows the gain compared with the vendor's step 4, 6 dB per step, as
   "+12 dB"; the "?" says what it is relative to. The gain of step 0 itself is not documented, so
   no absolute gain is shown. The "?" also says that step 6 had the best signal-to-noise ratio (in
@@ -143,9 +144,9 @@ with the last value always sent when the slider is released.
   sets as its tooltip) sets balanced mode, microphone
   boost 6, noise reduction on, AGC off and sidetone off, and leaves the soft-start time and the
   sidetone level as they are. Balanced mode is
-  the recommendation because it reduces the idle hiss at the price of 0.6 s of muted audio after
-  idle, without the loud start pop that was recorded for minimum hiss (the pop of balanced mode
-  itself was not measured); stock and quiet mode keep the idle hiss.
+  the recommendation because it reduces the idle hiss at the price of 0.65 s of muted audio after
+  idle, without the loud start pop that was recorded for lowest noise (the pop of balanced mode
+  itself was not measured); default and low click keep the idle hiss.
 - **Volume** (speakers on the Output page, microphone on the Microphone page; the glyph at the
   start of the row mutes) is the volume of the Windows audio endpoints of the dongle, found by the USB
   vendor and product id like the silent stream's endpoint (`cxtune::volume`,
@@ -201,7 +202,7 @@ in `contract.slint` and the `MainWindow` and `Tray` components.
 | `tab` (in-out) | the shown page: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about |
 | `meters-active`, `out-db`, `mic-db` | the header meters: whether there are levels, and the peak levels of the output and the microphone in dBFS (-60 to 0) |
 | `controls-enabled` | whether the controls that change the dongle can be used |
-| `mode` (in-out), `recommended-mode`, `indicators` | the mode (0 stock, 1 quiet, 2 balanced, 3 minimum hiss), the recommended one, and the `ModeIndicators` (`hiss`, `pop`, `delay`, `delay-ms`) of every mode by index |
+| `mode` (in-out), `recommended-mode`, `indicators` | the mode (0 `default`, 1 `low-click`, 2 `balanced`, 3 `lowest-noise`), the recommended one, and the `ModeIndicators` (`hiss`, `pop`, `delay`, `delay-ms`) of every mode by index |
 | `settle-ms` (in-out), `settle-min`, `settle-max`, `settle-step`, `delay-enabled` | the soft-start time |
 | `boost` (in-out), `boost-max`, `boost-db`, `noise-reduction` (in-out), `agc` (in-out) | the microphone |
 | `sidetone` (in-out), `level` (in-out), `level-min`, `level-max`, `level-step` | sidetone: the register value (shown as dB, 256 per dB) and the range and key step of its slider |

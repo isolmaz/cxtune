@@ -85,7 +85,7 @@ export component OutputPage inherits Page {
         soft-start-row := Row {
             icon: "\u{E916}";
             title: @tr("ui" => "Soft-start time");
-            help: @tr("ui" => "Used only by Lowest noise. After audio starts it stays muted for this time plus 100 ms.");
+            help: @tr("ui" => "Used only by Lowest noise. After audio starts it stays muted for this time plus about 150 ms.");
             value-column: true;
             value: @tr("ui" => "{} ms", Math.round(Model.settle-ms));
             disabled: !Model.delay-enabled;

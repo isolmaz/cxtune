@@ -845,7 +845,7 @@ component ModeCard inherits Rectangle {
             position: 2;
             value: Texts.delay(root.indicators.delay, root.indicators.delay-ms);
             tone: Surface.secondary;
-            tip: Texts.delay-tip(root.indicators.delay);
+            tip: Texts.delay-tip(root.indicators.delay, root.indicators.delay-ms);
             clicked => {
                 root.clicked();
             }

@@ -198,12 +198,12 @@ export global Texts {
         return kind == Pop.not-measured ? trait-tip(1) + " " + @tr("ui" => "Not measured yet.") : trait-tip(1);
     }
 
-    public pure function delay-tip(kind: Delay) -> string {
-        if kind == Delay.about-600-ms {
-            return trait-tip(2) + " " + @tr("ui" => "The first 0.6 s of audio after idle is muted.");
+    public pure function delay-tip(kind: Delay, ms: int) -> string {
+        if kind == Delay.fixed {
+            return trait-tip(2) + " " + @tr("ui" => "The first {} ms of audio after idle is muted.", ms);
         }
         if kind == Delay.settle {
-            return trait-tip(2) + " " + @tr("ui" => "Muted for the soft-start time plus 100 ms.");
+            return trait-tip(2) + " " + @tr("ui" => "Muted for the soft-start time plus about 150 ms.");
         }
         return trait-tip(2);
     }
@@ -211,9 +211,6 @@ export global Texts {
     public pure function delay(kind: Delay, ms: int) -> string {
         if kind == Delay.none {
             return @tr("ui" => "None");
-        }
-        if kind == Delay.about-600-ms {
-            return @tr("ui" => "≈ 0.6 s");
         }
         return @tr("ui" => "≈ {} ms", ms);
     }

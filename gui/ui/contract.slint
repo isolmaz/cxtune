@@ -72,11 +72,11 @@ export enum Pop {
     loud,
 }
 
-// How long the start of audio is muted: not at all, about 0.6 s as measured, or the soft-start
-// time plus 100 ms (`delay-ms`).
+// How long the start of audio is muted (`delay-ms`, the engine's own figure): not at all, a
+// fixed time, or the soft-start time plus a fixed one.
 export enum Delay {
     none,
-    about-600-ms,
+    fixed,
     settle,
 }
 
@@ -96,7 +96,7 @@ export global Theme {
 
 // The tabs, by index: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about (a page of general).
 //
-// The modes, by index: 0 stock, 1 quiet, 2 balanced, 3 minimum hiss.
+// The modes, by index: default, low click, balanced, lowest noise.
 //
 // The volumes, by side: 0 the speakers, 1 the microphone.
 export global Model {

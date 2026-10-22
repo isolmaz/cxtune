@@ -124,8 +124,8 @@ msgid "Soft-start time"
 msgstr "Yumuşak açılış süresi"
 
 msgctxt "ui"
-msgid "Used only by Lowest noise. After audio starts it stays muted for this time plus 100 ms."
-msgstr "Yalnızca En sessiz kullanır. Ses başladıktan sonra bu süre artı 100 ms boyunca susturulur."
+msgid "Used only by Lowest noise. After audio starts it stays muted for this time plus about 150 ms."
+msgstr "Yalnızca En sessiz kullanır. Ses başladıktan sonra bu süre artı yaklaşık 150 ms boyunca susturulur."
 
 msgctxt "ui"
 msgid "{} ms"
@@ -452,16 +452,12 @@ msgid "Not measured yet."
 msgstr "Henüz ölçülmedi."
 
 msgctxt "ui"
-msgid "The first 0.6 s of audio after idle is muted."
-msgstr "Boştan sonra sesin ilk 0,6 sn'si susturulur."
+msgid "The first {} ms of audio after idle is muted."
+msgstr "Boştan sonra sesin ilk {} ms'si susturulur."
 
 msgctxt "ui"
-msgid "Muted for the soft-start time plus 100 ms."
-msgstr "Yumuşak açılış süresi artı 100 ms boyunca susturulur."
-
-msgctxt "ui"
-msgid "≈ 0.6 s"
-msgstr "≈ 0,6 sn"
+msgid "Muted for the soft-start time plus about 150 ms."
+msgstr "Yumuşak açılış süresi artı yaklaşık 150 ms boyunca susturulur."
 
 msgctxt "ui"
 msgid "≈ {} ms"
