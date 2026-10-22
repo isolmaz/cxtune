@@ -14,7 +14,8 @@ as well: speech sits around -57 dBFS in our test.
 
 ## What cxtune does
 
-cxtune is a small Windows 11 command-line tool (Rust) for the dongle's CX20773 codec.
+cxtune is a small Windows 11 program (Rust) for the dongle's CX20773 codec: a command-line tool
+and a tray application.
 
 - **Output modes** with an explicit trade-off between idle hiss and the noise when a stream
   starts (`stock`, `quiet`, `balanced`, `min-hiss`; details below).
@@ -26,7 +27,9 @@ cxtune is a small Windows 11 command-line tool (Rust) for the dongle's CX20773 c
   fully measured.
 - **Automatic re-apply** (`cxtune watch`): the settings are applied again when the dongle is
   replugged or the computer wakes from sleep.
-- **Tray application** (English and Turkish): in progress, not part of this repository yet.
+- **Tray application** (English and Turkish): a window and a notification-area icon for all of
+  the above and for the Windows volume of the dongle; see
+  [The tray application](#the-tray-application).
 
 | Mode | Idle | Stream start | Cost |
 |---|---|---|---|
@@ -51,8 +54,9 @@ temporary (RAM only), and replugging the dongle restores the vendor behaviour.
 
 ## Quick start
 
-Requires Windows 11 and the Rust MSVC toolchain, version 1.88 or newer (the Visual Studio C++
-build tools are needed for the bundled hidapi).
+Requires Windows 11 and the Rust MSVC toolchain, version 1.92 or newer (1.88 for the
+command-line tool alone, `cargo build --release -p cxtune`; the Visual Studio C++ build tools
+are needed for the bundled hidapi).
 
 ```
 cargo build --release
@@ -79,6 +83,34 @@ cxtune watch                    keep the remembered settings applied across repl
                                 wake-ups (holds the dongle; other commands are refused)
 ```
 
+## The tray application
+
+`target\release\cxtune-gui.exe` is a small window and notification-area icon on top of the same
+engine (Windows 11, Turkish and English). It follows the light or dark scheme of Windows, has no
+console window and closes to the notification area.
+
+- **Output**: the four modes with Hiss, Pop and Delay indicators that show only what was measured
+  (and say so when something was not), the start delay of minimum hiss, the headphone volume and
+  **Apply recommended** (balanced mode, microphone boost 6, noise reduction on, AGC and sidetone
+  off).
+- **Microphone**: boost with the gain compared with the vendor's setting, noise reduction, AGC
+  (experimental) and the microphone volume.
+- **Sidetone** (experimental, with a note not to turn on Windows' "Listen to this device" as
+  well) and **General**: start with Windows, language, the log folder.
+- **About**: version, the supported device and the disclaimer.
+- The **notification-area icon** switches the mode, re-applies the settings and shows the
+  window; its tooltip is the short status. `cxtune-gui.exe --minimized` starts it in the
+  notification area, and only one copy runs at a time.
+- The **status** is one line for what is wrong and one for what to do; technical details are only
+  in the log (`%LOCALAPPDATA%\cxtune\cxtune.log`).
+- The volume sliders are the Windows volume of the dongle's playback and capture endpoints
+  (the same as the Windows mixer and the buttons on the dongle); no HID report is involved.
+
+How it works, the status rules and the interface contract are in [docs/gui.md](docs/gui.md).
+The window is built with [Slint](https://slint.dev) under its Royalty-free license.
+
+[![Made with Slint](https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png)](https://slint.dev)
+
 ## Supported device
 
 | | |
@@ -96,6 +128,7 @@ written.
 - [docs/firmware-notes.md](docs/firmware-notes.md): protocol, registers, patch images,
   measurements and hazards.
 - [docs/engine.md](docs/engine.md): the background engine behind `watch`.
+- [docs/gui.md](docs/gui.md): the tray application.
 
 ### Configuration
 
@@ -154,7 +187,8 @@ sidetone_level = 947
 
 ### Building from source
 
-The minimum supported Rust version is 1.88 (`rust-version` in `Cargo.toml`).
+The minimum supported Rust version is 1.88 for the command-line tool and 1.92 for the tray
+application, which Slint requires (`rust-version` in the `Cargo.toml` of each).
 
 ```
 cargo build --release
@@ -162,11 +196,13 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-The binary is `target\release\cxtune.exe`. Tests run against an in-memory fake of the dongle
-and never touch real hardware. With the dongle connected,
+The binaries are `target\release\cxtune.exe` and `target\release\cxtune-gui.exe`. Tests run
+against an in-memory fake of the dongle and never touch real hardware. With the dongle connected,
 `cargo run --release --example trace -- <open_s> <close_s> <total_s>` opens and closes a silent
 stream and prints every change of the playback registers with a timestamp; it only reads and,
 like the commands, refuses to run while another cxtune process controls the dongle.
+`cargo run --example volume -- get` reads the volume and mute state of the dongle's Windows
+audio endpoints (`set` and `mute` change them).
 
 ### License
 

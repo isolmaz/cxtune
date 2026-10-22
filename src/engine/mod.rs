@@ -156,6 +156,13 @@ fn any_alive(workers: &Mutex<Vec<JoinHandle<()>>>) -> bool {
     !workers.is_empty()
 }
 
+/// Whether a worker that [`Engine::stop`] did not wait for is still stuck in a call into the
+/// dongle and holds the device lock. A user interface tells a refused start that this caused
+/// from one caused by another program.
+pub fn worker_left_behind() -> bool {
+    any_alive(&LEFT_BEHIND)
+}
+
 /// Takes the lock for a new engine. If it is refused while a worker of this program is still
 /// stuck holding it, that worker is the reason, and the message says so instead of blaming
 /// another process.
@@ -976,6 +983,7 @@ mod tests {
         // the worker stays behind with the lock, and a new engine is refused for that reason
         let name = lock_name("stall-stop");
         assert!(any_alive(&LEFT_BEHIND));
+        assert!(worker_left_behind());
         let Err(Error::Busy(message)) = take_lock(|| NamedLock::acquire(&name), &LEFT_BEHIND)
         else {
             panic!("the lock should be refused");

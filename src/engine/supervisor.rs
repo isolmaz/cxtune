@@ -17,7 +17,7 @@
 //! - **Drift** that nobody asked for is corrected and reported, a few times; a setting that
 //!   something else keeps changing is then left alone ([`MAX_CORRECTIONS`]). A dongle that holds
 //!   the vendor's settings again has restarted between two polls; that is handled like an
-//!   arrival and is never drift.
+//!   arrival and is never drift, and a dongle that does it again and again is also reported.
 //! - **The settings file** is written shortly after a change and written again, with growing
 //!   pauses, for as long as that fails.
 
@@ -43,8 +43,12 @@ pub(super) const VERIFY: Duration = Duration::from_secs(15);
 /// How many times something that changed a setting without cxtune is corrected within
 /// [`DRIFT_WINDOW`] before the setting is left alone.
 pub(super) const MAX_CORRECTIONS: usize = 3;
-/// The time in which [`MAX_CORRECTIONS`] corrections of one setting are allowed.
+/// The time in which [`MAX_CORRECTIONS`] corrections of one setting are allowed, and in which
+/// restarts of the dongle are counted.
 pub(super) const DRIFT_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// From this many restarts of the dongle within [`DRIFT_WINDOW`], each further one is reported as
+/// a warning. The dongle is restored all the same.
+pub(super) const WARN_RESTARTS: usize = 3;
 
 /// How long to wait before the next attempt after `failures` failed attempts in a row (at least
 /// one), or `None` to stop until something changes: a command, a re-apply, or the dongle coming
@@ -106,6 +110,8 @@ pub(super) struct Supervisor<B: Backend> {
     synced: Option<Config>,
     /// When settings were corrected after something else changed them.
     corrections: Vec<(&'static str, Instant)>,
+    /// When the dongle was found to have restarted between two polls.
+    restarts: Vec<Instant>,
     /// Settings that are no longer corrected because something keeps changing them.
     muted: Vec<&'static str>,
     drift_error: Option<Failure>,
@@ -148,6 +154,7 @@ impl<B: Backend> Supervisor<B> {
             failures: 0,
             synced: None,
             corrections: Vec::new(),
+            restarts: Vec::new(),
             muted: Vec::new(),
             drift_error: None,
             phase: Phase::Disconnected,
@@ -427,6 +434,7 @@ impl<B: Backend> Supervisor<B> {
             self.note(
                 "the dongle holds the vendor settings again: it restarted since the last check",
             );
+            self.count_restart(now);
             self.wait_for_firmware(now);
             return Ok(Pass::Restarted);
         }
@@ -484,6 +492,23 @@ impl<B: Backend> Supervisor<B> {
                     left.join(", ")
                 ),
             })
+        }
+    }
+
+    /// Counts a restart. A dongle that restarts again and again (a failing cable or port, a power
+    /// problem) is restored every time, and from [`WARN_RESTARTS`] within [`DRIFT_WINDOW`] each
+    /// restart is also reported, so that the cause can be looked for.
+    fn count_restart(&mut self, now: Instant) {
+        self.restarts
+            .retain(|at| now.saturating_duration_since(*at) < DRIFT_WINDOW);
+        self.restarts.push(now);
+        if self.restarts.len() >= WARN_RESTARTS {
+            self.warn(format!(
+                "the dongle has restarted {} times in {} minutes (check the cable and the USB \
+                 port); the settings are applied again each time",
+                self.restarts.len(),
+                DRIFT_WINDOW.as_secs() / 60
+            ));
         }
     }
 
@@ -1079,8 +1104,53 @@ mod tests {
                 "round {round}"
             );
         }
-        assert!(rig.errors().is_empty() && rig.warnings().is_empty());
+        assert!(rig.errors().is_empty());
         assert_eq!(rig.snapshot().error, None);
+    }
+
+    fn restart_warnings(rig: &Rig) -> Vec<String> {
+        rig.warnings()
+            .into_iter()
+            .filter(|warning| warning.contains("restarted"))
+            .collect()
+    }
+
+    #[test]
+    fn a_dongle_that_keeps_restarting_is_restored_every_time_and_reported_from_the_third_restart() {
+        let mut rig = connected();
+        for round in 1..=2 * WARN_RESTARTS {
+            rig.dev.replug();
+            rig.run(restart_time());
+            assert!(rig.snapshot().in_sync(), "round {round}");
+            let warnings = restart_warnings(&rig);
+            assert_eq!(
+                warnings.len(),
+                round.saturating_sub(WARN_RESTARTS - 1),
+                "round {round}: {warnings:?}"
+            );
+            if let Some(latest) = warnings.last() {
+                assert!(
+                    latest.contains(&format!("restarted {round} times in 10 minutes")),
+                    "{latest}"
+                );
+                assert!(latest.contains("the USB port); the settings"), "{latest}");
+            }
+        }
+        // a warning does not stop anything, and a restart is no drift
+        assert!(rig.errors().is_empty());
+        assert_eq!(rig.snapshot().error, None);
+        assert_eq!(corrections(&rig), 0);
+    }
+
+    #[test]
+    fn restarts_far_apart_are_not_reported() {
+        let mut rig = connected();
+        for _ in 0..2 * WARN_RESTARTS {
+            rig.dev.replug();
+            rig.run(DRIFT_WINDOW.as_secs_f64() + 20.0);
+            assert!(rig.snapshot().in_sync());
+        }
+        assert!(restart_warnings(&rig).is_empty(), "{:?}", rig.warnings());
     }
 
     #[test]

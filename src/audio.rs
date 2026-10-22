@@ -299,7 +299,7 @@ unsafe fn find_dongle(enumerator: &IMMDeviceEnumerator) -> Result<Option<IMMDevi
 
 /// True if the endpoint belongs to the dongle: the USB device behind the endpoint carries
 /// its vendor and product id.
-unsafe fn is_dongle(device: &IMMDevice) -> windows::core::Result<bool> {
+pub(crate) unsafe fn is_dongle(device: &IMMDevice) -> windows::core::Result<bool> {
     unsafe {
         let topology: IDeviceTopology = device.Activate(CLSCTX_ALL, None)?;
         let id = topology.GetConnector(0)?.GetDeviceIdConnectedTo()?;

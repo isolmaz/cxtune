@@ -1,0 +1,356 @@
+import { Button, ComboBox, Slider } from "std-widgets.slint";
+import { Delay, Model, Pop } from "contract.slint";
+import { Badge, Help, Indicator, LinkText, Note, Row, Tab, ToggleRow, VolumeRow } from "components.slint";
+import { Surface } from "theme.slint";
+import { Texts } from "texts.slint";
+
+export component OutputTab inherits Tab {
+    Row {
+        label: @tr("ui" => "Mode");
+        help: Texts.mode-note(Model.mode);
+        HorizontalLayout {
+            spacing: 10px;
+            ComboBox {
+                width: 200px;
+                model: [@tr("ui" => "Stock"), @tr("ui" => "Quiet start"), @tr("ui" => "Balanced"), @tr("ui" => "Minimum hiss")];
+                current-index <=> Model.mode;
+                enabled: Model.controls-enabled;
+                accessible-label: @tr("ui" => "Mode");
+                selected(value) => {
+                    Model.mode-selected(self.current-index);
+                }
+            }
+
+            if Model.mode-recommended: Badge {
+                label: @tr("ui" => "Recommended");
+                tone: Surface.good;
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+        }
+    }
+
+    Row {
+        HorizontalLayout {
+            spacing: 8px;
+            Indicator {
+                name: @tr("ui" => "Hiss");
+                value: Texts.hiss(Model.hiss);
+            }
+
+            Indicator {
+                name: @tr("ui" => "Pop");
+                value: Texts.pop(Model.pop);
+                known: Model.pop != Pop.not-measured;
+            }
+
+            Indicator {
+                name: @tr("ui" => "Delay");
+                value: Texts.delay(Model.delay, Model.delay-ms);
+            }
+        }
+    }
+
+    Row {
+        label: @tr("ui" => "Start delay");
+        help: @tr("ui" => "Only Minimum hiss uses the start delay. After audio starts it stays muted for this long plus 100 ms.");
+        HorizontalLayout {
+            spacing: 8px;
+            Slider {
+                minimum: Model.settle-min;
+                maximum: Model.settle-max;
+                step: Model.settle-step;
+                value <=> Model.settle-ms;
+                enabled: Model.delay-enabled;
+                accessible-label: @tr("ui" => "Start delay");
+                changed(value) => {
+                    self.value = Math.round(value / Model.settle-step) * Model.settle-step;
+                    Model.settle-changed(Math.round(self.value));
+                }
+                released => {
+                    Model.slider-released();
+                }
+            }
+
+            Text {
+                text: @tr("ui" => "{} ms", Math.round(Model.settle-ms));
+                color: Model.delay-enabled ? Surface.text : Surface.quiet;
+                font-size: 14px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                width: 64px;
+            }
+        }
+    }
+
+    VolumeRow {
+        label: @tr("ui" => "Headphones");
+        help: @tr("ui" => "The volume of the dongle in Windows. The buttons on the dongle and the Windows mixer change it too.");
+        side: 0;
+        present: Model.speaker-present;
+        volume <=> Model.speaker-volume;
+        muted <=> Model.speaker-muted;
+    }
+
+    Row {
+        HorizontalLayout {
+            alignment: start;
+            spacing: 8px;
+            Button {
+                text: @tr("ui" => "Apply recommended");
+                enabled: Model.controls-enabled;
+                clicked => {
+                    Model.apply-recommended();
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                Help {
+                    explanation: @tr("ui" => "Balanced mode, microphone boost 6 (the best signal-to-noise ratio in a single measurement), noise reduction on (about 12 dB less steady noise), AGC and sidetone off.");
+                }
+            }
+        }
+    }
+}
+
+export component MicrophoneTab inherits Tab {
+    Row {
+        label: @tr("ui" => "Microphone boost");
+        help: @tr("ui" => "The gain compared with the vendor setting (step 4), 6 dB per step. Step 6 gave the best signal-to-noise ratio in a single measurement, so the ranking is only indicative.");
+        HorizontalLayout {
+            spacing: 8px;
+            Slider {
+                minimum: 0;
+                maximum: Model.boost-max;
+                step: 1;
+                value <=> Model.boost;
+                enabled: Model.controls-enabled;
+                accessible-label: @tr("ui" => "Microphone boost");
+                changed(value) => {
+                    self.value = Math.round(value);
+                    Model.boost-changed(Math.round(value));
+                }
+                released => {
+                    Model.slider-released();
+                }
+            }
+
+            Text {
+                text: Texts.gain(Model.boost-db);
+                color: Surface.text;
+                font-size: 14px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                width: 56px;
+            }
+
+            Rectangle {
+                width: 84px;
+                if Model.boost-recommended: Badge {
+                    label: @tr("ui" => "Recommended");
+                    tone: Surface.good;
+                    x: 4px;
+                }
+            }
+        }
+    }
+
+    Note {
+        text: @tr("ui" => "A higher boost also raises the noise: from step 6 to 7 it rose by 6 dB.");
+    }
+
+    ToggleRow {
+        label: @tr("ui" => "Noise reduction");
+        help: @tr("ui" => "Measured: about 12 dB less steady background noise. The effect on speech was not measured.");
+        checked <=> Model.noise-reduction;
+        enabled: Model.controls-enabled;
+        toggled(on) => {
+            Model.noise-reduction-toggled(on);
+        }
+    }
+
+    ToggleRow {
+        label: @tr("ui" => "AGC");
+        help: @tr("ui" => "Automatic gain control. The firmware applies it, but no effect on steady noise could be measured and speech was not tested.");
+        experimental: true;
+        checked <=> Model.agc;
+        enabled: Model.controls-enabled;
+        toggled(on) => {
+            Model.agc-toggled(on);
+        }
+    }
+
+    VolumeRow {
+        label: @tr("ui" => "Volume");
+        help: @tr("ui" => "The microphone volume of the dongle in Windows. The buttons on the dongle and the Windows mixer change it too.");
+        side: 1;
+        present: Model.microphone-present;
+        volume <=> Model.microphone-volume;
+        muted <=> Model.microphone-muted;
+    }
+}
+
+export component SidetoneTab inherits Tab {
+    ToggleRow {
+        label: @tr("ui" => "Sidetone");
+        help: @tr("ui" => "Plays your own microphone in the headphones. It works only while a microphone and audio playback are open.");
+        experimental: true;
+        checked <=> Model.sidetone;
+        enabled: Model.controls-enabled;
+        toggled(on) => {
+            Model.sidetone-toggled(on);
+        }
+    }
+
+    Note {
+        text: @tr("ui" => "Do not also turn on Windows' \"Listen to this device\" for the microphone: you would hear an echo.");
+        color: Surface.caution;
+        min-height: 34px;
+    }
+
+    Row {
+        label: @tr("ui" => "Level");
+        help: @tr("ui" => "The level is a register value from 1 to 4096 of unknown unit; the vendor uses 947.");
+        HorizontalLayout {
+            spacing: 8px;
+            Slider {
+                minimum: 0;
+                maximum: Model.level-positions;
+                step: Model.level-positions / 100;
+                value <=> Model.level-position;
+                enabled: Model.controls-enabled;
+                accessible-label: @tr("ui" => "Level");
+                changed(value) => {
+                    Model.level-changed(value);
+                }
+                released => {
+                    Model.slider-released();
+                }
+            }
+
+            Text {
+                text: Model.level;
+                color: Surface.text;
+                font-size: 14px;
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                width: 40px;
+            }
+        }
+    }
+
+    Note {
+        text: @tr("ui" => "Start low: the loudness was not measured and can be high in sensitive in-ear monitors.");
+        min-height: 34px;
+    }
+}
+
+export component GeneralTab inherits Tab {
+    ToggleRow {
+        label: @tr("ui" => "Start with Windows");
+        help: @tr("ui" => "Starts minimized in the notification area.");
+        checked <=> Model.autostart;
+        toggled(on) => {
+            Model.autostart-toggled(on);
+        }
+    }
+
+    if Model.autostart-failed: Text {
+        text: @tr("ui" => "The setting could not be changed.");
+        color: Surface.critical;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+
+    Row {
+        label: @tr("ui" => "Language");
+        HorizontalLayout {
+            alignment: start;
+            ComboBox {
+                width: 150px;
+                model: ["Türkçe", "English"];
+                current-index <=> Model.language;
+                accessible-label: @tr("ui" => "Language");
+                selected(value) => {
+                    Model.language-selected(self.current-index);
+                }
+            }
+        }
+    }
+
+    Row {
+        label: @tr("ui" => "Log");
+        HorizontalLayout {
+            alignment: start;
+            LinkText {
+                text: @tr("ui" => "Open log folder");
+                clicked => {
+                    Model.open-log-folder();
+                }
+            }
+        }
+    }
+}
+
+export component AboutTab inherits Tab {
+    spacing: 14px;
+
+    HorizontalLayout {
+        spacing: 16px;
+
+        Rectangle {
+            width: 120px;
+            height: 74px;
+            border-radius: 6px;
+            background: Surface.plate;
+
+            Image {
+                source: @image-url("../assets/dongle.png");
+                x: 5px;
+                y: 5px;
+                width: parent.width - 10px;
+                height: parent.height - 10px;
+                image-fit: contain;
+                accessible-role: image;
+                accessible-label: @tr("ui" => "HyperX Cloud II USB sound card");
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: "cxtune";
+                color: Surface.text;
+                font-size: 20px;
+                font-weight: 600;
+            }
+
+            Text {
+                text: @tr("ui" => "Version {}", Model.version);
+                color: Surface.quiet;
+                font-size: 12px;
+            }
+
+            Text {
+                text: @tr("ui" => "Supports the HyperX Cloud II USB sound card (USB 0951:16A4).");
+                color: Surface.text;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    Text {
+        text: @tr("ui" => "cxtune is an independent project. It is not affiliated with, endorsed by or supported by HyperX, HP or Synaptics. It changes the device's settings at your own risk; the authors accept no liability. Changes are temporary: unplugging the dongle restores the original settings.");
+        color: Surface.text;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+}
+
