@@ -15,7 +15,9 @@
 //! - **Failures** are retried by a schedule that depends on their kind ([`retry_delay`]) and
 //!   reported once while they persist. A failure while the dongle is gone is a disconnect.
 //! - **Drift** that nobody asked for is corrected and reported, a few times; a setting that
-//!   something else keeps changing is then left alone ([`MAX_CORRECTIONS`]).
+//!   something else keeps changing is then left alone ([`MAX_CORRECTIONS`]). A dongle that holds
+//!   the vendor's settings again has restarted between two polls; that is handled like an
+//!   arrival and is never drift.
 //! - **The settings file** is written shortly after a change and written again, with growing
 //!   pauses, for as long as that fails.
 
@@ -61,6 +63,15 @@ pub(super) fn retry_delay(kind: ErrorKind, failures: u32) -> Option<Duration> {
         ErrorKind::Config => backoff(2, 30),
         ErrorKind::Invalid | ErrorKind::Drift | ErrorKind::Unresponsive | ErrorKind::Fatal => None,
     }
+}
+
+/// How a pass over the dongle ended without a failure.
+enum Pass {
+    /// The dongle holds the saved settings, found so or brought to them.
+    Done,
+    /// The dongle had restarted since the last pass; it is treated like one that has just
+    /// appeared, and the pass has been scheduled again.
+    Restarted,
 }
 
 pub(super) struct Supervisor<B: Backend> {
@@ -366,7 +377,8 @@ impl<B: Backend> Supervisor<B> {
         let result = self.sync(force);
         let now = self.now();
         match result {
-            Ok(()) => {
+            Ok(Pass::Restarted) => {}
+            Ok(Pass::Done) => {
                 if self.error.take().is_some() {
                     self.note("recovered");
                 }
@@ -398,9 +410,26 @@ impl<B: Backend> Supervisor<B> {
         Ok((dev, seen))
     }
 
-    fn sync(&mut self, force: bool) -> Result<(), Failure> {
+    /// A dongle that held the chosen settings at the last pass and now holds the vendor's has
+    /// restarted (a USB reset, a power loss) without the poll seeing it go. Nothing is fighting
+    /// over it, so this is no drift. Another program is unlikely to reset every managed setting to
+    /// the vendor's at once.
+    fn restarted(&self, seen: &Readback) -> bool {
+        self.synced.as_ref() == Some(&self.cfg)
+            && seen.is_vendor_boot()
+            && !seen.differences(&self.cfg).is_empty()
+    }
+
+    fn sync(&mut self, force: bool) -> Result<Pass, Failure> {
         let (mut dev, seen) = self.read()?;
         let now = self.now();
+        if !force && self.restarted(&seen) {
+            self.note(
+                "the dongle holds the vendor settings again: it restarted since the last check",
+            );
+            self.wait_for_firmware(now);
+            return Ok(Pass::Restarted);
+        }
         // a setting that the dongle holds again is corrected again if it drifts again
         let held_back = seen.differences(&self.cfg);
         self.muted.retain(|name| held_back.contains(name));
@@ -413,7 +442,7 @@ impl<B: Backend> Supervisor<B> {
         }
         if drift.is_empty() && !force {
             self.synced = Some(self.cfg.clone());
-            return Ok(());
+            return Ok(Pass::Done);
         }
         self.phase = Phase::Applying;
         self.publish();
@@ -446,7 +475,7 @@ impl<B: Backend> Supervisor<B> {
         let left = after?.differences(&cfg);
         if left.is_empty() {
             self.synced = Some(self.cfg.clone());
-            Ok(())
+            Ok(Pass::Done)
         } else {
             Err(Failure {
                 kind: ErrorKind::Verify,
@@ -491,10 +520,10 @@ impl<B: Backend> Supervisor<B> {
             let failure = Failure {
                 kind: ErrorKind::Drift,
                 message: format!(
-                    "{} keeps changing on the dongle without cxtune (another program, or a \
-                     dongle that keeps restarting): corrected {MAX_CORRECTIONS} times in \
-                     {minutes} minutes, now left alone. Close the other program, or change a \
-                     setting, re-apply or replug the dongle to start again",
+                    "{} keeps changing on the dongle without cxtune (probably another program \
+                     that controls it): corrected {MAX_CORRECTIONS} times in {minutes} minutes, \
+                     now left alone. Close the other program, or change a setting, re-apply or \
+                     replug the dongle to start again",
                     leave.join(", ")
                 ),
             };
@@ -990,14 +1019,128 @@ mod tests {
         assert!(rig.warnings().is_empty());
     }
 
+    /// Lets virtual time pass in steps of 0.1 s until `done`, for at most `seconds`.
+    fn run_until(rig: &mut Rig, what: &str, seconds: f64, done: impl Fn(&Rig) -> bool) {
+        for _ in 0..(seconds * 10.0) as usize {
+            if done(rig) {
+                return;
+            }
+            rig.run(0.1);
+        }
+        panic!("{what} did not happen within {seconds} s");
+    }
+
+    /// Time enough for a restart to be found by the periodic check and waited out.
+    fn restart_time() -> f64 {
+        (VERIFY + SETTLE).as_secs_f64() + 1.0
+    }
+
     #[test]
-    fn a_restart_between_two_polls_is_found_by_the_periodic_check() {
+    fn a_restart_between_two_polls_is_found_by_the_periodic_check_and_waited_out_like_an_arrival() {
         let mut rig = connected();
+        let writes = rig.dev.writes().len();
         rig.dev.replug();
-        rig.run(VERIFY.as_secs_f64() + 1.0);
+        run_until(&mut rig, "the restart to be found", 20.0, |rig| {
+            rig.phase() == Phase::Waiting
+        });
+        assert_eq!(rig.snapshot().device, None);
+        assert!(
+            rig.log()
+                .iter()
+                .any(|line| line.contains("restarted since the last check"))
+        );
+
+        // the firmware gets its time before anything is written
+        rig.run(SETTLE.as_secs_f64() - 0.5);
+        assert_eq!(rig.phase(), Phase::Waiting);
+        assert_eq!(rig.dev.writes().len(), writes);
+        rig.run(1.0);
         assert!(rig.snapshot().in_sync());
         assert_eq!(rig.dev.streams_opened(), 2);
+        assert!(rig.dev.writes().len() > writes);
+
+        // it was no drift: no correction was counted and nothing was reported
+        assert!(rig.warnings().is_empty());
         assert!(rig.errors().is_empty());
+    }
+
+    #[test]
+    fn a_dongle_that_restarts_between_polls_again_and_again_is_restored_every_time() {
+        let mut rig = connected();
+        let per_restore = rig.dev.writes().len();
+        assert!(per_restore > 0);
+        for round in 1..=2 * MAX_CORRECTIONS {
+            rig.dev.replug();
+            rig.run(restart_time());
+            assert!(rig.snapshot().in_sync(), "round {round}");
+            assert_eq!(
+                rig.dev.writes().len(),
+                per_restore * (round + 1),
+                "round {round}"
+            );
+        }
+        assert!(rig.errors().is_empty() && rig.warnings().is_empty());
+        assert_eq!(rig.snapshot().error, None);
+    }
+
+    #[test]
+    fn a_restart_ends_the_give_up_of_a_setting_that_was_left_alone() {
+        let mut rig = connected();
+        fight(&mut rig, MAX_CORRECTIONS + 1);
+        assert!(rig.snapshot().error.is_some());
+
+        rig.dev.replug();
+        rig.run(restart_time());
+        assert!(rig.snapshot().in_sync());
+        assert!(rig.snapshot().error.is_none());
+        assert_eq!(rig.dev.byte(0x1151), 0x04);
+
+        // the corrections of before the restart no longer count
+        fight(&mut rig, 1);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(corrections(&rig), MAX_CORRECTIONS + 1);
+    }
+
+    #[test]
+    fn a_dongle_that_only_looks_like_a_restarted_one_is_drift() {
+        let mut rig = connected();
+        // everything the vendor's state has, except the sidetone level
+        rig.dev.replug();
+        rig.dev.poke(0x1276, &[0x00, 0x02]);
+        rig.run(VERIFY.as_secs_f64() + 0.5);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(corrections(&rig), 2, "{:?}", rig.warnings());
+        assert!(
+            !rig.log()
+                .iter()
+                .any(|line| line.contains("restarted since the last check"))
+        );
+    }
+
+    #[test]
+    fn a_re_apply_does_not_wait_for_a_restarted_dongle() {
+        let mut rig = connected();
+        rig.dev.replug();
+        rig.send(Command::Reapply);
+        rig.run(1.0);
+        assert_eq!(rig.phase(), Phase::Connected);
+        assert!(rig.snapshot().in_sync());
+    }
+
+    #[test]
+    fn a_dongle_that_is_meant_to_hold_the_vendor_settings_is_never_taken_for_a_restarted_one() {
+        let cfg = Config {
+            mode: Some(Mode::Stock),
+            mic_boost: Some(4),
+            ..Config::default()
+        };
+        let mut rig = Rig::new(cfg, true);
+        rig.run(5.0);
+        assert!(rig.snapshot().in_sync());
+        rig.run(120.0);
+        assert_eq!(rig.phase(), Phase::Connected);
+        assert!(rig.log().iter().all(|line| !line.contains("restarted")));
+        assert_eq!(rig.dev.writes().len(), 0);
     }
 
     #[test]

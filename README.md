@@ -174,11 +174,13 @@ all HID and audio-stream access, and it holds the device lock for as long as it 
   refused does not keep the mode from being applied. A dongle that disappears again within the
   2 s is never touched, so a flapping cable causes no writes and no errors.
 - **Drift.** A connected dongle is read every 15 s and compared with the saved settings; only
-  a difference leads to writes. This also catches a USB reset that happened between two polls,
-  or another tool changing the patch RAM. Each such correction is reported as a warning. Because
-  a correction of a microphone DSP setting reloads the codec's DSP, a setting that something
-  keeps changing is corrected three times within ten minutes and then left alone, with an error
-  that says so, until a setting is changed, re-applied or the dongle is replugged.
+  a difference leads to writes. A dongle that shows the vendor's settings again has restarted
+  between two polls (a USB reset): it is handled like an arrival, with the 2 s wait, however
+  often that happens. Any other difference, such as another tool changing the patch RAM, is
+  corrected and reported as a warning. Because a correction of a microphone DSP setting reloads
+  the codec's DSP, a setting that something keeps changing is corrected three times within ten
+  minutes and then left alone, with an error that says so, until a setting is changed,
+  re-applied or the dongle is restarted or replugged.
 - **Sleep.** The computer waking from sleep or hibernation is noticed as a gap of more than
   5 s in the engine's wall-clock rhythm. The dongle may have restarted, so it is left alone for
   2 s and then verified.

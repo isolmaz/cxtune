@@ -106,15 +106,23 @@ All decisions are in `engine::supervisor`; the worker loop calls `command` with 
   requests) and compared with the settings (`Readback::differences`). Only a difference leads to
   `settings::ensure`, which writes through the guarded patches only what differs. After
   `ensure` the dongle is read again; a difference that remains is a `Verify` failure.
-- **Drift.** A difference found while the settings are the ones the dongle held at the last
-  verification was not the user's doing: another program, or a dongle that restarted between two
-  polls. Each setting that differs is corrected and an `Event::Warning` says so. Every correction
+- **Restart between two polls.** A dongle that held the settings at the last verification and
+  now holds the vendor's (mode `stock`, `$1017 = 0x3C` (boost 4), noise reduction on, AGC and
+  sidetone off, sidetone level 947; `docs/firmware-notes.md`) while the settings differ from that
+  has restarted without the poll seeing it go. It is handled like an arrival: what was learned
+  about the dongle (including the corrections below) is forgotten, it is `Waiting` for `SETTLE`,
+  and then it is brought to the settings. No warning is sent and nothing counts as drift, however
+  often it happens; that makes the verification, not the poll, the one that finds a quick reset.
+  A dongle that holds the vendor's values by the user's choice (nothing differs) is left alone.
+- **Drift.** Any other difference found while the settings are the ones the dongle held at the
+  last verification was not the user's doing: most likely another program. Each setting that
+  differs is corrected and an `Event::Warning` says so. Every correction
   of the codec's DSP settings reloads the DSP, so a setting that something keeps changing is not
   fought for ever: after `MAX_CORRECTIONS` corrections of one setting within `DRIFT_WINDOW`, the
   next difference is not corrected. The snapshot then holds an `ErrorKind::Drift` error (and
   `in_sync()` is false), one `Event::Error` is sent, and the other settings are still corrected.
-  A change of the settings, a `Reapply`, a replug or the dongle holding the setting again starts
-  over.
+  A change of the settings, a `Reapply`, a replug, a restart or the dongle holding the setting
+  again starts over.
 - **Sleep.** The gap is measured in wall-clock time from the end of the previous pass of the
   loop, which the monotonic clock may not reflect across sleep. A clock set forward looks the
   same and only costs a verification.

@@ -5,7 +5,7 @@ use std::fmt;
 use crate::Error;
 use crate::config::Config;
 use crate::mode::{Mode, State};
-use crate::patches::{DSP_AGC, DSP_NR, DSP_SIDETONE, ROM_ID};
+use crate::patches::{DSP_AGC, DSP_NR, DSP_SIDETONE, MIC_MIN, ROM_ID, SIDETONE_DEFAULT};
 
 /// A request to the engine. Every setting command changes the saved settings and applies them to
 /// the dongle, now or as soon as it is connected; commands that arrive in quick succession are
@@ -111,6 +111,23 @@ impl Readback {
             sidetone: state.dsp_enable & DSP_SIDETONE != 0,
             sidetone_level: state.sidetone_level,
         }
+    }
+
+    /// Whether this is what the dongle holds right after it starts: the vendor patch (stock
+    /// mode), mic control `0x3C` (boost 4), noise reduction on, AGC and sidetone off, the default
+    /// sidetone level.
+    pub(super) fn is_vendor_boot(&self) -> bool {
+        *self
+            == Readback {
+                firmware_supported: true,
+                mode: Some(Mode::Stock),
+                min_hiss_ms: None,
+                mic_boost: Some(0x3C - MIC_MIN),
+                noise_reduction: true,
+                agc: false,
+                sidetone: false,
+                sidetone_level: SIDETONE_DEFAULT,
+            }
     }
 
     /// The chosen settings that the device does not hold. Settings that are not chosen are left
@@ -338,6 +355,82 @@ mod tests {
         assert_eq!(r.mic_boost, Some(7));
         assert!(!r.noise_reduction && r.agc && r.sidetone);
         assert_eq!(r.sidetone_level, 0x0200);
+    }
+
+    #[test]
+    fn a_dongle_that_has_just_started_is_recognised_by_every_value_it_holds() {
+        let boot = readback(Mode::Stock);
+        assert!(boot.is_vendor_boot());
+
+        for (what, changed) in [
+            (
+                "mode",
+                Readback {
+                    mode: Some(Mode::Quiet),
+                    ..boot.clone()
+                },
+            ),
+            (
+                "unknown mode",
+                Readback {
+                    mode: None,
+                    ..boot.clone()
+                },
+            ),
+            (
+                "mic boost",
+                Readback {
+                    mic_boost: Some(5),
+                    ..boot.clone()
+                },
+            ),
+            (
+                "unknown mic boost",
+                Readback {
+                    mic_boost: None,
+                    ..boot.clone()
+                },
+            ),
+            (
+                "noise reduction",
+                Readback {
+                    noise_reduction: false,
+                    ..boot.clone()
+                },
+            ),
+            (
+                "AGC",
+                Readback {
+                    agc: true,
+                    ..boot.clone()
+                },
+            ),
+            (
+                "sidetone",
+                Readback {
+                    sidetone: true,
+                    ..boot.clone()
+                },
+            ),
+            (
+                "sidetone level",
+                Readback {
+                    sidetone_level: 948,
+                    ..boot.clone()
+                },
+            ),
+            (
+                "firmware",
+                Readback {
+                    firmware_supported: false,
+                    ..boot.clone()
+                },
+            ),
+        ] {
+            assert!(!changed.is_vendor_boot(), "{what}");
+        }
+        assert!(!readback(Mode::Balanced).is_vendor_boot());
+        assert!(!readback(Mode::MinHiss).is_vendor_boot());
     }
 
     #[test]
