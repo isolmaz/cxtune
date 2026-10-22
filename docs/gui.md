@@ -160,6 +160,9 @@ Callbacks of `Model`: `mode-selected(int)`, `settle-changed(int)`, `boost-change
 `mute-toggled(side, bool)`, `autostart-toggled(bool)`, `language-selected(int)`,
 `apply-recommended()`, `reapply()` and `open-log-folder()`.
 
+`Theme.scheme` (in-out) is the colour scheme, bound to the one of Windows. The `snapshot` feature
+sets it to draw both schemes, so it is part of the contract and a different look keeps it.
+
 `Tray` has the properties `status-title`, `mode`, `controls-enabled` and `reapply-enabled`, and the
 callbacks `show-requested`, `about-requested`, `mode-requested(int)`, `reapply-requested`,
 `quit-requested` and `icon-clicked`. (Slint's `SystemTrayIcon` has a `tooltip` and a `clicked`

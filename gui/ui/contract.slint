@@ -5,6 +5,8 @@
 // look for the window is another set of files that binds the same contract. docs/gui.md
 // describes it.
 
+import { Palette } from "std-widgets.slint";
+
 // The first line of the status: the state of the dongle, or the most important problem.
 export enum Title {
     starting,
@@ -76,6 +78,12 @@ export enum Delay {
     none,
     about-600-ms,
     settle,
+}
+
+// Development only: the screenshots of the `snapshot` feature show both colour schemes through
+// this. Whatever draws the window must keep it.
+export global Theme {
+    in-out property <ColorScheme> scheme <=> Palette.color-scheme;
 }
 
 // The tabs, by index: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about.
