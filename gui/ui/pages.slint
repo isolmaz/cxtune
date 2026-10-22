@@ -1,15 +1,15 @@
-import { ComboBox, Slider } from "std-widgets.slint";
+import { ComboBox } from "std-widgets.slint";
 import { Model } from "contract.slint";
-import { Badge, Body, Caption, Card, DeviceTile, Divider, FluentButton, Help, Icon, InfoBar, LinkText, ModeGroup, Row, SliderControl, Strong, SwitchControl, ValueText } from "components.slint";
-import { Grid, Surface } from "theme.slint";
+import { AppSlider, Caption, Card, DeviceTile, FluentButton, Group, Help, Icon, InfoBar, ModeGroup, Row, SwitchControl, Trailing } from "components.slint";
+import { Grid, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
 component Page inherits VerticalLayout {
     padding-left: Grid.margin;
     padding-right: Grid.margin;
-    padding-top: 12px;
-    padding-bottom: 12px;
-    spacing: 8px;
+    padding-top: Grid.margin;
+    padding-bottom: Grid.margin;
+    spacing: Grid.group-gap;
     alignment: start;
 }
 
@@ -21,7 +21,7 @@ component PageTitle inherits HorizontalLayout {
 
     Text {
         text: root.text;
-        font-size: 18px;
+        font-size: Type.title;
         font-weight: 600;
         color: Surface.text;
         vertical-alignment: center;
@@ -61,67 +61,59 @@ export component OutputPage inherits Page {
 
     ModeGroup { }
 
-    Card {
+    Group {
         Row {
             icon: "\u{E767}";
             muted-icon: "\u{E74F}";
+            mute-text: @tr("ui" => "Mute speakers");
+            unmute-text: @tr("ui" => "Unmute speakers");
             muted <=> Model.speaker-muted;
             title: @tr("ui" => "Speaker volume");
             caption: @tr("ui" => "Windows volume of the output");
             help: @tr("ui" => "The Windows volume of the sound card. Click the speaker to mute.");
+            value-column: true;
+            value: Model.speaker-present ? @tr("ui" => "{}%", Math.round(Model.speaker-volume)) : "";
+            disabled: !Model.speaker-present;
             mute-toggled(muted) => {
                 Model.mute-toggled(0, muted);
             }
 
-            SliderControl {
-                Slider {
-                    minimum: 0;
-                    maximum: 100;
-                    step: 1;
-                    value <=> Model.speaker-volume;
-                    enabled: Model.speaker-present;
-                    accessible-label: @tr("ui" => "Speaker volume");
-                    changed(value) => {
-                        Model.speaker-volume = Math.round(value);
-                        Model.volume-changed(0, Math.round(value));
-                    }
-                }
-
-                ValueText {
-                    text: Model.speaker-present ? @tr("ui" => "{} %", Math.round(Model.speaker-volume)) : "–";
-                    color: Model.speaker-present ? Surface.text : Surface.faint;
+            AppSlider {
+                minimum: 0;
+                maximum: 100;
+                step: 1;
+                value <=> Model.speaker-volume;
+                enabled: Model.speaker-present;
+                label: @tr("ui" => "Speaker volume");
+                changed(value) => {
+                    Model.speaker-volume = Math.round(value);
+                    Model.volume-changed(0, Math.round(value));
                 }
             }
         }
-
-        Divider { }
 
         Row {
             icon: "\u{E916}";
             title: @tr("ui" => "Soft-start time");
             caption: @tr("ui" => "Used only by Lowest noise");
             help: @tr("ui" => "After audio starts it stays muted for this time plus 100 ms.");
-            dimmed: !Model.delay-enabled;
+            value-column: true;
+            value: @tr("ui" => "{} ms", Math.round(Model.settle-ms));
+            disabled: !Model.delay-enabled;
 
-            SliderControl {
-                Slider {
-                    minimum: Model.settle-min;
-                    maximum: Model.settle-max;
-                    step: Model.settle-step;
-                    value <=> Model.settle-ms;
-                    enabled: Model.delay-enabled;
-                    accessible-label: @tr("ui" => "Soft-start time");
-                    changed(value) => {
-                        self.value = Math.round(value / Model.settle-step) * Model.settle-step;
-                        Model.settle-changed(Math.round(self.value));
-                    }
-                    released => {
-                        Model.slider-released();
-                    }
+            AppSlider {
+                minimum: Model.settle-min;
+                maximum: Model.settle-max;
+                step: Model.settle-step;
+                value <=> Model.settle-ms;
+                enabled: Model.delay-enabled;
+                label: @tr("ui" => "Soft-start time");
+                changed(value) => {
+                    self.value = Math.round(value / Model.settle-step) * Model.settle-step;
+                    Model.settle-changed(Math.round(self.value));
                 }
-
-                ValueText {
-                    text: @tr("ui" => "{} ms", Math.round(Model.settle-ms));
+                released => {
+                    Model.slider-released();
                 }
             }
         }
@@ -137,40 +129,36 @@ export component MicrophonePage inherits Page {
         text: @tr("ui" => "Microphone");
     }
 
-    Card {
+    Group {
         Row {
             icon: "\u{E720}";
             muted-icon: "\u{F781}";
+            mute-text: @tr("ui" => "Mute microphone");
+            unmute-text: @tr("ui" => "Unmute microphone");
             muted <=> Model.microphone-muted;
             title: @tr("ui" => "Microphone volume");
             caption: @tr("ui" => "Windows volume of the input");
             help: @tr("ui" => "The Windows volume of the microphone. Click the microphone to mute.");
+            value-column: true;
+            value: Model.microphone-present ? @tr("ui" => "{}%", Math.round(Model.microphone-volume)) : "";
+            disabled: !Model.microphone-present;
             mute-toggled(muted) => {
                 Model.mute-toggled(1, muted);
             }
 
-            SliderControl {
-                Slider {
-                    minimum: 0;
-                    maximum: 100;
-                    step: 1;
-                    value <=> Model.microphone-volume;
-                    enabled: Model.microphone-present;
-                    accessible-label: @tr("ui" => "Microphone volume");
-                    changed(value) => {
-                        Model.microphone-volume = Math.round(value);
-                        Model.volume-changed(1, Math.round(value));
-                    }
-                }
-
-                ValueText {
-                    text: Model.microphone-present ? @tr("ui" => "{} %", Math.round(Model.microphone-volume)) : "–";
-                    color: Model.microphone-present ? Surface.text : Surface.faint;
+            AppSlider {
+                minimum: 0;
+                maximum: 100;
+                step: 1;
+                value <=> Model.microphone-volume;
+                enabled: Model.microphone-present;
+                label: @tr("ui" => "Microphone volume");
+                changed(value) => {
+                    Model.microphone-volume = Math.round(value);
+                    Model.volume-changed(1, Math.round(value));
                 }
             }
         }
-
-        Divider { }
 
         Row {
             icon: "\u{E9E9}";
@@ -178,37 +166,35 @@ export component MicrophonePage inherits Page {
             caption: @tr("ui" => "Relative to vendor setting (step 4)");
             help: @tr("ui" => "Step 6 had the best signal-to-noise ratio in one take; step 7 added 6 dB of noise.");
             recommended: Model.boost-recommended;
+            value-column: true;
+            value: @tr("ui" => "{} ({})", Math.round(Model.boost), Texts.gain(Model.boost-db));
+            disabled: !Model.controls-enabled;
 
-            SliderControl {
-                Slider {
-                    minimum: 0;
-                    maximum: Model.boost-max;
-                    step: 1;
-                    value <=> Model.boost;
-                    enabled: Model.controls-enabled;
-                    accessible-label: @tr("ui" => "Microphone boost");
-                    changed(value) => {
-                        self.value = Math.round(value);
-                        Model.boost-changed(Math.round(value));
-                    }
-                    released => {
-                        Model.slider-released();
-                    }
+            AppSlider {
+                minimum: 0;
+                maximum: Model.boost-max;
+                step: 1;
+                value <=> Model.boost;
+                enabled: Model.controls-enabled;
+                label: @tr("ui" => "Microphone boost");
+                changed(value) => {
+                    self.value = Math.round(value);
+                    Model.boost-changed(Math.round(value));
                 }
-
-                ValueText {
-                    text: @tr("ui" => "{} ({})", Math.round(Model.boost), Texts.gain(Model.boost-db));
+                released => {
+                    Model.slider-released();
                 }
             }
         }
-
-        Divider { }
 
         Row {
             icon: "\u{E9D2}";
             title: @tr("ui" => "Noise reduction");
             caption: @tr("ui" => "Suppresses steady background noise");
             help: @tr("ui" => "Measured: about 12 dB less steady noise. The effect on speech was not measured.");
+            value-column: true;
+            value: Texts.state(Model.noise-reduction);
+            disabled: !Model.controls-enabled;
 
             SwitchControl {
                 label: @tr("ui" => "Noise reduction");
@@ -220,14 +206,15 @@ export component MicrophonePage inherits Page {
             }
         }
 
-        Divider { }
-
         Row {
             icon: "\u{E9D9}";
             title: @tr("ui" => "AGC");
             caption: @tr("ui" => "Automatic gain control");
             help: @tr("ui" => "The firmware applies it; no effect on steady noise was measured and speech was not tested.");
             experimental: true;
+            value-column: true;
+            value: Texts.state(Model.agc);
+            disabled: !Model.controls-enabled;
 
             SwitchControl {
                 label: @tr("ui" => "AGC");
@@ -250,13 +237,16 @@ export component SidetonePage inherits Page {
         text: @tr("ui" => "Sidetone");
     }
 
-    Card {
+    Group {
         Row {
             icon: "\u{E95B}";
             title: @tr("ui" => "Sidetone");
             caption: @tr("ui" => "Hear your own voice in the headphones");
             help: @tr("ui" => "Plays your microphone in the headphones while a microphone and playback are open.");
             experimental: true;
+            value-column: true;
+            value: Texts.state(Model.sidetone);
+            disabled: !Model.controls-enabled;
 
             SwitchControl {
                 label: @tr("ui" => "Sidetone");
@@ -268,33 +258,28 @@ export component SidetonePage inherits Page {
             }
         }
 
-        Divider { }
-
         Row {
             icon: "\u{E767}";
             title: @tr("ui" => "Sidetone level");
             caption: @tr("ui" => "Vendor default: +3.7 dB");
             help: @tr("ui" => "0 to +16 dB as the USB audio control reports it. The loudness was never measured.");
             experimental: true;
+            value-column: true;
+            value: Texts.level-db(Math.round(Model.level));
+            disabled: !Model.controls-enabled;
 
-            SliderControl {
-                Slider {
-                    minimum: Model.level-min;
-                    maximum: Model.level-max;
-                    step: Model.level-step;
-                    value <=> Model.level;
-                    enabled: Model.controls-enabled;
-                    accessible-label: @tr("ui" => "Sidetone level");
-                    changed(value) => {
-                        Model.level-changed(value);
-                    }
-                    released => {
-                        Model.slider-released();
-                    }
+            AppSlider {
+                minimum: Model.level-min;
+                maximum: Model.level-max;
+                step: Model.level-step;
+                value <=> Model.level;
+                enabled: Model.controls-enabled;
+                label: @tr("ui" => "Sidetone level");
+                changed(value) => {
+                    Model.level-changed(value);
                 }
-
-                ValueText {
-                    text: Texts.level-db(Math.round(Model.level));
+                released => {
+                    Model.slider-released();
                 }
             }
         }
@@ -307,15 +292,13 @@ export component SidetonePage inherits Page {
     }
 }
 
-// A row of a card that opens another page.
+// A row that opens another page.
 component PageLink inherits Rectangle {
     in property <string> icon;
     in property <string> title;
     in property <string> caption;
     callback clicked();
-    min-height: Grid.row;
-    max-height: Grid.row;
-    background: touch.has-hover ? Surface.card-hover : transparent;
+    height: Grid.row;
     forward-focus: keys;
     accessible-role: button;
     accessible-label: root.title;
@@ -328,17 +311,20 @@ component PageLink inherits Rectangle {
         icon: root.icon;
         title: root.title;
         caption: root.caption;
+        hovered: touch.has-hover;
 
-        Icon {
-            text: "\u{E76C}";
-            font-size: 12px;
-            color: Surface.quiet;
-            width: 16px;
+        Trailing {
+            Icon {
+                text: "\u{E76C}";
+                font-size: Type.chevron;
+                color: Surface.secondary;
+                width: 16px;
+            }
         }
     }
 
     if keys.has-focus: Rectangle {
-        border-radius: 4px;
+        border-radius: 8px;
         border-width: 2px;
         border-color: Surface.text;
     }
@@ -367,12 +353,14 @@ export component GeneralPage inherits Page {
         text: @tr("ui" => "General");
     }
 
-    Card {
+    Group {
         Row {
             icon: "\u{E7E8}";
             title: @tr("ui" => "Start with Windows");
             caption: @tr("ui" => "Starts in the notification area");
             help: @tr("ui" => "Starts minimized when you sign in; nothing is installed.");
+            value-column: true;
+            value: Texts.state(Model.autostart);
 
             SwitchControl {
                 label: @tr("ui" => "Start with Windows");
@@ -383,16 +371,12 @@ export component GeneralPage inherits Page {
             }
         }
 
-        Divider { }
-
         Row {
             icon: "\u{E775}";
             title: @tr("ui" => "Language");
             caption: @tr("ui" => "Language of the window and the menu");
 
-            VerticalLayout {
-                alignment: center;
-                horizontal-stretch: 0;
+            Trailing {
                 ComboBox {
                     width: 168px;
                     model: ["Türkçe", "English"];
@@ -405,16 +389,12 @@ export component GeneralPage inherits Page {
             }
         }
 
-        Divider { }
-
         Row {
             icon: "\u{E838}";
             title: @tr("ui" => "Log");
             caption: @tr("ui" => "Technical details of what cxtune did");
 
-            VerticalLayout {
-                alignment: center;
-                horizontal-stretch: 0;
+            Trailing {
                 FluentButton {
                     text: @tr("ui" => "Open log folder");
                     clicked => {
@@ -431,14 +411,12 @@ export component GeneralPage inherits Page {
         text: @tr("ui" => "The setting could not be changed.");
     }
 
-    Card {
-        PageLink {
-            icon: "\u{E946}";
-            title: @tr("ui" => "About");
-            caption: @tr("ui" => "cxtune {} · MIT license", Model.version);
-            clicked => {
-                Model.tab = 4;
-            }
+    PageLink {
+        icon: "\u{E946}";
+        title: @tr("ui" => "About");
+        caption: @tr("ui" => "cxtune {} · MIT license", Model.version);
+        clicked => {
+            Model.tab = 4;
         }
     }
 }
@@ -461,9 +439,9 @@ export component AboutPage inherits Page {
 
             parent-title := Text {
                 text: @tr("ui" => "General");
-                font-size: 18px;
+                font-size: Type.title;
                 font-weight: 600;
-                color: parent-touch.has-hover ? Surface.text : Surface.quiet;
+                color: parent-touch.has-hover ? Surface.text : Surface.secondary;
                 vertical-alignment: center;
                 accessible-role: none;
             }
@@ -481,15 +459,15 @@ export component AboutPage inherits Page {
             horizontal-stretch: 0;
             Icon {
                 text: "\u{E76C}";
-                font-size: 12px;
-                color: Surface.quiet;
+                font-size: Type.chevron;
+                color: Surface.secondary;
                 width: 12px;
             }
         }
 
         Text {
             text: @tr("ui" => "About");
-            font-size: 18px;
+            font-size: Type.title;
             font-weight: 600;
             color: Surface.text;
             vertical-alignment: center;
@@ -516,7 +494,7 @@ export component AboutPage inherits Page {
             Text {
                 text: "cxtune";
                 color: Surface.text;
-                font-size: 18px;
+                font-size: Type.device;
                 font-weight: 600;
             }
 
@@ -527,20 +505,17 @@ export component AboutPage inherits Page {
             Text {
                 text: @tr("ui" => "Supports the HyperX Cloud II USB sound card (USB 0951:16A4).");
                 color: Surface.text;
-                font-size: 12px;
+                font-size: Type.caption;
                 wrap: word-wrap;
             }
         }
     }
 
     Card {
-        VerticalLayout {
-            padding: 12px;
-            Caption {
-                text: @tr("ui" => "cxtune is an independent project. It is not affiliated with, endorsed by or supported by HyperX, HP or Synaptics. It changes the device's settings at your own risk; the authors accept no liability. Changes are temporary: unplugging the dongle restores the original settings.");
-                wrap: word-wrap;
-                vertical-alignment: top;
-            }
+        Caption {
+            text: @tr("ui" => "cxtune is an independent project. It is not affiliated with, endorsed by or supported by HyperX, HP or Synaptics. It changes the device's settings at your own risk; the authors accept no liability. Changes are temporary: unplugging the dongle restores the original settings.");
+            wrap: word-wrap;
+            vertical-alignment: top;
         }
     }
 }

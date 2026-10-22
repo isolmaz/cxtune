@@ -214,6 +214,10 @@ export global Texts {
         return @tr("ui" => "≈ {} ms", ms);
     }
 
+    public pure function state(on: bool) -> string {
+        return on ? @tr("ui" => "On") : @tr("ui" => "Off");
+    }
+
     public pure function gain(db: int) -> string {
         if db > 0 {
             return @tr("ui" => "+{} dB", db);

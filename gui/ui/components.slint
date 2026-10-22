@@ -1,6 +1,6 @@
 import { ComboBox, Palette, Slider, Switch } from "std-widgets.slint";
 import { Delay, Hiss, Model, ModeIndicators, Pop, Title, Tone } from "contract.slint";
-import { Grid, Signal, Surface } from "theme.slint";
+import { Grid, Signal, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
 // The explanation that the mouse is pointing at, and where the "?" is; only the visual layer knows
@@ -11,31 +11,39 @@ export global Hover {
     in-out property <length> y;
 }
 
-// ---- Type: body 14, secondary 12, titles 14 semibold ----
+// ---- Type: see `Type` ----
 
-export component Body inherits Text {
-    font-size: 14px;
+// The title of a row.
+export component RowText inherits Text {
+    font-size: Type.row;
     color: Surface.text;
     vertical-alignment: center;
 }
 
-export component Strong inherits Text {
-    font-size: 14px;
+// The title of a card.
+export component CardTitle inherits Text {
+    font-size: Type.row;
     font-weight: 600;
     color: Surface.text;
     vertical-alignment: center;
 }
 
+export component Body inherits Text {
+    font-size: Type.body;
+    color: Surface.text;
+    vertical-alignment: center;
+}
+
 export component Caption inherits Text {
-    font-size: 12px;
-    color: Surface.quiet;
+    font-size: Type.caption;
+    color: Surface.secondary;
     vertical-alignment: center;
 }
 
 // A glyph of Segoe Fluent Icons.
 export component Icon inherits Text {
     font-family: "Segoe Fluent Icons";
-    font-size: 16px;
+    font-size: Type.icon;
     color: Surface.text;
     horizontal-alignment: center;
     vertical-alignment: center;
@@ -49,6 +57,12 @@ export component Divider inherits Rectangle {
     background: Surface.stroke;
 }
 
+// Cards and rows that belong together, 4 px apart.
+export component Group inherits VerticalLayout {
+    spacing: Grid.gap;
+}
+
+// A card with free content.
 export component Card inherits Rectangle {
     background: Surface.card;
     border-radius: 8px;
@@ -56,7 +70,10 @@ export component Card inherits Rectangle {
     border-color: Surface.stroke;
 
     VerticalLayout {
-        padding: 1px;
+        padding-left: Grid.card-x;
+        padding-right: Grid.card-x;
+        padding-top: Grid.card-y;
+        padding-bottom: Grid.card-y;
         @children
     }
 }
@@ -102,9 +119,9 @@ export component Badge inherits VerticalLayout {
     horizontal-stretch: 0;
 
     Rectangle {
-        height: 18px;
+        height: 20px;
         min-width: pill-label.preferred-width + 16px;
-        border-radius: 9px;
+        border-radius: 10px;
         border-width: 1px;
         border-color: root.tone.with-alpha(0.4);
         background: root.tone.with-alpha(Surface.dark ? 0.15 : 0.1);
@@ -114,7 +131,7 @@ export component Badge inherits VerticalLayout {
         pill-label := Text {
             text: root.label;
             color: root.tone;
-            font-size: 11px;
+            font-size: Type.caption;
             font-weight: 600;
             width: parent.width;
             height: parent.height;
@@ -128,19 +145,19 @@ export component Badge inherits VerticalLayout {
 // A "?" that explains its row in one line while the mouse is over it.
 export component Help inherits Rectangle {
     in property <string> explanation;
-    width: 16px;
-    height: 16px;
-    border-radius: 8px;
+    width: 20px;
+    height: 20px;
+    border-radius: 10px;
     border-width: 1px;
-    border-color: Surface.faint;
+    border-color: Surface.stroke-strong;
     background: touch.has-hover ? Surface.stroke : transparent;
     accessible-role: text;
     accessible-label: root.explanation;
 
     Text {
         text: "?";
-        color: Surface.quiet;
-        font-size: 11px;
+        color: Surface.secondary;
+        font-size: Type.caption;
         font-weight: 600;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -164,7 +181,7 @@ export component Help inherits Rectangle {
 
 export component LinkText inherits Rectangle {
     in property <string> text;
-    in property <length> font-size: 12px;
+    in property <length> font-size: Type.caption;
     callback clicked();
     accessible-role: button;
     accessible-label: root.text;
@@ -196,7 +213,7 @@ export component InfoBar inherits Rectangle {
     in property <string> text;
     in property <string> icon: "\u{E946}";
     in property <brush> tone: Surface.accent;
-    height: Math.max(32px, message.preferred-height + 16px);
+    height: Math.max(36px, message.preferred-height + 2 * Grid.card-y);
     border-radius: 4px;
     background: Surface.card;
     border-width: 1px;
@@ -205,20 +222,19 @@ export component InfoBar inherits Rectangle {
     accessible-label: root.text;
 
     Icon {
-        x: 12px;
-        y: 8px;
+        x: Grid.card-x;
+        y: Grid.card-y;
         width: 16px;
         height: 16px;
         text: root.icon;
-        font-size: 14px;
         color: root.tone;
     }
 
     message := Caption {
-        x: 36px;
-        y: 0px;
-        width: root.width - 36px - 12px;
-        height: root.height;
+        x: Grid.card-x + 16px + 8px;
+        y: Grid.card-y;
+        width: root.width - self.x - Grid.card-x;
+        height: root.height - 2 * Grid.card-y;
         text: root.text;
         wrap: word-wrap;
         accessible-role: none;
@@ -256,14 +272,13 @@ export component FluentButton inherits Rectangle {
         if root.icon != "": Icon {
             text: root.icon;
             width: 16px;
-            font-size: 14px;
-            color: root.enabled ? Surface.text : Surface.faint;
+            color: root.enabled ? Surface.text : Surface.disabled;
         }
 
         Text {
             text: root.text;
-            font-size: 13px;
-            color: root.enabled ? Surface.text : Surface.faint;
+            font-size: Type.body;
+            color: root.enabled ? Surface.text : Surface.disabled;
             vertical-alignment: center;
             accessible-role: none;
         }
@@ -303,42 +318,62 @@ export component FluentButton inherits Rectangle {
 component MuteToggle inherits Rectangle {
     in property <string> icon;
     in property <string> muted-icon;
+    in property <string> mute-text;
+    in property <string> unmute-text;
     in property <bool> muted;
+    in property <bool> enabled: true;
     callback toggled();
     width: 32px;
     height: 32px;
     border-radius: 4px;
-    background: touch.pressed ? Surface.stroke : touch.has-hover ? Surface.card-hover : transparent;
+    background: !root.enabled ? transparent : touch.pressed ? Surface.stroke : touch.has-hover ? Surface.card-hover : transparent;
     forward-focus: keys;
     accessible-role: button;
-    accessible-label: @tr("ui" => "Mute");
+    accessible-label: root.mute-text;
+    accessible-enabled: root.enabled;
     accessible-checkable: true;
     accessible-checked: root.muted;
     accessible-action-default => {
-        root.toggled();
+        if root.enabled {
+            root.toggled();
+        }
     }
 
     Icon {
         text: root.muted ? root.muted-icon : root.icon;
-        color: root.muted ? Surface.critical : Surface.text;
+        color: !root.enabled ? Surface.disabled : root.muted ? Surface.critical : Surface.text;
         width: parent.width;
         height: parent.height;
     }
 
-    if keys.has-focus: Rectangle {
+    if keys.has-focus && root.enabled: Rectangle {
         border-radius: 4px;
         border-width: 2px;
         border-color: Surface.text;
     }
 
     touch := TouchArea {
+        enabled: root.enabled;
         clicked => {
             root.toggled();
+            if self.has-hover {
+                Hover.explanation = root.muted ? root.unmute-text : root.mute-text;
+            }
+        }
+        changed has-hover => {
+            if self.has-hover {
+                Hover.explanation = root.muted ? root.unmute-text : root.mute-text;
+                Hover.x = root.absolute-position.x;
+                Hover.y = root.absolute-position.y + root.height;
+            } else if Hover.explanation == root.mute-text || Hover.explanation == root.unmute-text {
+                Hover.explanation = "";
+            }
         }
     }
 
     keys := FocusScope {
         width: 0px;
+        enabled: root.enabled;
         key-pressed(event) => {
             if event.text == Key.Space || event.text == Key.Return {
                 root.toggled();
@@ -351,27 +386,38 @@ component MuteToggle inherits Rectangle {
 
 // ---- Rows ----
 
-// A row of a card: a glyph, a title with its "?" and badges, a caption, and the control on the
-// right. A row with a `muted-icon` shows the glyph as a mute button.
+// A setting row, a card of its own: a glyph, a title with its "?" and badges, a caption, the
+// control, and a column for the value. The label block, the control and the value column have
+// the same widths on every page. A row with a `muted-icon` shows the glyph as a mute button.
 export component Row inherits Rectangle {
     in property <string> icon;
     in property <string> muted-icon;
+    in property <string> mute-text;
+    in property <string> unmute-text;
     in-out property <bool> muted;
     in property <string> title;
     in property <string> caption;
     in property <string> help;
+    // the value, right-aligned in its column: a number with its unit, or the state of a switch
+    in property <string> value;
+    in property <bool> value-column;
     in property <bool> experimental;
     in property <bool> recommended;
-    // greyed out while the control has no effect
-    in property <bool> dimmed;
+    // the control does nothing: the texts take the colour of a disabled control
+    in property <bool> disabled;
+    in property <bool> hovered;
     callback mute-toggled(bool);
-    min-height: Grid.row;
-    max-height: Grid.row;
-    opacity: root.dimmed ? 0.5 : 1;
+    height: Grid.row;
+    border-radius: 8px;
+    background: root.hovered ? Surface.card-hover : Surface.card;
+    border-width: 1px;
+    border-color: Surface.stroke;
 
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 16px;
+        padding-left: Grid.card-x;
+        padding-right: Grid.card-x;
+        padding-top: Grid.card-y;
+        padding-bottom: Grid.card-y;
         spacing: 8px;
 
         VerticalLayout {
@@ -383,12 +429,16 @@ export component Row inherits Rectangle {
                 text: root.icon;
                 width: 32px;
                 height: 32px;
+                color: root.disabled ? Surface.disabled : Surface.text;
             }
 
             if root.muted-icon != "": MuteToggle {
                 icon: root.icon;
                 muted-icon: root.muted-icon;
+                mute-text: root.mute-text;
+                unmute-text: root.unmute-text;
                 muted: root.muted;
+                enabled: !root.disabled;
                 toggled => {
                     root.muted = !root.muted;
                     root.mute-toggled(root.muted);
@@ -398,14 +448,16 @@ export component Row inherits Rectangle {
 
         VerticalLayout {
             alignment: center;
-            horizontal-stretch: 1;
+            horizontal-stretch: 0;
+            width: Grid.label;
 
             HorizontalLayout {
                 spacing: 8px;
                 alignment: start;
 
-                Body {
+                RowText {
                     text: root.title;
+                    color: root.disabled ? Surface.disabled : Surface.text;
                     overflow: elide;
                     horizontal-stretch: 0;
                 }
@@ -430,51 +482,81 @@ export component Row inherits Rectangle {
 
             Caption {
                 text: root.caption;
+                color: root.disabled ? Surface.disabled : Surface.secondary;
                 overflow: elide;
             }
         }
 
-        @children
+        // the control: a slider takes all the room that there is, anything else sits at the end
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            @children
+        }
+
+        if root.value-column: Body {
+            text: root.value;
+            color: root.disabled ? Surface.disabled : Surface.text;
+            horizontal-alignment: right;
+            width: Grid.value;
+        }
     }
 }
 
-// The control of a row: a slider and its value.
-export component SliderControl inherits VerticalLayout {
-    alignment: center;
-    horizontal-stretch: 0;
-    width: Grid.control;
+// A control that sits at the end of the room that a row gives it.
+export component Trailing inherits HorizontalLayout {
+    alignment: end;
+}
+
+// A slider that shows the keyboard focus. In a row it spans the room between the label block and
+// the value column.
+export component AppSlider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in-out property <float> value;
+    in property <bool> enabled: true;
+    in property <string> label;
+    callback changed(float);
+    callback released();
+    min-width: Grid.control;
+    height: 32px;
 
     HorizontalLayout {
-        spacing: 12px;
-        @children
+        slider := Slider {
+            minimum: root.minimum;
+            maximum: root.maximum;
+            step: root.step;
+            value <=> root.value;
+            enabled: root.enabled;
+            accessible-label: root.label;
+            changed(value) => {
+                root.changed(value);
+            }
+            released(value) => {
+                root.released();
+            }
+        }
+    }
+
+    if slider.has-focus && root.enabled: Rectangle {
+        x: -2px;
+        y: -2px;
+        width: parent.width + 4px;
+        height: parent.height + 4px;
+        border-radius: 6px;
+        border-width: 2px;
+        border-color: Surface.text;
     }
 }
 
-export component ValueText inherits Text {
-    font-size: 13px;
-    color: Surface.text;
-    vertical-alignment: center;
-    horizontal-alignment: right;
-    width: 72px;
-}
-
-// A switch with the "On" / "Off" it stands for, as in the settings of Windows 11.
+// A switch; its state is the value of its row.
 export component SwitchControl inherits HorizontalLayout {
     in property <string> label;
     in property <bool> enabled: true;
     in-out property <bool> checked;
     callback toggled(bool);
-    spacing: 12px;
     alignment: end;
-    horizontal-stretch: 0;
-
-    Text {
-        text: root.checked ? @tr("ui" => "On") : @tr("ui" => "Off");
-        font-size: 13px;
-        color: root.enabled ? Surface.text : Surface.faint;
-        vertical-alignment: center;
-        accessible-role: none;
-    }
 
     VerticalLayout {
         alignment: center;
@@ -522,8 +604,8 @@ component Indicator inherits VerticalLayout {
 
         Text {
             text: root.value;
-            color: root.known ? Surface.text : Surface.quiet;
-            font-size: 12px;
+            color: root.known ? Surface.text : Surface.secondary;
+            font-size: Type.caption;
             font-weight: root.known ? 600 : 400;
             vertical-alignment: center;
             overflow: elide;
@@ -560,7 +642,7 @@ component ModeCard inherits Rectangle {
         padding-top: 12px;
         padding-bottom: 8px;
 
-        Strong {
+        CardTitle {
             text: Texts.mode-name(root.index);
             overflow: elide;
             height: 20px;
@@ -613,7 +695,7 @@ component ModeCard inherits Rectangle {
         Indicator {
             label: @tr("ui" => "Mute delay");
             value: Texts.delay(root.indicators.delay, root.indicators.delay-ms);
-            tone: Surface.faint;
+            tone: Surface.secondary;
         }
     }
 
@@ -628,7 +710,7 @@ component ModeCard inherits Rectangle {
 
         Icon {
             text: "\u{E73E}";
-            font-size: 10px;
+            font-size: Type.chevron;
             color: Surface.on-accent;
             width: parent.width;
             height: parent.height;
@@ -749,8 +831,7 @@ component NavItem inherits Rectangle {
 
         Text {
             text: root.label;
-            font-size: 14px;
-            font-weight: root.selected ? 600 : 400;
+            font-size: Type.row;
             color: Surface.text;
             vertical-alignment: center;
             overflow: elide;
@@ -848,7 +929,7 @@ export component StatusPill inherits Rectangle {
 
         label := Text {
             text: root.text;
-            font-size: 12px;
+            font-size: Type.caption;
             font-weight: 600;
             color: Surface.text;
             vertical-alignment: center;
@@ -887,10 +968,10 @@ export component MeterRow inherits HorizontalLayout {
 
     Text {
         text: root.tag;
-        font-size: 11px;
+        font-size: Type.caption;
         font-weight: 600;
         letter-spacing: 0.8px;
-        color: Surface.quiet;
+        color: Surface.secondary;
         vertical-alignment: center;
         width: 28px;
         accessible-role: none;
@@ -906,8 +987,8 @@ export component MeterRow inherits HorizontalLayout {
 
     Text {
         text: root.active ? @tr("ui" => "{} dB", Math.round(root.db)) : "–";
-        font-size: 12px;
-        color: root.active ? Surface.text : Surface.faint;
+        font-size: Type.caption;
+        color: root.active ? Surface.text : Surface.disabled;
         vertical-alignment: center;
         horizontal-alignment: right;
         width: 52px;

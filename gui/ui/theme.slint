@@ -8,14 +8,40 @@ export global Grid {
     out property <length> header: 64px;
     out property <length> footer: 44px;
     out property <length> nav: 136px;
+    // the page: the space around it and between its groups
     out property <length> margin: 12px;
-    out property <length> row: 40px;
-    // the control of a row: a slider with its value, a switch, a combo box
-    out property <length> control: 216px;
+    out property <length> group-gap: 12px;
+    // the cards and rows of a group
+    out property <length> gap: 4px;
+    out property <length> card-x: 12px;
+    out property <length> card-y: 10px;
+    // a setting row: two lines of text between the vertical card padding
+    out property <length> row: 56px;
+    // the columns of a setting row: the label block, the slider (at least `control`) and the value
+    out property <length> label: 232px;
+    out property <length> control: 160px;
+    out property <length> value: 64px;
+}
+
+// The type ramp. A text uses one of these sizes; the glyphs of Segoe Fluent Icons use `icon`
+// (`chevron` for a chevron).
+export global Type {
+    // page title, semibold
+    out property <length> title: 20px;
+    // device name, semibold
+    out property <length> device: 16px;
+    // row and card titles, regular (semibold on the title of a card)
+    out property <length> row: 14px;
+    // body, values and buttons
+    out property <length> body: 13px;
+    // captions and everything secondary
+    out property <length> caption: 12px;
+    out property <length> icon: 16px;
+    out property <length> chevron: 12px;
 }
 
 // Windows 11 layers over a Mica-like window background, in both colour schemes. The accent is the
-// one of Windows.
+// one of Windows; the text colours are TextFillColorPrimary, -Secondary and -Disabled.
 export global Surface {
     out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
     out property <brush> window: dark ? @linear-gradient(165deg, #2B2E37 0%, #212329 42%, #1B1C20 100%) : @linear-gradient(165deg, #E7EDF8 0%, #F0F2F8 42%, #F6F6F8 100%);
@@ -28,8 +54,8 @@ export global Surface {
     out property <color> control-stroke: dark ? #FFFFFF1A : #00000019;
 
     out property <color> text: dark ? #FFFFFF : #1B1B1B;
-    out property <color> quiet: dark ? #FFFFFFC8 : #1B1B1BB0;
-    out property <color> faint: dark ? #FFFFFF8B : #1B1B1BA0;
+    out property <color> secondary: dark ? #FFFFFFC5 : #0000009E;
+    out property <color> disabled: dark ? #FFFFFF5D : #0000005C;
 
     out property <brush> accent: Palette.accent-background;
     out property <brush> on-accent: Palette.accent-foreground;
@@ -59,6 +85,6 @@ export global Signal {
 
     // a click that was not measured has no colour
     public pure function pop(kind: Pop) -> color {
-        return kind == Pop.none ? Surface.good : kind == Pop.low ? Surface.caution : kind == Pop.loud ? Surface.critical : Surface.faint;
+        return kind == Pop.none ? Surface.good : kind == Pop.low ? Surface.caution : kind == Pop.loud ? Surface.critical : Surface.secondary;
     }
 }

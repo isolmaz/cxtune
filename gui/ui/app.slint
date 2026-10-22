@@ -1,7 +1,7 @@
 import { Model, Title } from "contract.slint";
-import { Caption, DeviceTile, FluentButton, Hover, LinkText, MeterRow, Nav, StatusPill, Strong } from "components.slint";
+import { Caption, DeviceTile, FluentButton, Hover, LinkText, MeterRow, Nav, StatusPill, CardTitle } from "components.slint";
 import { AboutPage, GeneralPage, MicrophonePage, OutputPage, SidetonePage } from "pages.slint";
-import { Grid, Signal, Surface } from "theme.slint";
+import { Grid, Signal, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
 export * from "contract.slint";
@@ -45,7 +45,7 @@ component Header inherits Rectangle {
             Text {
                 text: "HyperX Cloud II";
                 color: Surface.text;
-                font-size: 16px;
+                font-size: Type.device;
                 font-weight: 600;
                 height: 22px;
                 vertical-alignment: center;
@@ -121,7 +121,7 @@ component Footer inherits Rectangle {
             alignment: center;
             horizontal-stretch: 1;
 
-            Strong {
+            CardTitle {
                 text: Texts.title(Model.title);
                 overflow: elide;
                 height: 20px;
@@ -166,6 +166,7 @@ export component MainWindow inherits Window {
     icon: @image-url("../assets/window.png");
     background: Surface.window;
     default-font-family: "Segoe UI";
+    default-font-size: Type.body;
     preferred-width: Grid.width;
     preferred-height: Grid.height;
     min-width: Grid.width;
@@ -207,7 +208,7 @@ export component MainWindow inherits Window {
                     width: parent.width - 32px;
                     height: 16px;
                     text: @tr("ui" => "cxtune {}", Model.version);
-                    color: Surface.faint;
+                    color: Surface.secondary;
                 }
             }
 
@@ -238,19 +239,19 @@ export component MainWindow inherits Window {
         y: Hover.y + 8px + tip-height > Grid.height - 4px ? Hover.y - 16px - 8px - tip-height : Hover.y + 8px;
         border-radius: 6px;
         border-width: 1px;
-        border-color: Surface.faint;
+        border-color: Surface.stroke-strong;
         background: Surface.popup;
 
         measure := Text {
             text: Hover.explanation;
-            font-size: 12px;
+            font-size: Type.caption;
             visible: false;
         }
 
         tip := Text {
             text: Hover.explanation;
             color: Surface.text;
-            font-size: 12px;
+            font-size: Type.caption;
             wrap: word-wrap;
             x: 12px;
             y: 8px;

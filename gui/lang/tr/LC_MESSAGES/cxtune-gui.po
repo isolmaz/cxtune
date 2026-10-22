@@ -68,24 +68,12 @@ msgid "Quit"
 msgstr "Çıkış"
 
 msgctxt "ui"
-msgid "Mute"
-msgstr "Sessiz"
-
-msgctxt "ui"
 msgid "Experimental"
 msgstr "Deneysel"
 
 msgctxt "ui"
 msgid "Recommended"
 msgstr "Önerilen"
-
-msgctxt "ui"
-msgid "On"
-msgstr "Açık"
-
-msgctxt "ui"
-msgid "Off"
-msgstr "Kapalı"
 
 msgctxt "ui"
 msgid "{}: {}, {}: {}, {}: {}"
@@ -116,6 +104,14 @@ msgid "Balanced mode, microphone boost 6, noise reduction on, AGC and sidetone o
 msgstr "Dengeli mod, mikrofon yükseltme 6, gürültü azaltma açık, AGC ve yan ton kapalı."
 
 msgctxt "ui"
+msgid "Mute speakers"
+msgstr "Hoparlörleri sustur"
+
+msgctxt "ui"
+msgid "Unmute speakers"
+msgstr "Hoparlörlerin sesini aç"
+
+msgctxt "ui"
 msgid "Speaker volume"
 msgstr "Hoparlör ses düzeyi"
 
@@ -128,7 +124,7 @@ msgid "The Windows volume of the sound card. Click the speaker to mute."
 msgstr "USB ses kartının Windows ses düzeyi. Susturmak için hoparlör simgesine tıklayın."
 
 msgctxt "ui"
-msgid "{} %"
+msgid "{}%"
 msgstr "%{}"
 
 msgctxt "ui"
@@ -146,6 +142,14 @@ msgstr "Ses başladıktan sonra bu süre artı 100 ms boyunca susturulur."
 msgctxt "ui"
 msgid "{} ms"
 msgstr "{} ms"
+
+msgctxt "ui"
+msgid "Mute microphone"
+msgstr "Mikrofonu sustur"
+
+msgctxt "ui"
+msgid "Unmute microphone"
+msgstr "Mikrofonun sesini aç"
 
 msgctxt "ui"
 msgid "Microphone volume"
@@ -526,6 +530,14 @@ msgstr "≈ 0,6 sn"
 msgctxt "ui"
 msgid "≈ {} ms"
 msgstr "≈ {} ms"
+
+msgctxt "ui"
+msgid "On"
+msgstr "Açık"
+
+msgctxt "ui"
+msgid "Off"
+msgstr "Kapalı"
 
 msgctxt "ui"
 msgid "+{} dB"

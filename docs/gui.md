@@ -29,7 +29,17 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
 - **Meters.** The OUT and MIC meters take a peak level in dBFS (`out-db`, `mic-db`) and a flag
   (`meters-active`). While the flag is false they stay neutral (every segment off); nothing in the
   application delivers levels yet.
-- **Colours.** The window follows the light or dark scheme and the accent colour of Windows.
+- **Colours.** The window follows the light or dark scheme and the accent colour of Windows. Text
+  uses the Fluent tokens TextFillColorPrimary, -Secondary and -Disabled; every secondary text has
+  at least 4.5:1 contrast on its card in both schemes.
+- **Type and spacing** (`Type` and `Grid` in `theme.slint`). Texts are 20 px semibold (page title),
+  16 px semibold (device name), 14 px (titles of rows and cards; semibold on a card header), 13 px
+  (body, values, buttons) and 12 px (captions, secondary text); glyphs are 16 px, chevrons 12 px.
+  The font is Segoe UI, not Segoe UI Variable: its digits are all the same width and Slint cannot
+  switch on tabular figures of the variable font. Cards have 12 px side and 10 px top and bottom
+  padding; a setting row is a card of 56 px; cards of a group are 4 px apart, groups and the page
+  title 12 px. In a row the label block is 232 px, the value column 64 px and right-aligned, and a
+  slider takes the rest (at least 160 px), so that the right edges line up on every page.
 - **Icon.** The icon (`gui/assets/app.ico`, `tray.png` and `window.png`, a blue rounded square
   with a white headphone) is the project's own work, drawn from plain shapes. Nothing in it is
   taken from an icon set or another program.
