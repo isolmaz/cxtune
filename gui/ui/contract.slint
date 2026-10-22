@@ -1,0 +1,159 @@
+// The contract between the Rust side and the visual layer.
+//
+// Rust decides what is shown (which status line, which values) and what a control does; the
+// files that draw the window only show these properties and report these callbacks. Another
+// look for the window is another set of files that binds the same contract. docs/gui.md
+// describes it.
+
+// The first line of the status: the state of the dongle, or the most important problem.
+export enum Title {
+    starting,
+    disconnected,
+    waiting,
+    applying,
+    reading,
+    in-sync,
+    not-applied,
+    stopped,
+    communication,
+    audio,
+    refused,
+    unsupported-firmware,
+    verify,
+    drift,
+    unresponsive,
+    fatal,
+    busy,
+    bad-settings-file,
+    start-failed,
+    other,
+    save-failed,
+}
+
+// The second line of the status: what to do about the problem, or how the settings stand.
+export enum Hint {
+    none,
+    saved,
+    saving,
+    check-cable,
+    close-audio-users,
+    replug-dongle,
+    replug-it,
+    leave-alone,
+    reapply-or-replug,
+    close-it,
+    reapply-or-restart,
+    fix-file,
+    reapply-retry,
+    free-disk,
+    see-log,
+}
+
+// How serious the status is: the colour of its dot.
+export enum Tone {
+    good,
+    caution,
+    critical,
+}
+
+// The indicators of an output mode.
+export enum Hiss {
+    constant,
+    some,
+    cut,
+}
+
+export enum Pop {
+    none,
+    low,
+    not-measured,
+    loud,
+}
+
+// How long the start of audio is muted: not at all, about 0.6 s as measured, or the start delay
+// plus 100 ms (`delay-ms`).
+export enum Delay {
+    none,
+    about-600-ms,
+    settle,
+}
+
+// The tabs, by index: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about.
+//
+// The modes, by index: 0 stock, 1 quiet start, 2 balanced, 3 minimum hiss.
+//
+// The volumes, by side: 0 the speakers, 1 the microphone.
+export global Model {
+    // status
+    in property <Title> title: Title.starting;
+    in property <Hint> hint: Hint.none;
+    in property <Tone> tone: Tone.caution;
+    // the log holds the technical details of what the status says
+    in property <bool> details;
+    in property <bool> reapply-enabled;
+    in property <string> version;
+
+    // which tab is shown
+    in-out property <int> tab: 0;
+
+    // whether the controls that change the dongle can be used
+    in property <bool> controls-enabled;
+
+    // output mode
+    in-out property <int> mode: 0;
+    in property <bool> mode-recommended;
+    in property <Hiss> hiss;
+    in property <Pop> pop;
+    in property <Delay> delay;
+    in property <int> delay-ms;
+    in-out property <float> settle-ms: 600;
+    in property <float> settle-min: 20;
+    in property <float> settle-max: 2000;
+    in property <float> settle-step: 10;
+    in property <bool> delay-enabled;
+
+    // microphone
+    in-out property <float> boost: 4;
+    in property <float> boost-max: 7;
+    // the gain compared with the vendor setting, in dB
+    in property <int> boost-db;
+    in property <bool> boost-recommended;
+    in-out property <bool> noise-reduction: true;
+    in-out property <bool> agc;
+
+    // sidetone
+    in-out property <bool> sidetone;
+    in-out property <float> level-position: 500;
+    in property <float> level-positions: 1000;
+    // the register value that the position stands for
+    in property <int> level;
+
+    // the volume of the dongle in Windows
+    in property <bool> speaker-present;
+    in-out property <float> speaker-volume;
+    in-out property <bool> speaker-muted;
+    in property <bool> microphone-present;
+    in-out property <float> microphone-volume;
+    in-out property <bool> microphone-muted;
+
+    // general
+    in-out property <bool> autostart;
+    in property <bool> autostart-failed;
+    in-out property <int> language: 1;
+
+    callback mode-selected(int);
+    callback settle-changed(int);
+    callback boost-changed(int);
+    callback noise-reduction-toggled(bool);
+    callback agc-toggled(bool);
+    callback sidetone-toggled(bool);
+    callback level-changed(float);
+    callback slider-released();
+    callback autostart-toggled(bool);
+    callback language-selected(int);
+    callback volume-changed(int, int);
+    callback mute-toggled(int, bool);
+    callback apply-recommended();
+    callback reapply();
+    callback open-log-folder();
+}

@@ -23,7 +23,8 @@ pub trait Stream {
 pub const READY_TIMEOUT: Duration = Duration::from_secs(15);
 const READY_POLL: Duration = Duration::from_millis(50);
 
-const SETTLE_STEP_MS: u16 = 10;
+/// The settle time is set in steps of this many milliseconds.
+pub const SETTLE_STEP_MS: u16 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {

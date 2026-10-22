@@ -1,0 +1,420 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: cxtune-gui\n"
+"Language: tr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "ui"
+msgid "Open log"
+msgstr "Günlüğü aç"
+
+msgctxt "ui"
+msgid "Re-apply"
+msgstr "Yeniden uygula"
+
+msgctxt "ui"
+msgid "Output"
+msgstr "Çıkış"
+
+msgctxt "ui"
+msgid "Microphone"
+msgstr "Mikrofon"
+
+msgctxt "ui"
+msgid "Sidetone"
+msgstr "Yan ton"
+
+msgctxt "ui"
+msgid "General"
+msgstr "Genel"
+
+msgctxt "ui"
+msgid "About"
+msgstr "Hakkında"
+
+msgctxt "ui"
+msgid "cxtune: {}"
+msgstr "cxtune: {}"
+
+msgctxt "ui"
+msgid "Show"
+msgstr "Göster"
+
+msgctxt "ui"
+msgid "Stock"
+msgstr "Stok"
+
+msgctxt "ui"
+msgid "Quiet start"
+msgstr "Sessiz başlangıç"
+
+msgctxt "ui"
+msgid "Balanced"
+msgstr "Dengeli"
+
+msgctxt "ui"
+msgid "Minimum hiss"
+msgstr "En az tıslama"
+
+msgctxt "ui"
+msgid "Quit"
+msgstr "Çıkış"
+
+msgctxt "ui"
+msgid "Experimental"
+msgstr "Deneysel"
+
+msgctxt "ui"
+msgid "{} %"
+msgstr "%{}"
+
+msgctxt "ui"
+msgid "Mute"
+msgstr "Sessiz"
+
+msgctxt "ui"
+msgid "Mode"
+msgstr "Mod"
+
+msgctxt "ui"
+msgid "Recommended"
+msgstr "Önerilen"
+
+msgctxt "ui"
+msgid "Hiss"
+msgstr "Tıslama"
+
+msgctxt "ui"
+msgid "Pop"
+msgstr "Patlama"
+
+msgctxt "ui"
+msgid "Delay"
+msgstr "Gecikme"
+
+msgctxt "ui"
+msgid "Start delay"
+msgstr "Başlangıç gecikmesi"
+
+msgctxt "ui"
+msgid "Only Minimum hiss uses the start delay. After audio starts it stays muted for this long plus 100 ms."
+msgstr "Başlangıç gecikmesini yalnızca En az tıslama kullanır. Ses başladıktan sonra bu süre artı 100 ms susturulur."
+
+msgctxt "ui"
+msgid "{} ms"
+msgstr "{} ms"
+
+msgctxt "ui"
+msgid "Headphones"
+msgstr "Kulaklık"
+
+msgctxt "ui"
+msgid "The volume of the dongle in Windows. The buttons on the dongle and the Windows mixer change it too."
+msgstr "USB ses kartının Windows'taki ses düzeyi. Karttaki düğmeler ve Windows ses karıştırıcısı da bunu değiştirir."
+
+msgctxt "ui"
+msgid "Apply recommended"
+msgstr "Önerileni uygula"
+
+msgctxt "ui"
+msgid "Balanced mode, microphone boost 6 (the best signal-to-noise ratio measured), noise reduction on (about 12 dB less steady noise), AGC and sidetone off."
+msgstr "Dengeli mod, mikrofon yükseltme 6 (ölçülen en iyi sinyal/gürültü oranı), gürültü azaltma açık (sabit gürültü yaklaşık 12 dB daha az), AGC ve yan ton kapalı."
+
+msgctxt "ui"
+msgid "Microphone boost"
+msgstr "Mikrofon yükseltme"
+
+msgctxt "ui"
+msgid "The gain compared with the vendor setting (step 4), 6 dB per step. Step 6 gave the best signal-to-noise ratio in the measurements."
+msgstr "Üretici ayarına (4. adım) göre kazanç, adım başına 6 dB. Ölçümlerde en iyi sinyal/gürültü oranını 6. adım verdi."
+
+msgctxt "ui"
+msgid "A higher boost also raises the noise: from step 6 to 7 it rose by 6 dB."
+msgstr "Yüksek yükseltme gürültüyü de artırır: 6. adımdan 7. adıma geçerken 6 dB arttı."
+
+msgctxt "ui"
+msgid "Noise reduction"
+msgstr "Gürültü azaltma"
+
+msgctxt "ui"
+msgid "Measured: about 12 dB less steady background noise. The effect on speech was not measured."
+msgstr "Ölçüm: sabit arka plan gürültüsü yaklaşık 12 dB daha az. Konuşma üzerindeki etkisi ölçülmedi."
+
+msgctxt "ui"
+msgid "AGC"
+msgstr "AGC"
+
+msgctxt "ui"
+msgid "Automatic gain control. The firmware applies it, but no effect on steady noise could be measured and speech was not tested."
+msgstr "Otomatik kazanç denetimi. Bellenim bunu uygular; ancak sabit gürültü üzerinde bir etki ölçülemedi ve konuşma denenmedi."
+
+msgctxt "ui"
+msgid "Volume"
+msgstr "Ses düzeyi"
+
+msgctxt "ui"
+msgid "The microphone volume of the dongle in Windows. The buttons on the dongle and the Windows mixer change it too."
+msgstr "USB ses kartının Windows'taki mikrofon düzeyi. Karttaki düğmeler ve Windows ses karıştırıcısı da bunu değiştirir."
+
+msgctxt "ui"
+msgid "Plays your own microphone in the headphones. It works only while a microphone and audio playback are open."
+msgstr "Kendi mikrofonunuzu kulaklıkta çalar. Yalnızca bir mikrofon ve ses çalma birlikte açıkken çalışır."
+
+msgctxt "ui"
+msgid "Do not also turn on Windows' \"Listen to this device\" for the microphone: you would hear an echo."
+msgstr "Mikrofon için Windows'un \"Bu aygıtı dinle\" özelliğini de açmayın: yankı duyarsınız."
+
+msgctxt "ui"
+msgid "Level"
+msgstr "Seviye"
+
+msgctxt "ui"
+msgid "The level is a register value from 1 to 4096 of unknown unit; the vendor uses 947."
+msgstr "Seviye, birimi bilinmeyen 1 ile 4096 arasında bir yazmaç değeridir; üretici 947 kullanır."
+
+msgctxt "ui"
+msgid "Start low: the loudness was not measured and can be high in sensitive in-ear monitors."
+msgstr "Düşük başlayın: yüksekliği ölçülmedi ve hassas kulak içi monitörlerde yüksek olabilir."
+
+msgctxt "ui"
+msgid "Start with Windows"
+msgstr "Windows ile başlat"
+
+msgctxt "ui"
+msgid "Starts minimized in the notification area."
+msgstr "Bildirim alanında küçültülmüş olarak başlar."
+
+msgctxt "ui"
+msgid "The setting could not be changed."
+msgstr "Ayar değiştirilemedi."
+
+msgctxt "ui"
+msgid "Language"
+msgstr "Dil"
+
+msgctxt "ui"
+msgid "Log"
+msgstr "Günlük"
+
+msgctxt "ui"
+msgid "Open log folder"
+msgstr "Günlük klasörünü aç"
+
+msgctxt "ui"
+msgid "HyperX Cloud II USB sound card"
+msgstr "HyperX Cloud II USB ses kartı"
+
+msgctxt "ui"
+msgid "Version {}"
+msgstr "Sürüm {}"
+
+msgctxt "ui"
+msgid "Supports the HyperX Cloud II USB sound card (USB 0951:16A4)."
+msgstr "HyperX Cloud II USB ses kartını (USB 0951:16A4) destekler."
+
+msgctxt "ui"
+msgid "cxtune is an independent project. It is not affiliated with, endorsed by or supported by HyperX, HP or Synaptics. It changes the device's settings at your own risk; the authors accept no liability. Changes are temporary: unplugging the dongle restores the original settings."
+msgstr "cxtune bağımsız bir projedir. HyperX, HP veya Synaptics ile hiçbir resmi bağlantısı yoktur; onlar tarafından onaylanmamış veya desteklenmemektedir. Cihaz ayarlarını değiştirir; kullanım tamamen kullanıcının kendi sorumluluğundadır, geliştiriciler hiçbir sorumluluk kabul etmez. Değişiklikler geçicidir: USB ses kartı çıkarılıp takıldığında orijinal ayarlar geri gelir."
+
+msgctxt "ui"
+msgid "Starting…"
+msgstr "Başlatılıyor…"
+
+msgctxt "ui"
+msgid "Dongle not connected"
+msgstr "USB ses kartı bağlı değil"
+
+msgctxt "ui"
+msgid "Waiting for the dongle's firmware"
+msgstr "Bellenim bekleniyor"
+
+msgctxt "ui"
+msgid "Applying settings…"
+msgstr "Ayarlar uygulanıyor…"
+
+msgctxt "ui"
+msgid "Connected, reading the dongle…"
+msgstr "Bağlı, USB ses kartı okunuyor…"
+
+msgctxt "ui"
+msgid "Connected, settings applied"
+msgstr "Bağlı, ayarlar uygulandı"
+
+msgctxt "ui"
+msgid "Connected, settings not applied"
+msgstr "Bağlı, ayarlar uygulanmadı"
+
+msgctxt "ui"
+msgid "Stopped"
+msgstr "Durdu"
+
+msgctxt "ui"
+msgid "Trouble reaching the dongle"
+msgstr "USB ses kartına ulaşılamıyor"
+
+msgctxt "ui"
+msgid "Cannot open the dongle's audio"
+msgstr "USB ses kartının sesi açılamıyor"
+
+msgctxt "ui"
+msgid "The dongle was changed"
+msgstr "USB ses kartı değiştirilmiş"
+
+msgctxt "ui"
+msgid "Unsupported firmware"
+msgstr "Desteklenmeyen bellenim"
+
+msgctxt "ui"
+msgid "A setting did not stick"
+msgstr "Bir ayar kalıcı olmadı"
+
+msgctxt "ui"
+msgid "Another program is interfering"
+msgstr "Başka bir program karışıyor"
+
+msgctxt "ui"
+msgid "The dongle stopped answering"
+msgstr "USB ses kartı yanıt vermiyor"
+
+msgctxt "ui"
+msgid "cxtune stopped after an error"
+msgstr "cxtune bir hata nedeniyle durdu"
+
+msgctxt "ui"
+msgid "Another cxtune holds the dongle"
+msgstr "Başka bir cxtune kartı kullanıyor"
+
+msgctxt "ui"
+msgid "The settings file is unreadable"
+msgstr "Ayar dosyası okunamıyor"
+
+msgctxt "ui"
+msgid "cxtune could not start"
+msgstr "cxtune başlatılamadı"
+
+msgctxt "ui"
+msgid "Settings could not be saved"
+msgstr "Ayarlar kaydedilemedi"
+
+msgctxt "ui"
+msgid "Something went wrong"
+msgstr "Bir şeyler ters gitti"
+
+msgctxt "ui"
+msgid "Settings saved"
+msgstr "Ayarlar kaydedildi"
+
+msgctxt "ui"
+msgid "Saving settings…"
+msgstr "Ayarlar kaydediliyor…"
+
+msgctxt "ui"
+msgid "Check the cable and the USB port."
+msgstr "Kabloyu ve USB bağlantı noktasını kontrol edin."
+
+msgctxt "ui"
+msgid "Close programs that use its audio output."
+msgstr "Ses çıkışını kullanan programları kapatın."
+
+msgctxt "ui"
+msgid "Unplug and replug the dongle."
+msgstr "USB ses kartını çıkarıp yeniden takın."
+
+msgctxt "ui"
+msgid "Unplug and replug it."
+msgstr "Çıkarıp yeniden takın."
+
+msgctxt "ui"
+msgid "cxtune leaves this dongle alone."
+msgstr "cxtune bu karta dokunmaz."
+
+msgctxt "ui"
+msgid "Press Re-apply, or replug the dongle."
+msgstr "Yeniden uygula'ya basın veya kartı çıkarıp takın."
+
+msgctxt "ui"
+msgid "Close it, then press Re-apply."
+msgstr "Onu kapatın, sonra Yeniden uygula'ya basın."
+
+msgctxt "ui"
+msgid "Press Re-apply, or restart cxtune."
+msgstr "Yeniden uygula'ya basın veya cxtune'u yeniden açın."
+
+msgctxt "ui"
+msgid "Fix or delete it, then press Re-apply."
+msgstr "Düzeltin ya da silin, sonra Yeniden uygula'ya basın."
+
+msgctxt "ui"
+msgid "Press Re-apply to try again."
+msgstr "Yeniden denemek için Yeniden uygula'ya basın."
+
+msgctxt "ui"
+msgid "Make sure the disk is not full."
+msgstr "Diskin dolu olmadığından emin olun."
+
+msgctxt "ui"
+msgid "Something unusual happened. See the log."
+msgstr "Olağandışı bir şey oldu. Günlüğe bakın."
+
+msgctxt "ui"
+msgid "Constant idle hiss. No pop when audio starts; nothing is muted."
+msgstr "Boşta sürekli tıslama olur. Ses başlarken patlama sesi duyulmaz; hiçbir şey susturulmaz."
+
+msgctxt "ui"
+msgid "Some idle hiss. A low pop when audio starts; nothing is muted."
+msgstr "Boşta biraz tıslama olur. Ses başlarken hafif bir patlama sesi duyulur; hiçbir şey susturulmaz."
+
+msgctxt "ui"
+msgid "Cuts the idle hiss. The first 600 ms of audio after idle are muted; opening the microphone from full idle gives 1.26 s of silence and a click."
+msgstr "Boştaki tıslamayı azaltır. Boştan sonra sesin ilk 600 ms'si susturulur; mikrofonu tam boştan açmak 1,26 sn sessizlik ve bir tık sesi verir."
+
+msgctxt "ui"
+msgid "Cuts the idle hiss. A loud pop when audio starts, and audio is muted for the start delay plus 100 ms."
+msgstr "Boştaki tıslamayı azaltır. Ses başlarken yüksek bir patlama sesi duyulur; ses, başlangıç gecikmesi artı 100 ms boyunca susturulur."
+
+msgctxt "ui"
+msgid "Constant"
+msgstr "Sürekli"
+
+msgctxt "ui"
+msgid "Some"
+msgstr "Biraz"
+
+msgctxt "ui"
+msgid "Reduced"
+msgstr "Azaltılmış"
+
+msgctxt "ui"
+msgid "None"
+msgstr "Yok"
+
+msgctxt "ui"
+msgid "Low"
+msgstr "Düşük"
+
+msgctxt "ui"
+msgid "Not measured"
+msgstr "Ölçülmedi"
+
+msgctxt "ui"
+msgid "Loud"
+msgstr "Yüksek"
+
+msgctxt "ui"
+msgid "about 0.6 s"
+msgstr "yaklaşık 0,6 sn"
+
+msgctxt "ui"
+msgid "about {} ms"
+msgstr "yaklaşık {} ms"
+
+msgctxt "ui"
+msgid "+{} dB"
+msgstr "+{} dB"
+
+msgctxt "ui"
+msgid "{} dB"
+msgstr "{} dB"

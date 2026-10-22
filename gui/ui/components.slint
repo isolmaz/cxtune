@@ -1,0 +1,360 @@
+import { Button, CheckBox, ComboBox, Palette, Slider, Switch } from "std-widgets.slint";
+import { Model } from "contract.slint";
+import { Grid, Surface } from "theme.slint";
+import { Texts } from "texts.slint";
+
+// The explanation that the mouse is pointing at, and where; only the visual layer knows of it.
+export global Hover {
+    in-out property <string> explanation;
+    in-out property <length> y;
+}
+
+// 12px text has a line pitch of 16px; a note reserves the height of its longest text in both languages.
+export component Note inherits Text {
+    color: Surface.quiet;
+    font-size: 12px;
+    wrap: word-wrap;
+    min-height: 20px;
+    vertical-alignment: top;
+}
+
+// A small coloured pill: "Experimental", "Recommended".
+export component Badge inherits VerticalLayout {
+    in property <string> label;
+    in property <color> tone: Surface.caution;
+    alignment: center;
+    horizontal-stretch: 0;
+
+    Rectangle {
+        height: 18px;
+        min-width: pill-label.preferred-width + 14px;
+        border-radius: 9px;
+        border-width: 1px;
+        border-color: root.tone;
+        background: root.tone.with-alpha(0.15);
+        accessible-role: text;
+        accessible-label: root.label;
+
+        pill-label := Text {
+            text: root.label;
+            color: root.tone;
+            font-size: 11px;
+            font-weight: 600;
+            x: 0px;
+            width: parent.width;
+            height: parent.height;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+}
+
+// A small "?" that explains its row while the mouse is over it.
+export component Help inherits Rectangle {
+    in property <string> explanation;
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Surface.quiet;
+    background: touch.has-hover ? Surface.stroke : transparent;
+    accessible-role: text;
+    accessible-label: root.explanation;
+
+    Text {
+        text: "?";
+        color: Surface.quiet;
+        font-size: 11px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+        accessible-role: none;
+    }
+
+    touch := TouchArea {
+        changed has-hover => {
+            if self.has-hover {
+                Hover.explanation = root.explanation;
+                Hover.y = root.absolute-position.y + root.height;
+            } else if Hover.explanation == root.explanation {
+                Hover.explanation = "";
+            }
+        }
+    }
+}
+
+export component LinkText inherits Rectangle {
+    in property <string> text;
+    in property <length> font-size: 14px;
+    callback clicked();
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => {
+        root.clicked();
+    }
+    min-height: label.preferred-height;
+    min-width: label.preferred-width;
+    horizontal-stretch: 0;
+
+    label := Text {
+        text: root.text;
+        color: Palette.accent-background;
+        font-size: root.font-size;
+        vertical-alignment: center;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A label on the left, with a "?" if there is something to explain, and the control in the
+// column that starts at 170px.
+export component Row inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> help;
+    min-height: Grid.row;
+    max-height: Grid.row;
+    spacing: 0px;
+
+    HorizontalLayout {
+        width: Grid.label;
+        spacing: 6px;
+        Text {
+            text: root.label;
+            color: Surface.text;
+            font-size: 14px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+
+        if root.help != "": VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            Help {
+                explanation: root.help;
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+    }
+
+    @children
+}
+
+// A switch with its title, a "?" and a badge for what is experimental.
+export component ToggleRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> help;
+    in property <bool> experimental;
+    in property <bool> enabled: true;
+    in-out property <bool> checked;
+    callback toggled(bool);
+    min-height: Grid.row;
+    max-height: Grid.row;
+    spacing: 10px;
+
+    Switch {
+        text: "";
+        checked <=> root.checked;
+        enabled: root.enabled;
+        accessible-label: root.label;
+        toggled => {
+            root.toggled(self.checked);
+        }
+    }
+
+    Text {
+        text: root.label;
+        color: Surface.text;
+        font-size: 14px;
+        vertical-alignment: center;
+        horizontal-stretch: 0;
+    }
+
+    if root.help != "": VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 0;
+        Help {
+            explanation: root.help;
+        }
+    }
+
+    if root.experimental: Badge {
+        label: @tr("ui" => "Experimental");
+    }
+
+    Rectangle {
+        horizontal-stretch: 1;
+    }
+}
+
+// The slider of a volume, its value and the mute switch. `side` is 0 for the speakers and 1 for
+// the microphone.
+export component VolumeRow inherits Row {
+    in property <int> side;
+    in property <bool> present;
+    in-out property <float> volume;
+    in-out property <bool> muted;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Slider {
+            minimum: 0;
+            maximum: 100;
+            step: 1;
+            value <=> root.volume;
+            enabled: root.present;
+            accessible-label: root.label;
+            changed(value) => {
+                root.volume = Math.round(value);
+                Model.volume-changed(root.side, Math.round(value));
+            }
+        }
+
+        Text {
+            text: root.present ? @tr("ui" => "{} %", Math.round(root.volume)) : "–";
+            color: root.present ? Surface.text : Surface.quiet;
+            font-size: 14px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            width: 44px;
+        }
+
+        CheckBox {
+            text: @tr("ui" => "Mute");
+            checked <=> root.muted;
+            enabled: root.present;
+            toggled => {
+                Model.mute-toggled(root.side, self.checked);
+            }
+        }
+    }
+}
+
+export component Indicator inherits VerticalLayout {
+    in property <string> name;
+    in property <string> value;
+    in property <bool> known: true;
+    spacing: 1px;
+    horizontal-stretch: 1;
+
+    Text {
+        text: root.name;
+        color: Surface.quiet;
+        font-size: 11px;
+    }
+
+    Text {
+        text: root.value;
+        color: root.known ? Surface.text : Surface.quiet;
+        font-size: 13px;
+        font-weight: root.known ? 600 : 400;
+        overflow: elide;
+    }
+}
+
+export component TabBar inherits Rectangle {
+    in property <[string]> names;
+    height: 40px;
+
+    forward-focus: keys;
+    accessible-role: tab-list;
+    accessible-item-count: root.names.length;
+
+    keys := FocusScope {
+        width: 0px;
+        key-pressed(event) => {
+            if event.text == Key.LeftArrow {
+                Model.tab = Math.max(Model.tab - 1, 0);
+                return accept;
+            }
+            if event.text == Key.RightArrow {
+                Model.tab = Math.min(Model.tab + 1, root.names.length - 1);
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    HorizontalLayout {
+        alignment: start;
+        for name[index] in root.names: Rectangle {
+            property <bool> selected: Model.tab == index;
+            // the selected tab is bold; every tab keeps the width of its bold text so that nothing shifts
+            min-width: widest.preferred-width + 20px;
+            background: touch.has-hover && !selected ? Surface.text.with-alpha(0.06) : transparent;
+            border-radius: 6px;
+            accessible-role: tab;
+            accessible-label: name;
+            accessible-item-index: index;
+            accessible-item-selectable: true;
+            accessible-item-selected: selected;
+            accessible-action-default => {
+                Model.tab = index;
+                keys.focus();
+            }
+
+            widest := Text {
+                text: name;
+                font-size: 14px;
+                font-weight: 600;
+                visible: false;
+            }
+
+            Text {
+                text: name;
+                color: selected || touch.has-hover ? Surface.text : Surface.quiet;
+                font-size: 14px;
+                font-weight: selected ? 600 : 400;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                x: 0px;
+                y: 0px;
+                width: parent.width;
+                height: parent.height - 6px;
+                accessible-role: none;
+            }
+
+            if selected: Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: parent.height - 7px;
+                width: 16px;
+                height: 3px;
+                border-radius: 1.5px;
+                background: Palette.accent-background;
+            }
+
+            if selected && keys.has-focus: Rectangle {
+                border-radius: 6px;
+                border-width: 2px;
+                border-color: Surface.text;
+            }
+
+            touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    Model.tab = index;
+                    keys.focus();
+                }
+            }
+        }
+    }
+}
+
+export component Tab inherits VerticalLayout {
+    padding-left: Grid.margin;
+    padding-right: Grid.margin;
+    padding-top: 16px;
+    spacing: Grid.gap;
+    alignment: start;
+}
+
