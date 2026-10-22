@@ -125,7 +125,7 @@ msgstr "Yumuşak açılış süresi"
 
 msgctxt "ui"
 msgid "Used only by Lowest noise. After audio starts it stays muted for this time plus 100 ms."
-msgstr "Yalnızca En düşük gürültü kullanır. Ses başladıktan sonra bu süre artı 100 ms boyunca susturulur."
+msgstr "Yalnızca En sessiz kullanır. Ses başladıktan sonra bu süre artı 100 ms boyunca susturulur."
 
 msgctxt "ui"
 msgid "{} ms"
@@ -405,7 +405,7 @@ msgstr "Dengeli"
 
 msgctxt "ui"
 msgid "Lowest noise"
-msgstr "En düşük gürültü"
+msgstr "En sessiz"
 
 msgctxt "ui"
 msgid "Constant"

@@ -262,7 +262,7 @@ export component InfoBar inherits Rectangle {
     in property <string> text;
     in property <string> icon: "\u{E946}";
     in property <brush> tone: Surface.accent;
-    height: Math.max(40px, message.preferred-height + 2 * Grid.pad);
+    height: Math.max(32px, message.preferred-height + 16px);
     border-radius: 4px;
     background: Surface.card;
     border-width: 1px;
@@ -272,7 +272,7 @@ export component InfoBar inherits Rectangle {
 
     Icon {
         x: Grid.pad;
-        y: Grid.pad;
+        y: (parent.height - self.height) / 2;
         width: 16px;
         height: 16px;
         text: root.icon;
@@ -281,9 +281,9 @@ export component InfoBar inherits Rectangle {
 
     message := Caption {
         x: Grid.pad + 16px + 8px;
-        y: Grid.pad;
+        y: 8px;
         width: root.width - self.x - Grid.pad;
-        height: root.height - 2 * Grid.pad;
+        height: root.height - 16px;
         text: root.text;
         wrap: word-wrap;
         accessible-role: none;
@@ -770,7 +770,7 @@ component ModeCard inherits Rectangle {
         padding-top: Grid.pad;
         padding-bottom: Grid.pad;
 
-        // the name takes up to two lines; the badge of the recommended mode goes below it
+        // the name takes one line; the badge of the recommended mode goes below it
         VerticalLayout {
             height: Grid.mode-head;
             alignment: start;
@@ -778,7 +778,7 @@ component ModeCard inherits Rectangle {
 
             CardTitle {
                 text: Texts.mode-name(root.index);
-                wrap: word-wrap;
+                overflow: elide;
                 vertical-alignment: top;
                 accessible-role: none;
             }

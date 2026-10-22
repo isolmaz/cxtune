@@ -368,7 +368,6 @@ impl App {
         let indicators = Mode::ALL.map(|mode| controls::indicators(mode, controls.settle_ms));
         model.set_indicators(ModelRc::new(VecModel::from(indicators.to_vec())));
         model.set_boost_db(controls::gain_db(controls.boost));
-        model.set_boost_recommended(controls.boost == controls::BOOST_RECOMMENDED);
 
         model.set_title(status.title);
         model.set_hint(status.hint);

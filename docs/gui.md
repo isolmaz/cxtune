@@ -46,7 +46,7 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
   at its sides and 16 px above and below, so everything on it is 512 px wide: the title (32 px
   high, at y = 16 of the page), the rows, the info bars and the mode cards. The title and the
   groups are 12 px apart, the cards of a group 4 px, the mode cards 8 px. A card has 12 px of
-  padding. A row is 48 px high and has a 20 px glyph column, 12 px, the label (it starts 44 px
+  padding and an info bar of one line is 32 px high. A row is 48 px high and has a 20 px glyph column, 12 px, the label (it starts 44 px
   from the left edge of the row on every page) and at the right edge, 12 px inside it, the
   control: a slider is 200 px wide and is followed by 8 px and a 64 px right-aligned value, a switch
   has the word for its state on its left, a combo box or a button is 160 px wide. The snapshot
@@ -82,7 +82,7 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
   | Click | Tık | the pop when audio starts |
   | Mute delay | Açılış gecikmesi | how long the start of audio is muted |
   | Soft-start time | Yumuşak açılış süresi | the settle time of Lowest noise |
-  | Default, Low click, Balanced, Lowest noise | Varsayılan, Az tıklı, Dengeli, En düşük gürültü | the modes stock, quiet, balanced and minimum hiss |
+  | Default, Low click, Balanced, Lowest noise | Varsayılan, Az tıklı, Dengeli, En sessiz | the modes stock, quiet, balanced and minimum hiss |
 
 ## Threads
 
@@ -201,7 +201,7 @@ in `contract.slint` and the `MainWindow` and `Tray` components.
 | `controls-enabled` | whether the controls that change the dongle can be used |
 | `mode` (in-out), `recommended-mode`, `indicators` | the mode (0 stock, 1 quiet, 2 balanced, 3 minimum hiss), the recommended one, and the `ModeIndicators` (`hiss`, `pop`, `delay`, `delay-ms`) of every mode by index |
 | `settle-ms` (in-out), `settle-min`, `settle-max`, `settle-step`, `delay-enabled` | the soft-start time |
-| `boost` (in-out), `boost-max`, `boost-db`, `boost-recommended`, `noise-reduction` (in-out), `agc` (in-out) | the microphone |
+| `boost` (in-out), `boost-max`, `boost-db`, `noise-reduction` (in-out), `agc` (in-out) | the microphone |
 | `sidetone` (in-out), `level` (in-out), `level-min`, `level-max`, `level-step` | sidetone: the register value (shown as dB, 256 per dB) and the range and key step of its slider |
 | `speaker-present`, `speaker-volume` (in-out), `speaker-muted` (in-out), `microphone-present`, `microphone-volume` (in-out), `microphone-muted` (in-out) | the Windows volume |
 | `autostart` (in-out), `autostart-failed`, `language` (in-out; 0 Turkish, 1 English) | general |
