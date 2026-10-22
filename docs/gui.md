@@ -22,11 +22,9 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
   Microphone (boost, noise reduction, AGC, microphone volume), Sidetone, General (start with
   Windows, language, log folder) and About. The window has a fixed size of 480 x 348 logical
   pixels and no scrolling. A "?" next to a label explains it in a box while the mouse is over it.
-- **Images.** All of them are the project's own work, made for it: the icon (`gui/assets/app.ico`,
-  `tray.png` and `window.png`, a blue disc with three white bars) was drawn from plain shapes,
-  and the drawing of the control box on the About tab is built from Slint shapes
-  (`DeviceDrawing` in `gui/ui/components.slint`). Nothing is taken from an icon set, another
-  program or a manufacturer.
+- **Icon.** The icon (`gui/assets/app.ico`, `tray.png` and `window.png`, a blue disc with three
+  white bars) is the project's own work, drawn from plain shapes. Nothing in it is taken from an
+  icon set or another program.
 - **Status.** The band at the bottom shows two lines: what is wrong (or how the dongle stands) and
   what to do about it, a coloured dot, an "Open log" link when the log holds technical details,
   and the Re-apply button. Nothing else is repeated elsewhere.
