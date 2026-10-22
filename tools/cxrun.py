@@ -7,7 +7,8 @@ usage: python tools/cxrun.py <eeprom.bin> [dis|problems|regs|seeds]
   regs      cross-references of the data addresses and the calls out of the patch
   seeds     function start addresses with names, for the Ghidra setup
 
-The seed addresses below are those of the rev 0010 patch.
+The seed addresses below are those of the rev 0010 patch. Addresses follow the code segment's
+offset (+0x0E91); the hook table segment is really 4 bytes higher in RAM ($1457, not $1453).
 """
 import sys, os, collections
 exec(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cxdis.py')).read())

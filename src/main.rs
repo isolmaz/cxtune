@@ -26,7 +26,7 @@ usage: cxtune <command>
   sidetone-level <1-4096> sidetone gain register (experimental, unit not measured, device
                           default 947) and remember it; start low, sidetone can be loud
   dump <out-dir>          read the ROM and EEPROM (read-only) into <out-dir>/rom.bin and
-                          eeprom.bin and compare their SHA-256 with the reference unit's
+                          eeprom.bin (never overwrites) and compare their SHA-256 with the reference unit's
   watch                   keep the remembered settings applied across replugs; holds the
                           dongle for as long as it runs, so other commands are refused
 
@@ -87,10 +87,12 @@ fn status() -> Result<()> {
 }
 
 fn dump(dir: &str) -> Result<()> {
-    println!("reading the ROM and the EEPROM (read-only), this takes about 15 seconds");
+    let dir = Path::new(dir);
+    cxtune::dump::ensure_free(dir)?;
+    println!("reading the ROM and the EEPROM (read-only), this takes about 30 seconds");
     let dump = cxtune::dump::read(&mut open()?)?;
-    dump.save(Path::new(dir))?;
-    println!("wrote rom.bin and eeprom.bin to {dir}");
+    dump.save(dir)?;
+    println!("wrote rom.bin and eeprom.bin to {}", dir.display());
     print!("{}", dump.report());
     Ok(())
 }

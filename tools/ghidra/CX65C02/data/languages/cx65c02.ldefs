@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Modelled on Ghidra's Ghidra/Processors/6502/data/languages/6502.ldefs (Apache License 2.0, see
+     ../../../LICENSE); modified for the CX65C02 language. -->
 <language_definitions>
   <language processor="CX65C02"
             endian="little"

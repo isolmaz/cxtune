@@ -89,24 +89,41 @@ pub trait Transport {
     fn receive(&mut self) -> Result<Vec<u8>>;
 }
 
+/// Size of the EEPROM part that can be read: `0x0000..0x3FFF`.
+pub const EEPROM_SIZE: usize = 0x4000;
+
 /// Reads `len` bytes of CPU memory starting at `addr`, in chunks of at most 32 bytes.
 pub fn read_mem<T: Transport + ?Sized>(t: &mut T, addr: u16, len: usize) -> Result<Vec<u8>> {
-    read_range(t, addr, len, OutReport::read)
+    read_range(t, addr, len, 0x1_0000, false, OutReport::read)
 }
 
-/// Reads `len` bytes of EEPROM starting at `addr`, in chunks of at most 32 bytes. A read only:
-/// the request carries flag 0x20 alone.
+/// Like [`read_mem`], but every chunk is read twice and the two reads must agree. The protocol
+/// has no request tags, so a response fetched before the device has built it is the previous
+/// one with a valid header; the second read exposes that.
+pub fn read_mem_confirmed<T: Transport + ?Sized>(
+    t: &mut T,
+    addr: u16,
+    len: usize,
+) -> Result<Vec<u8>> {
+    read_range(t, addr, len, 0x1_0000, true, OutReport::read)
+}
+
+/// Reads `len` bytes of EEPROM starting at `addr` (`addr + len` at most [`EEPROM_SIZE`]), in
+/// chunks of at most 32 bytes, each read twice as in [`read_mem_confirmed`]. A read only: the
+/// request carries flag 0x20 alone.
 pub fn read_eeprom<T: Transport + ?Sized>(t: &mut T, addr: u16, len: usize) -> Result<Vec<u8>> {
-    read_range(t, addr, len, OutReport::eeprom_read)
+    read_range(t, addr, len, EEPROM_SIZE, true, OutReport::eeprom_read)
 }
 
 fn read_range<T: Transport + ?Sized>(
     t: &mut T,
     addr: u16,
     len: usize,
+    limit: usize,
+    confirm: bool,
     request: fn(u16, usize) -> OutReport,
 ) -> Result<Vec<u8>> {
-    if len == 0 || addr as usize + len > 0x1_0000 {
+    if len == 0 || addr as usize + len > limit {
         return Err(Error::Protocol(format!(
             "invalid read of {len} bytes at ${addr:04X}"
         )));
@@ -115,9 +132,21 @@ fn read_range<T: Transport + ?Sized>(
     while out.len() < len {
         let n = (len - out.len()).min(MAX_CHUNK);
         let chunk_addr = addr + out.len() as u16;
-        out.extend_from_slice(&read_chunk(t, &request(chunk_addr, n), chunk_addr, n)?);
+        let chunk = read_chunk(t, &request(chunk_addr, n), chunk_addr, n, confirm)?;
+        out.extend_from_slice(&chunk);
     }
     Ok(out)
+}
+
+/// One request and its response, or `None` when the response is not an IN report with `n` bytes.
+fn exchange<T: Transport + ?Sized>(
+    t: &mut T,
+    request: &OutReport,
+    n: usize,
+) -> Result<Option<Vec<u8>>> {
+    t.send(request)?;
+    let r = t.receive()?;
+    Ok((r.len() > n && r[0] == IN_REPORT_ID).then(|| r[1..=n].to_vec()))
 }
 
 fn read_chunk<T: Transport + ?Sized>(
@@ -125,16 +154,18 @@ fn read_chunk<T: Transport + ?Sized>(
     request: &OutReport,
     addr: u16,
     n: usize,
+    confirm: bool,
 ) -> Result<Vec<u8>> {
     for _ in 0..READ_ATTEMPTS {
-        t.send(request)?;
-        let r = t.receive()?;
-        if r.len() > n && r[0] == IN_REPORT_ID {
-            return Ok(r[1..=n].to_vec());
+        let Some(first) = exchange(t, request, n)? else {
+            continue;
+        };
+        if !confirm || exchange(t, request, n)?.as_deref() == Some(&first[..]) {
+            return Ok(first);
         }
     }
     Err(Error::Protocol(format!(
-        "no valid IN report for read of {n} bytes at ${addr:04X}"
+        "no valid, repeatable IN report for read of {n} bytes at ${addr:04X}"
     )))
 }
 
@@ -171,6 +202,116 @@ mod tests {
         }
     }
 
+    /// Answers some receives with the response before, as a device does that has not yet built
+    /// the new one.
+    struct Lagging {
+        device: FakeDevice,
+        previous: Vec<u8>,
+        receives: usize,
+        lags: fn(usize) -> bool,
+    }
+
+    impl Lagging {
+        fn new(device: FakeDevice, lags: fn(usize) -> bool) -> Self {
+            Self {
+                device,
+                previous: Vec::new(),
+                receives: 0,
+                lags,
+            }
+        }
+    }
+
+    impl Transport for Lagging {
+        fn send(&mut self, report: &OutReport) -> Result<()> {
+            self.device.send(report)
+        }
+
+        fn receive(&mut self) -> Result<Vec<u8>> {
+            self.receives += 1;
+            let fresh = self.device.receive()?;
+            let answer = if (self.lags)(self.receives) && !self.previous.is_empty() {
+                self.previous.clone()
+            } else {
+                fresh.clone()
+            };
+            self.previous = fresh;
+            Ok(answer)
+        }
+    }
+
+    fn device_with_pattern() -> FakeDevice {
+        let device = FakeDevice::stock();
+        let image: Vec<u8> = (0..0x4000).map(|i| (i * 7 % 253) as u8 | 1).collect();
+        device.set_eeprom(&image);
+        device.poke(0x7000, &image[..0x100]);
+        device
+    }
+
+    /// Every response differs from the one before in its first data byte.
+    struct Flapping {
+        device: FakeDevice,
+        receives: u8,
+    }
+
+    impl Transport for Flapping {
+        fn send(&mut self, report: &OutReport) -> Result<()> {
+            self.device.send(report)
+        }
+
+        fn receive(&mut self) -> Result<Vec<u8>> {
+            self.receives = self.receives.wrapping_add(1);
+            let mut r = self.device.receive()?;
+            r[1] ^= self.receives;
+            Ok(r)
+        }
+    }
+
+    #[test]
+    fn a_stale_response_is_accepted_by_a_plain_read_and_caught_by_a_confirmed_one() {
+        let truth = device_with_pattern().mem()[0x7000..0x7060].to_vec();
+        let image = device_with_pattern().eeprom_image();
+        let stale_third_response = |n: usize| n == 3;
+
+        let mut plain = Lagging::new(device_with_pattern(), stale_third_response);
+        assert_ne!(read_mem(&mut plain, 0x7000, 96).unwrap(), truth);
+
+        let mut confirmed = Lagging::new(device_with_pattern(), stale_third_response);
+        assert_eq!(
+            read_mem_confirmed(&mut confirmed, 0x7000, 96).unwrap(),
+            truth
+        );
+
+        let mut eeprom = Lagging::new(device_with_pattern(), stale_third_response);
+        assert_eq!(read_eeprom(&mut eeprom, 0, 96).unwrap(), image[..96]);
+    }
+
+    #[test]
+    fn a_response_that_keeps_changing_fails_the_read() {
+        let mut t = Flapping {
+            device: device_with_pattern(),
+            receives: 0,
+        };
+        let err = read_mem_confirmed(&mut t, 0x7000, 64).unwrap_err();
+        assert!(
+            matches!(err, Error::Protocol(ref m) if m.contains("$7000")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn eeprom_reads_stay_inside_the_16_kib_part() {
+        let mut t = Recorder::new(FakeDevice::stock());
+        for (addr, len) in [(0x4000, 1), (0x3FF0, 17), (0xFFFF, 1), (0, 0x4001), (0, 0)] {
+            assert!(
+                matches!(read_eeprom(&mut t, addr, len), Err(Error::Protocol(_))),
+                "{addr:#06x} {len}"
+            );
+        }
+        assert!(t.flags.is_empty());
+        assert_eq!(read_eeprom(&mut t, 0x3FF0, 16).unwrap().len(), 16);
+    }
+
     #[test]
     #[should_panic(expected = "forbidden flags 0x60")]
     fn an_eeprom_write_cannot_be_built() {
@@ -205,10 +346,13 @@ mod tests {
     fn eeprom_reads_send_only_flag_0x20_and_memory_reads_only_flag_0x00() {
         let mut t = Recorder::new(FakeDevice::stock());
         assert_eq!(read_eeprom(&mut t, 0x0100, 70).unwrap().len(), 70);
-        assert_eq!(t.flags, [0x20; 3]);
+        assert_eq!(t.flags, [0x20; 6]);
         t.flags.clear();
         assert_eq!(read_mem(&mut t, 0x1000, 70).unwrap().len(), 70);
         assert_eq!(t.flags, [0x00; 3]);
+        t.flags.clear();
+        assert_eq!(read_mem_confirmed(&mut t, 0x1000, 70).unwrap().len(), 70);
+        assert_eq!(t.flags, [0x00; 6]);
     }
 
     #[test]

@@ -493,6 +493,10 @@ impl FakeDevice {
         d.eeprom.copy_from_slice(image);
     }
 
+    pub fn eeprom_image(&self) -> Vec<u8> {
+        self.lock().eeprom.clone()
+    }
+
     /// EEPROM read requests the device has been sent.
     pub fn eeprom_reads(&self) -> usize {
         self.lock().eeprom_reads

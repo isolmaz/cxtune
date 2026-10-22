@@ -7,7 +7,8 @@ CPU address = image offset + DELTA, where DELTA follows from the patch pointer i
 import sys, struct, collections
 IMG = sys.argv[1]
 d = open(IMG, 'rb').read()
-# Patch block (EEPROM pointer at 0x15) is assumed to load at CPU $1450, as in the Rev 0010 image (0x5BF + 0xE91).
+# The code segment of the patch (EEPROM pointer at 0x15) is assumed to load at CPU $1450, as in the Rev 0010 image (0x5BF + 0xE91).
+# The hook table segment is 4 bytes higher in RAM; hooks are read from $1453 here (cxrun.py).
 PATCH = d[0x15] | d[0x16] << 8
 DELTA = 0x1450 - PATCH
 LO, HI = PATCH + 0x18F, d[0x20] | d[0x21] << 8   # code region; HI = version string address

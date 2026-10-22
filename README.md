@@ -213,4 +213,5 @@ audio endpoints (`set` and `mute` change them).
 
 ### License
 
-[MIT](LICENSE).
+[MIT](LICENSE), except `tools/ghidra/` (Apache-2.0, derived from Ghidra; see
+[tools/ghidra/LICENSE](tools/ghidra/LICENSE)).

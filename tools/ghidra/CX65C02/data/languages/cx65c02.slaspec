@@ -1,3 +1,7 @@
+# Derived from Ghidra's Ghidra/Processors/6502/data/languages/65c02.slaspec (Apache License 2.0,
+# see ../../../LICENSE). Modified: the (zp) forms of AND, CMP, LDA and SBC, BIT #imm, DEC A, INC A
+# and STZ zp are replaced by the Conexant meanings of their opcodes (ADD, ASR, NEG), and the
+# Conexant instructions are added.
 @include "6502.slaspec"
 
 # Conexant CX2077x extensions (see cxdis.py for evidence/hypotheses)

@@ -1,22 +1,23 @@
 //! `cxtune dump`: reads the dongle's ROM and EEPROM, read-only, and compares their SHA-256
 //! values with those of the reference unit in `docs/firmware-research.md`.
 //!
-//! The ROM is read with flag 0x00 ([`read_mem`]) and the EEPROM with flag 0x20 alone
-//! ([`read_eeprom`]); neither request type can carry the write flag. Nothing is sent anywhere:
-//! the dump goes to the directory the user names and the report is printed.
+//! The ROM is read with flag 0x00 ([`read_mem_confirmed`]) and the EEPROM with flag 0x20 alone
+//! ([`read_eeprom`]); neither request type can carry the write flag, and every chunk is read
+//! twice. Nothing is sent anywhere: the dump goes to a new file in the directory the user names
+//! and the report is printed.
 
 use std::fmt::Write as _;
+use std::io::Write as _;
 use std::ops::Range;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::protocol::{Transport, read_eeprom, read_mem};
+use crate::protocol::{EEPROM_SIZE, Transport, read_eeprom, read_mem_confirmed};
 use crate::{Error, Result};
 
 pub const ROM_START: u16 = 0x7000;
 pub const ROM_LEN: usize = 0x9000;
-pub const EEPROM_LEN: usize = 0x4000;
 /// The patch stream inside the EEPROM: `0x05BF..=0x1EE9`.
 const PATCH_STREAM: Range<usize> = 0x05BF..0x1EEA;
 
@@ -42,8 +43,8 @@ pub struct Dump {
 /// Reads ROM `$7000..$FFFF` and EEPROM `0x0000..0x3FFF`.
 pub fn read<T: Transport + ?Sized>(t: &mut T) -> Result<Dump> {
     Ok(Dump {
-        rom: read_mem(t, ROM_START, ROM_LEN)?,
-        eeprom: read_eeprom(t, 0, EEPROM_LEN)?,
+        rom: read_mem_confirmed(t, ROM_START, ROM_LEN)?,
+        eeprom: read_eeprom(t, 0, EEPROM_SIZE)?,
     })
 }
 
@@ -54,16 +55,36 @@ pub fn sha256(data: &[u8]) -> String {
     })
 }
 
+const FILES: [&str; 2] = ["rom.bin", "eeprom.bin"];
+
+/// Fails if `dir` already holds a dump, so that this can be checked before the slow read.
+pub fn ensure_free(dir: &Path) -> Result<()> {
+    match FILES.iter().find(|name| dir.join(name).exists()) {
+        Some(name) => Err(Error::Refused(format!(
+            "{name} already exists in {}; use a new directory or remove the old dump",
+            dir.display()
+        ))),
+        None => Ok(()),
+    }
+}
+
 impl Dump {
-    /// Writes `rom.bin` and `eeprom.bin` into `dir`, creating it if needed.
+    /// Writes `rom.bin` and `eeprom.bin` into `dir`, creating it if needed. An existing file is
+    /// never overwritten.
     pub fn save(&self, dir: &Path) -> Result<()> {
         let io = |path: &Path, e: std::io::Error| {
             Error::Config(format!("cannot write {}: {e}", path.display()))
         };
         std::fs::create_dir_all(dir).map_err(|e| io(dir, e))?;
-        for (name, data) in [("rom.bin", &self.rom), ("eeprom.bin", &self.eeprom)] {
+        ensure_free(dir)?;
+        for (name, data) in FILES.into_iter().zip([&self.rom, &self.eeprom]) {
             let path = dir.join(name);
-            std::fs::write(&path, data).map_err(|e| io(&path, e))?;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .map_err(|e| io(&path, e))?;
+            file.write_all(data).map_err(|e| io(&path, e))?;
         }
         Ok(())
     }
@@ -146,7 +167,7 @@ mod tests {
     fn device() -> (FakeDevice, Vec<u8>, Vec<u8>) {
         let dev = FakeDevice::stock();
         let rom = pattern(ROM_LEN, 1);
-        let eeprom = pattern(EEPROM_LEN, 2);
+        let eeprom = pattern(EEPROM_SIZE, 2);
         dev.poke(ROM_START, &rom);
         dev.set_eeprom(&eeprom);
         (dev, rom, eeprom)
@@ -180,8 +201,9 @@ mod tests {
         assert_eq!(dump.eeprom, eeprom);
         assert!(dev.writes().is_empty());
         assert_eq!(dev.mem(), before);
-        assert_eq!(dev.requests(), (ROM_LEN + EEPROM_LEN) / 32);
-        assert_eq!(dev.eeprom_reads(), EEPROM_LEN / 32);
+        // every chunk is read twice
+        assert_eq!(dev.requests(), 2 * (ROM_LEN + EEPROM_SIZE) / 32);
+        assert_eq!(dev.eeprom_reads(), 2 * EEPROM_SIZE / 32);
     }
 
     #[test]
@@ -194,6 +216,27 @@ mod tests {
         assert_eq!(std::fs::read(out.join("rom.bin")).unwrap(), rom);
         assert_eq!(std::fs::read(out.join("eeprom.bin")).unwrap(), eeprom);
         assert_eq!(std::fs::read_dir(&out).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn an_existing_dump_is_never_overwritten() {
+        let dump = dumped();
+        for existing in ["rom.bin", "eeprom.bin"] {
+            let dir = TempDir::new("dump");
+            std::fs::write(dir.join(existing), "old").unwrap();
+            assert!(matches!(ensure_free(&dir), Err(Error::Refused(_))));
+            let err = dump.save(&dir).unwrap_err();
+            assert!(
+                matches!(err, Error::Refused(ref m) if m.contains(existing)),
+                "{err}"
+            );
+            assert_eq!(std::fs::read(dir.join(existing)).unwrap(), b"old");
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        }
+        let dir = TempDir::new("dump");
+        ensure_free(&dir).unwrap();
+        dump.save(&dir).unwrap();
+        assert!(matches!(dump.save(&dir), Err(Error::Refused(_))));
     }
 
     #[test]

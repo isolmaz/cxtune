@@ -28,8 +28,8 @@ cxtune changes volatile state only. It sends HID memory requests with flags `0x0
 memory) and `0x40` (write CPU memory) and never `0x20` (EEPROM access), `0x80` (DSP memory) or `0x10`
 (address at or above 64 KiB). The one exception is `cxtune dump` (section 9), a read-only path
 that sends flag `0x20` without `0x40` to read the EEPROM; its request type has constant flags and
-no data, and the single write function refuses every request that has `0x20` set, so `0x20|0x40`
-is never sent. Every write passes one guarded function (see
+no data, and the request builder accepts only the flag values `0x00`, `0x20` and `0x40`, so a
+request with `0x20|0x40` cannot be built. Every write passes one guarded function (see
 [Safety design](../README.md#safety-design) and [Writable regions](firmware-notes.md#writable-regions)).
 Reasons:
 
@@ -506,7 +506,9 @@ All analysis was static unless stated. No dump is published (section 9).
 `JMP (table,X)` tables and code pointers stored into RAM slots, and writes a listing, data
 cross-references, a call graph and the jump tables (about 11,000 instructions decoded; the
 remaining gaps are data tables and the fill). `tools/cxdis.py` (run through `tools/cxrun.py`) decodes the EEPROM patch image with the
-same instruction table (CPU address = image offset `+ 0x0E91`). Routines we install are
+same instruction table (CPU address = image offset `+ 0x0E91`, the code segment's offset; the
+hook table segment is at `+ 0x0E95`, so the tools, which place the whole patch with the code
+offset, see the hook table 4 bytes below its address in RAM). Routines we install are
 assembled with a small assembler and decoded by both tools, which must agree, then run through
 a behavioural model of the ROM paths they touch before any write.
 
@@ -614,8 +616,8 @@ measurements, and our own annotations (address maps, register names, tooling).
 SHA-256 values with ours: `cxtune dump <out-dir>` (see [tools/README.md](../tools/README.md))
 reads the ROM with flag `0x00` and the EEPROM with flag `0x20` alone, a read, writes `rom.bin` and
 `eeprom.bin` into the directory you name, prints their hashes and compares them with the values
-below. It never sends `0x20|0x40`, the single write choke point refuses `0x20`, and nothing is
-uploaded. Keep the files to yourself and report only the hashes. Reference values:
+below. It never sends `0x20|0x40` (the request builder cannot build it), reads every chunk twice and
+compares, refuses to overwrite an existing dump, and uploads nothing. Keep the files to yourself and report only the hashes. Reference values:
 
 | Item | Range read | Size | SHA-256 |
 |---|---|---|---|

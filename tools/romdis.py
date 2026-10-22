@@ -1,9 +1,11 @@
-"""Recursive-descent disassembler for the CX20773 ROM (0x7000-0xFFFF) + EEPROM patch (RAM 0x1450).
+"""Recursive-descent disassembler for the CX20773 ROM (0x7000-0xFFFF) + EEPROM patch (code from RAM 0x1450).
 Static only: reads the two files, never talks to the device.
 
 usage: python tools/romdis.py <rom.bin> <patch_1450.bin> <outdir>
   rom.bin        ROM dump from `cxtune dump` (36864 bytes, CPU $7000..$FFFF)
-  patch_1450.bin eeprom.bin bytes 0x05BF..0x1F2C (6510 bytes), the patch as loaded to RAM $1450
+  patch_1450.bin eeprom.bin bytes 0x05BF..0x1F2C (6510 bytes), placed at $1450 with the offset of
+                 the code segment (+0x0E91). The hook table segment is at +0x0E95 in RAM, so
+                 here its entries are read from $1453 and are 4 bytes below their RAM addresses.
 writes: listing.txt (all decoded code in address order), xrefs.txt (data refs per address),
         calls.txt (call graph), undef.txt (decode problems), jtables.txt
 """
@@ -62,7 +64,7 @@ M.update({
     0x6b: ('PATCH', 'slot'),     # 6b slot from16 to16
     0x22: ('CX22', 'imp'),       # 1-byte; prologue of ISRs/critical sections (inferred)
     0x32: ('CX32', 'imp'),       # 1-byte; matching epilogue before RTS/RTI (inferred)
-    0x13: ('CX13', 'imp'),
+    0x13: ('CX13', 'imp'),       # 1-byte; used inside a short delay routine at $dfd9
     0x03: ('CX03', 'imp'),       # 1-byte; ends ISR at $8459 (after CX32), treated as return
     0x23: ('CX23', 'imp'),       # 1-byte; seen in ISR at $717c
     0xab: ('CXAB', 'imp'),
@@ -72,7 +74,7 @@ M.update({
     0x64: ('ADD', 'zp'),         # A += [zp], no carry in (16-bit add idiom TXA/ADD $40/LDA #0/ADC $41)
     0x89: ('ADD', 'imm'),        # A += imm, no carry in (negate idiom EOR #$ff/ADD #1)
     0x1a: ('NEG', 'acc'),        # A = -A (confirmed by live DSP-volume shadow $1260 = 0x0e for code 0x41)
-    0x3a: ('ASR', 'acc'),        # arithmetic shift right (16-bit ASR idiom LDA hi/ASR/STA hi/ROR lo)       # 1-byte, used inside a short delay routine at $dfd9
+    0x3a: ('ASR', 'acc'),        # arithmetic shift right (16-bit ASR idiom LDA hi/ASR/STA hi/ROR lo)
     0xcb: ('UNK_CB', 'imp'),
     0xdb: ('UNK_DB', 'imp'),
 })
