@@ -355,9 +355,11 @@ has no read-modify-write, so the window between the read and the write is one HI
 capture stream is open (`$13DC`); otherwise the next stream applies the change and `$1154` is
 not touched.
 
-Measured: 32 requests (26 with a capture stream open, 4 with only playback open, 2 with no
-stream). Each was consumed before the first poll after the write, which itself takes 50 ms. In
-the 18 where `$1154` was compared before and after it was identical. A pass increments the
+Measured: 72 requests (66 with a capture stream open, 4 with only playback open, 2 with no
+stream), 40 of them as 20 off/on pairs of `mic-nr` in a row. Each was consumed within the
+limit, and in the research script before the first poll after the write (which itself takes
+50 ms). In the 58 where `$1154` was compared before and after (including all 40 of the run
+in a row, which the code enforces) it was identical. A pass increments the
 counters `$125C..$125F` and rewrites `$00C6`; in the compared ranges (`$0000..$00FF`,
 `$0F00..$0F7F`, `$1000..$12FF`, `$13D0..$13EF`) the only other changes seen were the applier
 flags and, once each, `$0044/$0045` and `$009D`.
