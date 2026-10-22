@@ -1,16 +1,18 @@
-//! Settings in `%APPDATA%\cxtune\config.toml`: the selected profile and mic boost.
-//! The file uses two `key = value` lines (a TOML subset).
+//! Settings in `%APPDATA%\cxtune\config.toml`: the selected mode, mic boost and min-hiss
+//! settle time. The file uses `key = value` lines (a TOML subset).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::profile::Profile;
+use crate::mode::{self, Mode};
 use crate::{Error, Result};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Config {
-    pub profile: Option<Profile>,
+    pub mode: Option<Mode>,
     /// Mic boost step 0..=7; `None` leaves $1017 untouched.
     pub mic_boost: Option<u8>,
+    /// Min-hiss settle time in ms; `None` keeps the routine's default.
+    pub min_hiss_ms: Option<u16>,
 }
 
 pub fn path() -> Result<PathBuf> {
@@ -20,11 +22,16 @@ pub fn path() -> Result<PathBuf> {
 }
 
 pub fn load() -> Result<Config> {
-    let path = path()?;
-    match std::fs::read_to_string(&path) {
-        Ok(text) => parse(&text),
+    load_from(&path()?)
+}
+
+/// Reads the file at `path`; a missing file is the default settings. Every error names the file.
+fn load_from(path: &Path) -> Result<Config> {
+    let named = |why: &dyn std::fmt::Display| Error::Config(format!("{}: {why}", path.display()));
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse(&text).map_err(|e| named(&e)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-        Err(e) => Err(Error::Config(format!("{}: {e}", path.display()))),
+        Err(e) => Err(named(&e)),
     }
 }
 
@@ -45,13 +52,18 @@ fn parse(text: &str) -> Result<Config> {
         let (key, value) = line.split_once('=').ok_or_else(bad)?;
         let value = value.trim().trim_matches('"');
         match key.trim() {
-            "profile" => cfg.profile = Some(Profile::parse(value).ok_or_else(bad)?),
+            "mode" => cfg.mode = Some(Mode::parse(value).ok_or_else(bad)?),
             "mic_boost" => {
                 let n: u8 = value.parse().map_err(|_| bad())?;
                 if n > 7 {
                     return Err(bad());
                 }
                 cfg.mic_boost = Some(n);
+            }
+            "min_hiss_ms" => {
+                let ms: u16 = value.parse().map_err(|_| bad())?;
+                mode::settle_units(ms).map_err(|_| bad())?;
+                cfg.min_hiss_ms = Some(ms);
             }
             _ => return Err(bad()),
         }
@@ -61,11 +73,14 @@ fn parse(text: &str) -> Result<Config> {
 
 fn render(cfg: &Config) -> String {
     let mut s = String::new();
-    if let Some(p) = cfg.profile {
-        s += &format!("profile = \"{}\"\n", p.name());
+    if let Some(m) = cfg.mode {
+        s += &format!("mode = \"{}\"\n", m.name());
     }
     if let Some(n) = cfg.mic_boost {
         s += &format!("mic_boost = {n}\n");
+    }
+    if let Some(ms) = cfg.min_hiss_ms {
+        s += &format!("min_hiss_ms = {ms}\n");
     }
     s
 }
@@ -75,13 +90,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trips_and_rejects_out_of_range_boost() {
-        let cfg = Config {
-            profile: Some(Profile::DeepIdleClamp),
-            mic_boost: Some(6),
-        };
-        assert_eq!(parse(&render(&cfg)).unwrap(), cfg);
+    fn round_trips_every_mode_and_option() {
+        for mode in Mode::ALL {
+            let cfg = Config {
+                mode: Some(mode),
+                mic_boost: Some(6),
+                min_hiss_ms: Some(300),
+            };
+            assert_eq!(parse(&render(&cfg)).unwrap(), cfg);
+        }
+        assert_eq!(
+            parse(&render(&Config::default())).unwrap(),
+            Config::default()
+        );
+    }
+
+    #[test]
+    fn rejects_out_of_range_and_unknown_values() {
         assert!(parse("mic_boost = 8").is_err());
-        assert!(parse("profile = \"loud\"").is_err());
+        assert!(parse("mode = \"loud\"").is_err());
+        assert!(parse("mode = \"clamp\"").is_err());
+        assert!(parse("min_hiss_ms = 10").is_err());
+        assert!(parse("min_hiss_ms = 2010").is_err());
+        assert!(parse("min_hiss_ms = 605").is_err());
+        assert!(parse("min_hiss_ms = 20").is_ok());
+        assert!(parse("min_hiss_ms = 2000").is_ok());
+    }
+
+    #[test]
+    fn an_unreadable_file_is_named_in_the_error() {
+        let dir = std::env::temp_dir().join(format!("cxtune-config-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.toml");
+        std::fs::write(&file, "profile = \"idle\"\n").unwrap();
+        let err = load_from(&file).unwrap_err().to_string();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.contains(&file.display().to_string()), "{err}");
+        assert!(err.contains("profile = \"idle\""), "{err}");
+        assert_eq!(
+            load_from(&dir.join("missing.toml")).unwrap(),
+            Config::default()
+        );
     }
 }

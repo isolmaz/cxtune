@@ -1,14 +1,15 @@
 //! Core of cxtune: HID memory access to the CX20773 codec in the HyperX Cloud II
-//! USB dongle, an allow-listed table of volatile patch-RAM writes, and profiles
-//! built from that table.
+//! USB dongle, the allow-listed volatile patch-RAM writes, and output modes
+//! built from those writes.
 //!
 //! All writes go through [`patches::apply_patch`]; there is no API that writes an
 //! arbitrary address. Nothing here touches EEPROM or DSP memory.
 
+pub mod audio;
 pub mod config;
 pub mod hid;
+pub mod mode;
 pub mod patches;
-pub mod profile;
 pub mod protocol;
 
 #[cfg(test)]
@@ -26,7 +27,7 @@ pub enum Error {
     Refused(String),
     /// A write was sent but the device memory does not hold the new bytes.
     Readback {
-        patch: &'static str,
+        patch: String,
         addr: u16,
         expected: Vec<u8>,
         got: Vec<u8>,

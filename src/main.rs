@@ -3,15 +3,17 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use cxtune::config::{self, Config};
-use cxtune::profile::{self, Profile, State};
+use cxtune::mode::{self, Mode, State};
 use cxtune::protocol::Transport;
-use cxtune::{Error, Result, hex, hid};
+use cxtune::{Error, Result, audio, hex, hid};
 
 const USAGE: &str = "\
 usage: cxtune <command>
 
   status               read and show the device state (read-only)
-  apply <profile>      apply a profile and remember it: stock | idle | clamp
+  apply <mode>         apply an output mode and remember it:
+                       stock | quiet | balanced | min-hiss
+  tune <ms>            set the min-hiss settle time (20-2000 in steps of 10) and remember it
   mic-boost <0-7>      set analog mic boost ($1017 = 0x38 + n) and remember it
   watch                keep the remembered settings applied across replugs
 
@@ -31,6 +33,7 @@ fn main() -> ExitCode {
     let result = match args.as_slice() {
         ["status"] => status(),
         ["apply", name] => apply(name),
+        ["tune", ms] => tune(ms),
         ["mic-boost", n] => mic_boost(n),
         ["watch"] => watch(),
         _ => {
@@ -52,21 +55,25 @@ fn open() -> Result<hid::HidTransport> {
 }
 
 fn status() -> Result<()> {
-    let s = profile::read_state(&mut open()?)?;
+    let s = mode::read_state(&mut open()?)?;
     print_state(&s);
     Ok(())
 }
 
 fn print_state(s: &State) {
-    let profile = s.profile().map_or("unrecognised", Profile::name);
-    println!("profile:              {profile}");
-    let hook = match s.hook_state() {
-        Some(0) => "JMP, vendor target (driver forced on)",
-        Some(1) => "RTS (ROM idle power-down)",
-        Some(2) => "RTS, clamp routine installed, vendor operands",
-        Some(3) => "RTS, clamp routine and operands installed",
-        Some(4) => "JMP to clamp routine",
-        _ => "UNRECOGNISED",
+    let mode = s.mode().map_or("unrecognised or half-changed", Mode::name);
+    match s.settle_ms() {
+        Some(ms) if s.mode() == Some(Mode::MinHiss) => {
+            println!("mode:                 {mode} (settle {ms} ms)")
+        }
+        _ => println!("mode:                 {mode}"),
+    }
+    let hook = match s.hook_config() {
+        Some((true, false)) => "JMP to the vendor routine (driver forced on)",
+        Some((true, true)) => "JMP to the window routine",
+        Some((false, false)) => "RTS, vendor operands (ROM idle power-down)",
+        Some((false, true)) => "RTS, operands point at the window",
+        None => "UNRECOGNISED",
     };
     println!("$14B1 hook30:         {}  {hook}", hex(&s.hook));
     for (i, (addr, hold)) in [0x16C9u16, 0x17CA]
@@ -79,20 +86,15 @@ fn print_state(s: &State) {
             Some(_) => "DAC may idle off",
             None => "UNRECOGNISED",
         };
-        println!(
-            "${addr:04X} DAC hold {}:   {}  {meaning}",
-            ["A", "B"][i],
-            hex(&s.dac_routines[i])
-        );
+        let label = format!("${addr:04X} DAC hold {}:", ["A", "B"][i]);
+        println!("{label:<22}{}  {meaning}", hex(&s.dac_routines[i]));
     }
-    let body = if s.body == cxtune::patches::BODY_CLAMP {
-        "clamp routine"
-    } else if s.body == cxtune::patches::BODY_ORIG {
-        "vendor bytes"
-    } else {
-        "UNRECOGNISED"
+    let window = match s.parts() {
+        Some([a, b]) if a == b => format!("{} routine", a.name()),
+        Some([a, b]) => format!("half-changed: {} / {}", a.name(), b.name()),
+        None => "UNRECOGNISED".into(),
     };
-    println!("$1EFC routine:        {body}");
+    println!("$1EFC window:         {window}");
     match s.mic_boost() {
         Some(n) => println!("$1017 MIC_CONTROL:    {:#04x}  boost {n}", s.mic_control),
         None => println!(
@@ -115,20 +117,52 @@ fn print_state(s: &State) {
     println!("$0F1A headphone drv:  {:#04x}  {hp}", s.hp_driver);
     println!("$0F1B:                {:#04x}", s.reg_0f1b);
     println!("$0F2C:                {:#04x}", s.reg_0f2c);
+    println!(
+        "$0F3E references:     {:#04x}  {}",
+        s.refs,
+        on_off(s.refs & cxtune::patches::REFS_ON)
+    );
 }
 
 fn on_off(bit: u8) -> &'static str {
     if bit != 0 { "on" } else { "off" }
 }
 
+/// Applies a mode, then the min-hiss settle time if one is given and the mode is min-hiss.
+fn set_mode<T: Transport>(dev: &mut T, target: Mode, min_hiss_ms: Option<u16>) -> Result<usize> {
+    let mut n = mode::apply_mode(dev, target, audio::open_silence)?;
+    if target == Mode::MinHiss
+        && let Some(ms) = min_hiss_ms
+    {
+        n += usize::from(mode::tune_min_hiss(dev, ms)?);
+    }
+    Ok(n)
+}
+
 fn apply(name: &str) -> Result<()> {
-    let target = Profile::parse(name)
-        .ok_or_else(|| Error::Config(format!("unknown profile '{name}' (stock | idle | clamp)")))?;
-    let mut dev = open()?;
-    let n = profile::apply_profile(&mut dev, target)?;
-    println!("profile '{}' applied ({n} writes)", target.name());
+    let target = Mode::parse(name).ok_or_else(|| {
+        Error::Config(format!(
+            "unknown mode '{name}' (stock | quiet | balanced | min-hiss)"
+        ))
+    })?;
     let mut cfg = config::load()?;
-    cfg.profile = Some(target);
+    let n = set_mode(&mut open()?, target, cfg.min_hiss_ms)?;
+    println!("mode '{}' applied ({n} writes)", target.name());
+    cfg.mode = Some(target);
+    config::save(&cfg)
+}
+
+fn tune(arg: &str) -> Result<()> {
+    let ms: u16 = arg
+        .parse()
+        .map_err(|_| Error::Config(format!("settle time must be a number of ms, got '{arg}'")))?;
+    let mut cfg = config::load()?;
+    let written = mode::tune_min_hiss(&mut open()?, ms)?;
+    println!(
+        "min-hiss settle time {ms} ms{}",
+        if written { " set" } else { " already set" }
+    );
+    cfg.min_hiss_ms = Some(ms);
     config::save(&cfg)
 }
 
@@ -136,25 +170,24 @@ fn mic_boost(arg: &str) -> Result<()> {
     let step: u8 = arg
         .parse()
         .map_err(|_| Error::Config(format!("mic boost must be 0-7, got '{arg}'")))?;
-    let mut dev = open()?;
-    let written = profile::set_mic_boost(&mut dev, step)?;
+    let mut cfg = config::load()?;
+    let written = mode::set_mic_boost(&mut open()?, step)?;
     println!(
         "mic boost {step}{}",
         if written { " set" } else { " already set" }
     );
-    let mut cfg = config::load()?;
     cfg.mic_boost = Some(step);
     config::save(&cfg)
 }
 
 /// Applies the saved settings. Idempotent: writes nothing if the device already matches.
 fn ensure<T: Transport>(dev: &mut T, cfg: &Config) -> Result<usize> {
-    let mut n = match cfg.profile {
-        Some(p) => profile::apply_profile(dev, p)?,
+    let mut n = match cfg.mode {
+        Some(m) => set_mode(dev, m, cfg.min_hiss_ms)?,
         None => 0,
     };
     if let Some(step) = cfg.mic_boost {
-        n += usize::from(profile::set_mic_boost(dev, step)?);
+        n += usize::from(mode::set_mic_boost(dev, step)?);
     }
     Ok(n)
 }
@@ -183,7 +216,7 @@ fn watch() -> Result<()> {
             let result = config::load().and_then(|cfg| {
                 if cfg == Config::default() {
                     return Err(Error::Config(
-                        "nothing selected yet; run `cxtune apply <profile>` first".into(),
+                        "nothing selected yet; run `cxtune apply <mode>` first".into(),
                     ));
                 }
                 ensure(&mut hid::open(&api)?, &cfg)
