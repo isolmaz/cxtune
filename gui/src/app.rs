@@ -301,6 +301,7 @@ impl App {
                 }
                 self.warned |= failure.kind == ErrorKind::Invalid;
             }
+            Event::Test(_) => {}
         }
         self.render();
     }

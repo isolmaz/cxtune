@@ -189,6 +189,9 @@ mod tests {
             agc: true,
             sidetone: true,
             sidetone_level: 500,
+            balanced_decay_ms: None,
+            surround: false,
+            surround_level: Some(4),
         }
     }
 
@@ -245,6 +248,7 @@ mod tests {
             mic_agc: Some(false),
             sidetone: Some(false),
             sidetone_level: Some(70),
+            ..Config::default()
         };
         assert_eq!(
             Controls::effective(&settings, Some(&device(Mode::MinHiss))),
@@ -285,7 +289,7 @@ mod tests {
     #[test]
     fn modes_are_listed_in_the_order_of_the_choices() {
         let names: Vec<_> = (0..4).map(|i| mode_at(i).unwrap().name()).collect();
-        assert_eq!(names, ["stock", "quiet", "balanced", "min-hiss"]);
+        assert_eq!(names, ["default", "click-free", "balanced", "lowest-noise"]);
         for mode in Mode::ALL {
             assert_eq!(mode_at(mode_index(mode)), Some(mode));
         }
