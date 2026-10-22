@@ -171,6 +171,10 @@ export component MainWindow inherits Window {
         Model.tab-changed(self.shown-tab);
     }
 
+    changed minimized => {
+        Model.minimized-changed(self.minimized);
+    }
+
     VerticalLayout {
         Header {
             height: Grid.header;

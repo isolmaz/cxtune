@@ -37,6 +37,16 @@ fn window() -> MainWindow {
     MainWindow::new().unwrap()
 }
 
+/// A window of the size of the real one, so that what does not fit scrolls. The elements of a page
+/// that are scrolled out of view are not found, which the other tests do not want.
+fn real_window() -> MainWindow {
+    let window = window();
+    window
+        .window()
+        .set_size(slint::LogicalSize::new(720.0, 480.0));
+    window
+}
+
 #[test]
 fn the_sidetone_level_can_be_changed_only_while_sidetone_is_on() {
     let window = window();
@@ -102,7 +112,7 @@ fn each_time_slider_follows_the_engine_enabled_state_of_its_mode() {
     let (soft_start, mute_delay) = (&sliders[1], &sliders[2]);
 
     for (soft, decay) in [(false, false), (true, false), (false, true)] {
-        model.set_delay_enabled(soft);
+        model.set_settle_enabled(soft);
         model.set_decay_enabled(decay);
         assert_eq!(soft_start.accessible_enabled(), Some(soft));
         assert_eq!(mute_delay.accessible_enabled(), Some(decay));
@@ -207,6 +217,22 @@ fn the_page_change_reaches_rust_so_that_the_meter_can_follow_it() {
 }
 
 #[test]
+fn minimizing_and_restoring_the_window_reach_rust_so_that_the_meter_can_follow() {
+    let window = window();
+    let model = window.global::<Model>();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    model.on_minimized_changed({
+        let seen = seen.clone();
+        move |minimized| seen.borrow_mut().push(minimized)
+    });
+    for minimized in [true, false] {
+        window.window().set_minimized(minimized);
+        slint::platform::update_timers_and_animations();
+    }
+    assert_eq!(*seen.borrow(), [true, false]);
+}
+
+#[test]
 fn the_page_shows_what_the_tab_holds() {
     let window = window();
     let model = window.global::<Model>();
@@ -243,4 +269,170 @@ fn the_page_shows_what_the_tab_holds() {
     assert_eq!(model.get_test_remaining(), -1);
     assert!(!model.get_test_caution());
     assert!(!model.get_meters_active());
+}
+
+const PAGES: i32 = 6;
+
+/// Left, top, width and height of an element, in logical pixels of the window.
+fn rect(element: &ElementHandle) -> [f32; 4] {
+    let (position, size) = (element.absolute_position(), element.size());
+    [position.x, position.y, size.width, size.height]
+}
+
+/// The heading of the page that is shown: its title, or the breadcrumb of the About page. A tab
+/// that is not a page has none.
+fn headings(window: &MainWindow) -> Vec<ElementHandle> {
+    let mut found = all(window, "PageTitle");
+    found.extend(all(window, "Breadcrumb"));
+    found
+}
+
+#[test]
+fn every_page_is_in_a_scroll_view_that_fills_the_page_area() {
+    let window = real_window();
+    let model = window.global::<Model>();
+    let mut pages = Vec::new();
+    // a few tabs past the last page, to catch a page that was added
+    for tab in 0..PAGES + 4 {
+        model.set_tab(tab);
+        let mut headings = headings(&window);
+        if headings.is_empty() {
+            continue;
+        }
+        pages.push(tab);
+        assert_eq!(headings.len(), 1, "page {tab}");
+        let heading = rect(&headings.remove(0));
+
+        // right of the navigation, between the header and the footer
+        let area = [160.0, 64.0, 560.0, 356.0];
+        assert_eq!(rect(&only(&window, "Page")), area, "page {tab}");
+        assert_eq!(rect(&only(&window, "ScrollView")), area, "page {tab}");
+        assert!(
+            heading[0] >= area[0]
+                && heading[1] >= area[1]
+                && heading[0] + heading[2] <= area[0] + area[2]
+                && heading[1] + heading[3] <= area[1] + area[3],
+            "the heading of page {tab} is in the scroll view"
+        );
+    }
+    assert_eq!(pages, (0..PAGES).collect::<Vec<_>>());
+}
+
+#[test]
+fn the_title_scrolls_with_the_content_of_a_page_that_does_not_fit() {
+    use slint::LogicalPosition;
+    use slint::platform::WindowEvent;
+
+    let window = real_window();
+    for tab in [OUTPUT_PAGE, test_tab::TAB] {
+        window.global::<Model>().set_tab(tab);
+        let title = only(&window, "PageTitle");
+        let before = rect(&title);
+        window
+            .window()
+            .dispatch_event(WindowEvent::PointerScrolled {
+                position: LogicalPosition::new(450.0, 250.0),
+                delta_x: 0.0,
+                delta_y: -100.0,
+            });
+        let after = rect(&title);
+        assert!(after[1] < before[1], "page {tab}: {before:?} {after:?}");
+        assert_eq!(after[0], before[0]);
+    }
+}
+
+#[test]
+fn the_grid_is_the_same_on_a_page_with_a_scroll_bar_and_on_one_without() {
+    let window = real_window();
+    let model = window.global::<Model>();
+    let mut rows = 0;
+    for tab in 0..PAGES {
+        model.set_tab(tab);
+        for row in all(&window, "Row") {
+            // the 512 px of the page, from its left edge (the navigation and 24 px)
+            let [left, _, width, _] = rect(&row);
+            assert_eq!((left, width), (184.0, 512.0), "a row of page {tab}");
+            rows += 1;
+        }
+    }
+    assert!(rows > 10, "{rows} rows");
+}
+
+fn scroll_down(window: &MainWindow) {
+    use slint::LogicalPosition;
+    use slint::platform::WindowEvent;
+
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerScrolled {
+            position: LogicalPosition::new(450.0, 250.0),
+            delta_x: 0.0,
+            delta_y: -400.0,
+        });
+}
+
+#[test]
+fn the_controls_of_the_test_rows_share_one_slot_and_the_results_one_column() {
+    // the right edge of the page content, the control slot and the result column in front of it
+    const EDGE: f32 = 684.0;
+    const SLOT: f32 = 160.0;
+    const HALF: f32 = 76.0;
+    const GAP: f32 = 8.0;
+    const RESULT: f32 = 128.0;
+
+    let window = real_window();
+    window.global::<Model>().set_tab(test_tab::TAB);
+    let mut paired = Vec::new();
+    // the rows below the fold are found after scrolling to them
+    for (scrolled, buttons_at_least) in [(false, 4), (true, 2)] {
+        if scrolled {
+            scroll_down(&window);
+        }
+        let buttons = all(&window, "TestButton");
+        assert!(buttons.len() >= buttons_at_least, "scrolled: {scrolled}");
+        for button in &buttons {
+            let [left, _, width, _] = rect(button);
+            if width == HALF {
+                paired.push(left);
+            } else {
+                assert_eq!(width, SLOT, "a single button fills the slot");
+                assert_eq!(left + width, EDGE, "a single button ends at the edge");
+            }
+        }
+        for result in all(&window, "ResultText") {
+            let [left, _, width, _] = rect(&result);
+            assert_eq!(width, RESULT, "a result column");
+            assert_eq!(left + width, EDGE - SLOT - GAP, "directly left of the slot");
+        }
+    }
+    // Record and Play share the slot with a gap
+    paired.sort_by(f32::total_cmp);
+    paired.dedup();
+    assert_eq!(paired, [EDGE - SLOT, EDGE - HALF]);
+}
+
+#[test]
+fn the_level_bar_ends_where_the_result_column_starts() {
+    let window = real_window();
+    window.global::<Model>().set_tab(test_tab::TAB);
+    let bar = rect(&only(&window, "LevelBar"));
+    let level_row = all(&window, "ResultText")
+        .into_iter()
+        .map(|result| rect(&result))
+        .find(|result| result[1] < bar[1] + bar[3] && bar[1] < result[1] + result[3])
+        .expect("the result column of the level row");
+    assert_eq!(bar[0] + bar[2], level_row[0]);
+}
+
+#[test]
+fn the_header_meter_reads_in_dbfs_like_the_test_page() {
+    let window = window();
+    let model = window.global::<Model>();
+    model.set_meters_active(true);
+    model.set_mic_db(-52.0);
+    let header = only(&window, "MeterRow").accessible_value().unwrap();
+    assert!(header.ends_with("dBFS"), "{header}");
+    model.set_tab(test_tab::TAB);
+    let page = only(&window, "LevelBar").accessible_value().unwrap();
+    assert_eq!(header, page);
 }

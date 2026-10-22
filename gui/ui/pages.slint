@@ -117,14 +117,14 @@ export component OutputPage inherits Page {
             help: @tr("ui" => "Used only by Lowest noise. After audio starts it stays muted for this time plus about 150 ms.");
             value-column: true;
             value: @tr("ui" => "{} ms", Math.round(Model.settle-ms));
-            disabled: !Model.delay-enabled;
+            disabled: !Model.settle-enabled;
 
             AppSlider {
                 minimum: Model.settle-min;
                 maximum: Model.settle-max;
                 step: Model.settle-step;
                 value <=> Model.settle-ms;
-                enabled: Model.delay-enabled;
+                enabled: !soft-start-row.disabled;
                 label: @tr("ui" => "Soft-start time");
                 description: soft-start-row.help;
                 changed(value) => {
@@ -139,7 +139,7 @@ export component OutputPage inherits Page {
 
         decay-row := Row {
             icon: "\u{E917}";
-            title: @tr("decay" => "Mute delay");
+            title: @tr("ui" => "Release time");
             help: @tr("ui" => "Used only by Balanced. After audio or a recording stops, the output stays open for this time and then goes quiet again. Vendor setting: 800 ms.");
             value-column: true;
             value: @tr("ui" => "{} ms", Math.round(Model.decay-ms));
@@ -151,7 +151,7 @@ export component OutputPage inherits Page {
                 step: Model.decay-step;
                 value <=> Model.decay-ms;
                 enabled: !decay-row.disabled;
-                label: @tr("decay" => "Mute delay");
+                label: @tr("ui" => "Release time");
                 description: decay-row.help;
                 changed(value) => {
                     self.value = Math.round(value / Model.decay-step) * Model.decay-step;
@@ -463,14 +463,25 @@ export component TestPage inherits Page {
             icon: "\u{E720}";
             title: @tr("ui" => "Level");
             help: @tr("ui" => "The RMS level of the last 50 ms in dBFS, where 0 is digital full scale. The microphone is open only while this page is shown.");
-            value-column: true;
-            value: Model.meters-active ? Texts.dbfs-rounded(Model.mic-db) : "";
             disabled: !Model.controls-enabled;
 
-            LevelBar {
-                active: Model.meters-active;
-                db: Model.mic-db;
-                label: @tr("ui" => "Level");
+            HorizontalLayout {
+                LevelBar {
+                    segments: 10;
+                    active: Model.meters-active;
+                    db: Model.mic-db;
+                    label: @tr("ui" => "Level");
+                }
+
+                ResultText {
+                    text: Model.meters-active ? Texts.dbfs-rounded(Model.mic-db) : "";
+                }
+            }
+
+            // nothing to press: the control is left out
+            Rectangle {
+                width: Grid.control;
+                horizontal-stretch: 0;
             }
         }
 
@@ -505,15 +516,19 @@ export component TestPage inherits Page {
             }
 
             HorizontalLayout {
-                spacing: 8px;
-                alignment: end;
+                width: Grid.control;
+                spacing: Grid.value-gap;
 
                 TestButton {
+                    width: Grid.half-control;
+                    pad: 4px;
                     job: TestJob.record;
                     start-text: @tr("ui" => "Record {} s", Model.record-seconds);
                 }
 
                 TestButton {
+                    width: Grid.half-control;
+                    pad: 4px;
                     job: TestJob.play;
                     start-text: @tr("ui" => "Play");
                     available: Model.test-has-recording;

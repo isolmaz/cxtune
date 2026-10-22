@@ -1,4 +1,5 @@
 /target
+__pycache__/
 
 # Firmware dumps and what the tools generate from them must never be committed.
 *.bin

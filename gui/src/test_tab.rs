@@ -7,7 +7,9 @@ use cxtune::engine::{
     TestStep as EngineStep,
 };
 
-use crate::ui::{Measured, Model, TestJob, TestProblem, TestStep};
+use slint::ComponentHandle;
+
+use crate::ui::{MainWindow, Measured, Model, TestJob, TestProblem, TestStep};
 
 /// The index of the Test page in the window.
 pub const TAB: i32 = 3;
@@ -21,11 +23,21 @@ pub const COMPARISON_SECONDS: u8 = 10;
 const NO_LEVEL_DB: f32 = -60.0;
 
 /// Whether the microphone meter should run. It runs only while the Test page is shown in a window
-/// that is shown, and the dongle is there. The output tests need the microphone closed (the engine
-/// refuses the meter while one runs and closes it when one starts), so it stays off until they
-/// end; the measurements keep it as it is.
-pub fn meter_wanted(tab: i32, window_shown: bool, usable: bool, running: Option<TestKind>) -> bool {
-    tab == TAB && window_shown && usable && running.is_none_or(TestKind::uses_microphone)
+/// that is shown (`shown` is false while it is hidden in the notification area) and not minimized,
+/// and the dongle is there. The output tests need the microphone closed (the engine refuses the
+/// meter while one runs and closes it when one starts), so it stays off until they end; the
+/// measurements keep it as it is.
+pub fn meter_wanted(
+    window: &MainWindow,
+    shown: bool,
+    usable: bool,
+    running: Option<TestKind>,
+) -> bool {
+    window.global::<Model>().get_tab() == TAB
+        && shown
+        && !window.window().is_minimized()
+        && usable
+        && running.is_none_or(TestKind::uses_microphone)
 }
 
 /// Tells the engine when the meter is wanted and when it is not, once for each change.
@@ -265,30 +277,50 @@ mod tests {
         }
     }
 
+    fn window_on(tab: i32) -> MainWindow {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = MainWindow::new().unwrap();
+        window.global::<Model>().set_tab(tab);
+        window
+    }
+
     #[test]
     fn the_meter_runs_only_on_the_test_page_of_a_shown_window_with_a_dongle() {
-        assert!(meter_wanted(TAB, true, true, None));
-        assert!(!meter_wanted(0, true, true, None), "another page");
-        assert!(!meter_wanted(TAB + 1, true, true, None), "another page");
-        assert!(!meter_wanted(TAB, false, true, None), "a hidden window");
-        assert!(!meter_wanted(TAB, true, false, None), "no dongle");
+        let window = window_on(TAB);
+        assert!(meter_wanted(&window, true, true, None));
+        assert!(!meter_wanted(&window, false, true, None), "a hidden window");
+        assert!(!meter_wanted(&window, true, false, None), "no dongle");
+        for tab in (0..=TAB + 2).filter(|tab| *tab != TAB) {
+            window.global::<Model>().set_tab(tab);
+            assert!(!meter_wanted(&window, true, true, None), "page {tab}");
+        }
+    }
+
+    #[test]
+    fn the_meter_does_not_run_in_a_minimized_window() {
+        let window = window_on(TAB);
+        window.window().set_minimized(true);
+        assert!(!meter_wanted(&window, true, true, None));
+        window.window().set_minimized(false);
+        assert!(meter_wanted(&window, true, true, None));
     }
 
     #[test]
     fn the_meter_waits_for_an_output_test_and_keeps_running_through_a_measurement() {
+        let window = window_on(TAB);
         for kind in [
             TestKind::NoiseFloor,
             TestKind::Record,
             TestKind::NoiseReductionAb,
         ] {
-            assert!(meter_wanted(TAB, true, true, Some(kind)), "{kind:?}");
+            assert!(meter_wanted(&window, true, true, Some(kind)), "{kind:?}");
         }
         for kind in [
             TestKind::PlayRecording,
             TestKind::ClickTest,
             TestKind::NoiseListen,
         ] {
-            assert!(!meter_wanted(TAB, true, true, Some(kind)), "{kind:?}");
+            assert!(!meter_wanted(&window, true, true, Some(kind)), "{kind:?}");
         }
     }
 

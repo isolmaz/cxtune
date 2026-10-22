@@ -1,5 +1,5 @@
 import { Palette } from "std-widgets.slint";
-import { Hiss, Pop, Tone } from "contract.slint";
+import { Click, NoiseFloor, Tone } from "contract.slint";
 
 // The 720 x 480 window on a 4 px grid: a header, a navigation column and a page, a footer band.
 // The page has 24 px at its sides and 16 px above and below; everything on it is as wide as the
@@ -30,8 +30,11 @@ export global Grid {
     out property <length> slider: 200px;
     out property <length> value: 64px;
     out property <length> value-gap: 8px;
-    // a combo box or a button in a row
+    // a combo box or a button in a row; two buttons share it, `value-gap` apart
     out property <length> control: 160px;
+    out property <length> half-control: (control - value-gap) / 2;
+    // the column of the result of a test: right-aligned, directly left of the control
+    out property <length> result: 128px;
     // the mode cards: the head holds the name and, for the recommended mode, the badge, then come
     // the three traits
     out property <length> mode-head: 42px;
@@ -96,8 +99,8 @@ export global Signal {
         return tone == Tone.critical ? Surface.critical : tone == Tone.caution ? Surface.caution : Surface.good;
     }
 
-    public pure function hiss(kind: Hiss) -> color {
-        return kind == Hiss.constant ? Surface.critical : kind == Hiss.some ? Surface.caution : Surface.good;
+    public pure function noise-floor(kind: NoiseFloor) -> color {
+        return kind == NoiseFloor.constant ? Surface.critical : kind == NoiseFloor.some ? Surface.caution : Surface.good;
     }
 
     // the glyph of each trait of the modes, by position: noise, click, delay
@@ -106,7 +109,7 @@ export global Signal {
     }
 
     // a click that was not measured has no colour
-    public pure function pop(kind: Pop) -> color {
-        return kind == Pop.none ? Surface.good : kind == Pop.low ? Surface.caution : kind == Pop.loud ? Surface.critical : Surface.secondary;
+    public pure function click(kind: Click) -> color {
+        return kind == Click.none ? Surface.good : kind == Click.low ? Surface.caution : kind == Click.loud ? Surface.critical : Surface.secondary;
     }
 }

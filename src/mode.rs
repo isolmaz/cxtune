@@ -575,7 +575,7 @@ impl Output {
 }
 
 /// How long the first audio of a stream that starts from idle is muted, in ms (measured, see
-/// docs/firmware-notes.md): nothing in the default and low-click modes, about 640 ms in
+/// docs/firmware-notes.md): nothing in the default and low-click modes, about 650 ms in
 /// balanced, and the soft-start time plus about 150 ms in lowest noise. `soft_start_ms` is the
 /// lowest-noise soft-start time (the routine's default if `None`); a mode that is not known is
 /// taken as the longest of the fixed ones.

@@ -59,22 +59,22 @@ export enum Tone {
 }
 
 // The indicators of an output mode.
-export enum Hiss {
+export enum NoiseFloor {
     constant,
     some,
     cut,
 }
 
-export enum Pop {
+export enum Click {
     none,
     low,
     not-measured,
     loud,
 }
 
-// How long the start of audio is muted (`delay-ms`, the engine's own figure): not at all, a
+// How long the start of audio is muted (`start-delay-ms`, the engine's own figure): not at all, a
 // fixed time, or the soft-start time plus a fixed one.
-export enum Delay {
+export enum StartDelay {
     none,
     fixed,
     settle,
@@ -82,10 +82,10 @@ export enum Delay {
 
 // What a mode costs and gives.
 export struct ModeIndicators {
-    hiss: Hiss,
-    pop: Pop,
-    delay: Delay,
-    delay-ms: int,
+    noise-floor: NoiseFloor,
+    click: Click,
+    start-delay: StartDelay,
+    start-delay-ms: int,
 }
 
 // The tests of the Test page; at most one runs at a time.
@@ -174,7 +174,7 @@ export global Model {
     in property <float> settle-min: 20;
     in property <float> settle-max: 2000;
     in property <float> settle-step: 10;
-    in property <bool> delay-enabled;
+    in property <bool> settle-enabled;
     // the stop decay time of Balanced: its slider is enabled only in that mode
     in-out property <float> decay-ms: 800;
     in property <float> decay-min: 100;
@@ -248,6 +248,8 @@ export global Model {
     callback slider-released();
     // the tab changed: the Test page runs the microphone meter only while it is shown
     callback tab-changed(int);
+    // the window was minimized or restored: the meter runs only in a window that can be seen
+    callback minimized-changed(bool);
     callback test-requested(TestJob);
     callback test-cancelled();
     callback autostart-toggled(bool);

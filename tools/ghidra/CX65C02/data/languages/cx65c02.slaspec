@@ -1,7 +1,7 @@
 # Derived from Ghidra's Ghidra/Processors/6502/data/languages/65c02.slaspec (Apache License 2.0,
 # see ../../LICENSE; attribution in ../../NOTICE). Modified: the (zp) forms of AND, CMP, LDA and
-# SBC are replaced by CX32, SETB, MOVI and BRSET; BIT #imm, STZ zp, INC A and DEC A are replaced
-# by ADD (twice), ASR and NEG; the other Conexant instructions are added.
+# SBC are replaced by CX32, SETB, MOVI and BRSET; BIT #imm and STZ zp by ADD (both); INC A (0x1A)
+# by NEG and DEC A (0x3A) by ASR; the other Conexant instructions are added.
 @include "6502.slaspec"
 
 # Conexant CX2077x extensions (see cxdis.py for evidence/hypotheses)

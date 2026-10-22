@@ -1,5 +1,5 @@
 import { Slider, Switch } from "std-widgets.slint";
-import { Model, ModeIndicators, Pop, TestJob } from "contract.slint";
+import { Click, Model, ModeIndicators, TestJob } from "contract.slint";
 import { Grid, Signal, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
@@ -337,6 +337,7 @@ export component FluentButton inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> subtle;
     in property <length> button-height: 32px;
+    in property <length> pad: 12px;
     callback clicked();
     height: root.button-height;
     border-radius: 4px;
@@ -369,8 +370,8 @@ export component FluentButton inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
+        padding-left: root.pad;
+        padding-right: root.pad;
         spacing: 8px;
         alignment: center;
 
@@ -783,7 +784,7 @@ component Legend inherits HorizontalLayout {
     alignment: start;
     height: Grid.trait;
 
-    for name[i] in [@tr("ui" => "Noise floor"), @tr("ui" => "Click"), @tr("ui" => "Mute delay")]: Rectangle {
+    for name[i] in [@tr("ui" => "Noise floor"), @tr("ui" => "Click"), @tr("ui" => "Start delay")]: Rectangle {
         min-width: entry.preferred-width;
         horizontal-stretch: 0;
 
@@ -834,7 +835,7 @@ component ModeCard inherits Rectangle {
     accessible-checkable: true;
     accessible-checked: root.selected;
     accessible-enabled: root.enabled;
-    accessible-description: @tr("ui" => "{}: {}, {}: {}, {}: {}", @tr("ui" => "Noise floor"), Texts.hiss(root.indicators.hiss), @tr("ui" => "Click"), Texts.pop-spoken(root.indicators.pop), @tr("ui" => "Mute delay"), Texts.delay(root.indicators.delay, root.indicators.delay-ms));
+    accessible-description: @tr("ui" => "{}: {}, {}: {}, {}: {}", @tr("ui" => "Noise floor"), Texts.noise-floor(root.indicators.noise-floor), @tr("ui" => "Click"), Texts.click-spoken(root.indicators.click), @tr("ui" => "Start delay"), Texts.start-delay(root.indicators.start-delay, root.indicators.start-delay-ms));
     accessible-action-default => {
         root.clicked();
     }
@@ -873,8 +874,8 @@ component ModeCard inherits Rectangle {
 
         Trait {
             position: 0;
-            value: Texts.hiss(root.indicators.hiss);
-            tone: Signal.hiss(root.indicators.hiss);
+            value: Texts.noise-floor(root.indicators.noise-floor);
+            tone: Signal.noise-floor(root.indicators.noise-floor);
             tip: Texts.trait-tip(0);
             clicked => {
                 root.clicked();
@@ -883,10 +884,10 @@ component ModeCard inherits Rectangle {
 
         Trait {
             position: 1;
-            value: Texts.pop(root.indicators.pop);
-            tone: Signal.pop(root.indicators.pop);
-            measured: root.indicators.pop != Pop.not-measured;
-            tip: Texts.click-tip(root.indicators.pop);
+            value: Texts.click(root.indicators.click);
+            tone: Signal.click(root.indicators.click);
+            measured: root.indicators.click != Click.not-measured;
+            tip: Texts.click-tip(root.indicators.click);
             clicked => {
                 root.clicked();
             }
@@ -894,9 +895,9 @@ component ModeCard inherits Rectangle {
 
         Trait {
             position: 2;
-            value: Texts.delay(root.indicators.delay, root.indicators.delay-ms);
+            value: Texts.start-delay(root.indicators.start-delay, root.indicators.start-delay-ms);
             tone: Surface.secondary;
-            tip: Texts.delay-tip(root.indicators.delay, root.indicators.delay-ms);
+            tip: Texts.start-delay-tip(root.indicators.start-delay, root.indicators.start-delay-ms);
             clicked => {
                 root.clicked();
             }
@@ -1154,7 +1155,7 @@ export component StatusPill inherits Rectangle {
 component Meter inherits Rectangle {
     in property <bool> active;
     in property <float> db;
-    property <int> segments: 28;
+    in property <int> segments: 28;
     property <float> level: Math.clamp((root.db + 60) / 60, 0, 1);
     width: root.segments * 7px - 2px;
     height: 8px;
@@ -1180,7 +1181,7 @@ export component MeterRow inherits HorizontalLayout {
     opacity: root.active ? 1 : 0.6;
     accessible-role: progress-indicator;
     accessible-label: root.label;
-    accessible-value: root.active ? @tr("ui" => "{} dB", Math.round(root.db)) : "";
+    accessible-value: root.active ? Texts.dbfs-rounded(root.db) : "";
 
     Text {
         text: root.tag;
@@ -1194,12 +1195,12 @@ export component MeterRow inherits HorizontalLayout {
     }
 
     if root.active: Text {
-        text: @tr("ui" => "{} dB", Math.round(root.db));
+        text: Texts.dbfs-rounded(root.db);
         font-size: Type.caption;
         color: Surface.text;
         vertical-alignment: center;
         horizontal-alignment: right;
-        width: 52px;
+        width: 56px;
         accessible-role: none;
     }
 
@@ -1212,35 +1213,36 @@ export component MeterRow inherits HorizontalLayout {
     }
 }
 
-// The level of the microphone on the Test page: the segments of the header meter in the width of a
-// slider, for a level in dBFS from -60 to 0. Without a level it stays neutral.
+// The level of the microphone on the Test page: a meter of `segments` segments for a level in dBFS
+// from -60 to 0, as high as a row of buttons. Without a level it stays neutral.
 export component LevelBar inherits Rectangle {
     in property <bool> active;
     in property <float> db;
     in property <string> label;
-    width: Grid.slider;
+    in property <int> segments: 28;
+    width: meter.width;
     height: 32px;
     accessible-role: progress-indicator;
     accessible-label: root.label;
     accessible-value: root.active ? Texts.dbfs-rounded(root.db) : "";
 
-    Meter {
-        x: (parent.width - self.width) / 2;
+    meter := Meter {
         y: (parent.height - self.height) / 2;
         active: root.active;
         db: root.db;
+        segments: root.segments;
     }
 }
 
-// The result of a test in a row, right-aligned before the button: the measured value and, smaller
-// under it, what else was measured.
+// The result of a test in a row: in a column of `Grid.result`, right-aligned, directly left of the
+// control. The measured value and, smaller under it, what else was measured.
 export component ResultText inherits VerticalLayout {
     in property <string> text;
     in property <string> detail;
     in property <bool> subdued;
     alignment: center;
     horizontal-stretch: 0;
-    max-width: 130px;
+    width: Grid.result;
 
     Body {
         text: root.text;

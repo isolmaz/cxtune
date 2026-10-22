@@ -104,7 +104,8 @@ pub struct App {
     /// What the Test page shows, and what the engine was last asked about its meter.
     test: TestTab,
     meter: MeterAsk,
-    /// Whether the window is shown: the meter of the Test page does not run in a hidden one.
+    /// Whether the window is shown, not hidden in the notification area: the meter of the Test
+    /// page does not run in a hidden one, nor in a minimized one.
     shown: bool,
     /// Until when the volume of each side, playback and capture, is the user's own move.
     volume_hold: [Option<Instant>; 2],
@@ -189,6 +190,7 @@ fn connect(window: &MainWindow, tray: &Tray) {
     model.on_surround_toggled(|on| with_app(|app| app.surround_toggled(on)));
     model.on_surround_level_changed(|level| with_app(|app| app.surround_level_changed(level)));
     model.on_tab_changed(|_| with_app(App::render));
+    model.on_minimized_changed(|_| with_app(App::render));
     model.on_test_requested(|job| with_app(|app| app.test_requested(job)));
     model.on_test_cancelled(|| with_app(App::test_cancelled));
     model.on_boost_changed(|step| with_app(|app| app.boost_changed(step)));
@@ -431,7 +433,7 @@ impl App {
         let usable = running && status.controls;
         let controls = self.controls;
         model.set_controls_enabled(usable);
-        model.set_delay_enabled(controls::soft_start_enabled(usable, controls.mode));
+        model.set_settle_enabled(controls::soft_start_enabled(usable, controls.mode));
         model.set_decay_enabled(controls::decay_enabled(usable, controls.mode));
         let indicators = Mode::ALL.map(|mode| controls::indicators(mode, controls.settle_ms));
         model.set_indicators(ModelRc::new(VecModel::from(indicators.to_vec())));
@@ -444,8 +446,7 @@ impl App {
             .unwrap_or_default();
         self.test.state(&test);
         self.test.show(&model);
-        let wanted =
-            test_tab::meter_wanted(model.get_tab(), self.shown, usable, self.test.running());
+        let wanted = test_tab::meter_wanted(&window, self.shown, usable, self.test.running());
         if let Some(command) = self.meter.sync(wanted) {
             self.send(command);
         }

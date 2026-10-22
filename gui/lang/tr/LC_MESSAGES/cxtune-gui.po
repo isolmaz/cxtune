@@ -80,7 +80,7 @@ msgid "Click"
 msgstr "Tık"
 
 msgctxt "ui"
-msgid "Mute delay"
+msgid "Start delay"
 msgstr "Açılış gecikmesi"
 
 msgctxt "ui"
@@ -135,9 +135,9 @@ msgctxt "ui"
 msgid "{} ms"
 msgstr "{} ms"
 
-msgctxt "decay"
-msgid "Mute delay"
-msgstr "Susturma gecikmesi"
+msgctxt "ui"
+msgid "Release time"
+msgstr "Kapanma süresi"
 
 msgctxt "ui"
 msgid "Used only by Balanced. After audio or a recording stops, the output stays open for this time and then goes quiet again. Vendor setting: 800 ms."
@@ -540,7 +540,7 @@ msgid "Click: the pop when audio starts."
 msgstr "Tık: ses başlarken duyulan çıtlama."
 
 msgctxt "ui"
-msgid "Mute delay: how long the start of audio is muted."
+msgid "Start delay: how long the start of audio is muted."
 msgstr "Açılış gecikmesi: sesin başlangıcının ne kadar susturulduğu."
 
 msgctxt "ui"

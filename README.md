@@ -29,8 +29,8 @@ and a tray application.
 - **Automatic re-apply** (`cxtune watch`): the settings are applied again when the dongle is
   replugged or the computer wakes from sleep.
 - **Test helpers** in the engine (`docs/engine.md`): microphone level, noise floor, noise
-  reduction comparison, recording and playback, a click test and noise listening, for the
-  application's Test tab.
+  reduction comparison, recording and playback, a click test and noise listening, shown on the
+  Test page of the tray application.
 - **Tray application** (English and Turkish): a window and a notification-area icon for all of
   the above and for the Windows volume of the dongle; see
   [The tray application](#the-tray-application).
@@ -39,7 +39,7 @@ and a tray application.
 |---|---|---|---|
 | `default` | Vendor behaviour: driver always on. Constant noise floor. | No clicks. | None. |
 | `low-click` | ROM default idle power-down. Some noise. | Low click. | None. |
-| `balanced` | Driver clamped, analog references off. | Follows the ROM power-up order. | The first 600 ms of audio after idle are muted; opening the microphone from full idle gives a stretch of digital silence and a click first. The driver stays open for the decay time (default 800 ms) after a stream or capture ends. |
+| `balanced` | Driver clamped, analog references off. | Follows the ROM power-up order. | The first ≈650 ms of audio after idle are muted; opening the microphone from full idle gives a stretch of digital silence and a click first. The driver stays open for the decay time (default 800 ms) after a stream or capture ends. |
 | `lowest-noise` | Driver clamped. | Loud click. | Audio is muted for the soft-start time (default 600 ms) plus 150 ms. |
 
 The former names `stock`, `quiet`, `click-free` and `min-hiss` are accepted by the command line
@@ -112,8 +112,8 @@ five below, and a header shows the dongle, its state and the level of the microp
 the Test page is shown).
 
 - **Output**: the four modes (Default, Low click, Balanced, Lowest noise) as cards with Noise
-  floor, Click and Mute delay indicators that show only what was measured (and say so when
-  something was not), the speaker volume, the soft-start time of Lowest noise, the mute delay
+  floor, Click and Start delay indicators that show only what was measured (and say so when
+  something was not), the speaker volume, the soft-start time of Lowest noise, the release time
   of Balanced (its stop decay time), the experimental virtual surround with its level, and
   **Apply recommended** (balanced mode, microphone boost 6, noise reduction on, AGC and sidetone
   off).
