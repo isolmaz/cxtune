@@ -399,7 +399,7 @@ fn wait_ready<T: Transport + ?Sized, S: Stream>(
             return Ok(());
         }
         if Instant::now() >= deadline {
-            return Err(Error::Device(format!(
+            return Err(Error::Audio(format!(
                 "the dongle did not show the silent stream within {} s ($0F18={enable:#04x} \
                  $0F1A={:#04x} $0F1B={:#04x} $0F3E={refs:#04x}); nothing was written. \
                  Check that no other program holds the output; if the references \
@@ -756,7 +756,7 @@ mod tests {
     fn nothing_is_written_when_the_stream_cannot_be_opened() {
         let dev = FakeDevice::stock();
         dev.remove_endpoint();
-        assert!(matches!(apply(&dev, Mode::Balanced), Err(Error::Device(_))));
+        assert!(matches!(apply(&dev, Mode::Balanced), Err(Error::Audio(_))));
         assert!(dev.writes().is_empty());
         // a change that needs no stream is still possible
         let dev = FakeDevice::in_mode(Mode::Stock);
@@ -789,7 +789,7 @@ mod tests {
                 FAST_POLL,
             )
             .unwrap_err();
-            assert!(matches!(err, Error::Device(_)), "{to:?}: {err}");
+            assert!(matches!(err, Error::Audio(_)), "{to:?}: {err}");
             assert!(dev.writes().is_empty(), "{to:?}");
             assert!(!dev.stream_is_open());
         }
@@ -806,7 +806,7 @@ mod tests {
             FAST_POLL,
         )
         .unwrap_err();
-        let Error::Device(message) = err else {
+        let Error::Audio(message) = err else {
             panic!("{err}")
         };
         assert!(message.contains("$0F3E=0x00"), "{message}");
@@ -838,7 +838,7 @@ mod tests {
                 assert_eq!(err.unwrap(), 0);
                 continue;
             }
-            let Err(Error::Device(message)) = err else {
+            let Err(Error::Audio(message)) = err else {
                 panic!("{from:?}: {err:?}")
             };
             assert!(message.contains("$0F1B="), "{from:?}: {message}");
@@ -881,7 +881,7 @@ mod tests {
         struct Dead;
         impl Stream for Dead {
             fn check(&self) -> Result<()> {
-                Err(Error::Device("dead stream".into()))
+                Err(Error::Audio("dead stream".into()))
             }
         }
         let dev = FakeDevice::in_mode(Mode::Stock);

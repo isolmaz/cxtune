@@ -71,7 +71,7 @@ impl mode::Stream for SilentStream {
     fn check(&self) -> Result<()> {
         let failure = self.failure.lock().unwrap_or_else(|e| e.into_inner());
         match failure.as_deref() {
-            Some(why) => Err(Error::Device(format!("the silent stream stopped: {why}"))),
+            Some(why) => Err(Error::Audio(format!("the silent stream stopped: {why}"))),
             None => Ok(()),
         }
     }
@@ -99,12 +99,12 @@ pub fn open_silence() -> Result<SilentStream> {
             Ok(stream)
         }
         Ok(Err(e)) => Err(e),
-        Err(_) => Err(Error::Device("the audio thread ended unexpectedly".into())),
+        Err(_) => Err(Error::Audio("the audio thread ended unexpectedly".into())),
     }
 }
 
 fn audio_err(e: windows::core::Error) -> Error {
-    Error::Device(format!("audio: {e}"))
+    Error::Audio(e.to_string())
 }
 
 fn render(
@@ -146,7 +146,7 @@ fn run(
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(audio_err)?;
         let device = find_dongle(&enumerator)?.ok_or_else(|| {
-            Error::Device(format!(
+            Error::Audio(format!(
                 "no playback endpoint of the dongle ({VID:04X}:{PID:04X}) found"
             ))
         })?;

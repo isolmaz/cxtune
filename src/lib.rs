@@ -35,12 +35,15 @@ pub enum Error {
         got: Vec<u8>,
     },
     Config(String),
+    /// The silent playback stream that a mode change needs could not be opened or kept.
+    Audio(String),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Device(m) => write!(f, "device error: {m}"),
+            Error::Audio(m) => write!(f, "audio error: {m}"),
             Error::Protocol(m) => write!(f, "protocol error: {m}"),
             Error::Refused(m) => write!(f, "refused: {m}"),
             Error::Readback {

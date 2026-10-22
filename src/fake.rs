@@ -145,7 +145,7 @@ impl Stream for FakeStream {
         if self.0.0.borrow().stream_open {
             Ok(())
         } else {
-            Err(Error::Device("the silent stream stopped".into()))
+            Err(Error::Audio("the silent stream stopped".into()))
         }
     }
 }
@@ -532,7 +532,7 @@ impl FakeDevice {
     pub fn open_stream(&self) -> Result<FakeStream> {
         let mut d = self.0.borrow_mut();
         if d.no_endpoint {
-            return Err(Error::Device("no playback endpoint".into()));
+            return Err(Error::Audio("no playback endpoint".into()));
         }
         d.stream_open = true;
         d.stream_seen = false;
