@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use cxtune::config::Config;
-use cxtune::engine::{Phase, Readback, Snapshot};
+use cxtune::engine::{Phase, Readback, Snapshot, TestState};
 use cxtune::mode::Mode;
 use slint::language::ColorScheme;
 use slint::platform::{Key, WindowEvent};
@@ -171,10 +171,13 @@ fn connected(mode: Mode) -> Snapshot {
             mode: Some(mode),
             mic_boost: Some(6),
             min_hiss_ms,
+            balanced_decay_ms: None,
             mic_nr: Some(true),
             mic_agc: Some(false),
             sidetone: Some(false),
             sidetone_level: None,
+            surround: None,
+            surround_level: None,
         },
         settings_saved: true,
         save_error: None,
@@ -182,13 +185,17 @@ fn connected(mode: Mode) -> Snapshot {
             firmware_supported: true,
             mode: Some(mode),
             min_hiss_ms,
+            balanced_decay_ms: None,
             mic_boost: Some(6),
             noise_reduction: true,
             agc: false,
             sidetone: false,
             sidetone_level: 947,
+            surround: false,
+            surround_level: None,
         }),
         error: None,
+        test: TestState::default(),
     }
 }
 
