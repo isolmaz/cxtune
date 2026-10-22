@@ -6,6 +6,7 @@
 //! and guard bytes or bits elsewhere in memory that must hold. All addresses are CPU-space
 //! patch RAM, which the dongle reloads from EEPROM on every replug or USB reset.
 
+use std::fmt;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -215,7 +216,8 @@ enum Change {
     Bits { mask: u8, value: u8, forbidden: u8 },
     /// Replaces a little-endian 16-bit value in `lo..=hi` with `value`, which is in the same range.
     Word { lo: u16, hi: u16, value: u16 },
-    /// Sets [`NEWC`] in a byte whose other bits belong to the ROM; refused while it is already set.
+    /// Sets [`NEWC`] in a byte whose other bits belong to the ROM. A request that is already
+    /// pending counts as done.
     Newc,
 }
 
@@ -248,7 +250,7 @@ impl Patch {
     }
 
     /// Number of bytes the patch reads and writes.
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match &self.change {
             Change::Swap { after, .. } => after.len(),
             Change::Byte { .. } | Change::Bits { .. } | Change::Newc => 1,
@@ -304,7 +306,7 @@ impl Patch {
                 _ => Step::Refuse,
             },
             Change::Newc => match current {
-                [b] if b & NEWC != 0 => Step::Refuse,
+                [b] if b & NEWC != 0 => Step::Done,
                 [b] => Step::Write(vec![b | NEWC]),
                 _ => Step::Refuse,
             },
@@ -599,9 +601,10 @@ pub fn sidetone_level(level: u16) -> Result<Patch> {
     })
 }
 
-/// Asks the ROM to reload the DSP settings now. Refused while a request is pending. After the
-/// write the ROM must clear the request within [`NEWC_TIMEOUT`] and leave the other bits of
-/// the byte as they were; anything else is an error.
+/// Asks the ROM to reload the DSP settings now. If the ROM already has a request pending, that
+/// reload comes after every write made so far, so it is waited for instead of repeated. The ROM
+/// must clear the request within [`NEWC_TIMEOUT`]; if the other bits of the byte then differ
+/// from what was read, the outcome is [`Outcome::StreamEvent`].
 pub fn newc() -> Patch {
     Patch {
         name: "NEWC request ($1154 bit 0)".into(),
@@ -612,10 +615,34 @@ pub fn newc() -> Patch {
     }
 }
 
+/// The other bits of `$1154` (stream state owned by the ROM) were not the same after a NEWC
+/// request as before it: a stream event happened near the request. The request may have
+/// overwritten the ROM's own update of that byte, which cannot be told apart from an update
+/// that came after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamEvent {
+    pub before: u8,
+    pub after: u8,
+}
+
+impl fmt::Display for StreamEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "a stream event changed ${NEWC_ADDR:04X} from {:#04x} to {:#04x} while the DSP reload \
+             was requested; the reload was done, but the request may have overwritten the ROM's \
+             own update of that byte (this cannot be detected)",
+            self.before, self.after
+        )
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
     Written,
     AlreadySet,
+    /// A NEWC request was made and consumed, and a stream event happened near it.
+    StreamEvent(StreamEvent),
 }
 
 /// The only function in the app that writes to the device.
@@ -656,7 +683,7 @@ fn apply<T: Transport + ?Sized>(t: &mut T, p: &Patch, newc_timeout: Duration) ->
 
     let first = resolve(t)?;
     if first.1.is_none() {
-        return Ok(Outcome::AlreadySet);
+        return nothing_to_write(t, p, newc_timeout);
     }
     check_guards(t, p)?;
     let (before, bytes) = if p.is_read_modify_write() {
@@ -665,13 +692,21 @@ fn apply<T: Transport + ?Sized>(t: &mut T, p: &Patch, newc_timeout: Duration) ->
         first
     };
     let Some(bytes) = bytes else {
-        return Ok(Outcome::AlreadySet);
+        return nothing_to_write(t, p, newc_timeout);
     };
 
     t.send(&OutReport::write(p, &bytes))?;
 
     if matches!(p.change, Change::Newc) {
-        return await_newc(t, p, before[0], newc_timeout).map(|()| Outcome::Written);
+        let after = wait_for_newc_clear(t, p, newc_timeout)?;
+        return Ok(if after == before[0] {
+            Outcome::Written
+        } else {
+            Outcome::StreamEvent(StreamEvent {
+                before: before[0],
+                after,
+            })
+        });
     }
     let got = read_mem(t, p.addr, len)?;
     if got != bytes {
@@ -732,29 +767,31 @@ fn check_guards<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<()> {
     Ok(())
 }
 
-/// Waits for the ROM to consume the NEWC request. Afterwards the other bits of the byte must
-/// be as they were before the request: if a stream event changed them while the request was
-/// being made, the request may have overwritten the ROM's update, which cannot be told apart
-/// from here, so it is reported and not repeated.
-fn await_newc<T: Transport + ?Sized>(
+/// The bytes already hold the new value. A NEWC request that is already pending counts as
+/// that: the ROM reloads the settings after every write made so far, so it is waited for like
+/// a request of our own.
+fn nothing_to_write<T: Transport + ?Sized>(
     t: &mut T,
     p: &Patch,
-    before: u8,
+    newc_timeout: Duration,
+) -> Result<Outcome> {
+    if matches!(p.change, Change::Newc) {
+        wait_for_newc_clear(t, p, newc_timeout)?;
+    }
+    Ok(Outcome::AlreadySet)
+}
+
+/// Waits for the ROM to consume the NEWC request and returns the byte it left.
+fn wait_for_newc_clear<T: Transport + ?Sized>(
+    t: &mut T,
+    p: &Patch,
     timeout: Duration,
-) -> Result<()> {
+) -> Result<u8> {
     let deadline = Instant::now() + timeout;
     loop {
         let got = read_mem(t, p.addr, 1)?[0];
         if got & NEWC == 0 {
-            if got == before {
-                return Ok(());
-            }
-            return Err(Error::Readback {
-                patch: p.name.clone(),
-                addr: p.addr,
-                expected: vec![before],
-                got: vec![got],
-            });
+            return Ok(got);
         }
         if Instant::now() >= deadline {
             return Err(Error::Device(format!(
@@ -880,6 +917,22 @@ mod tests {
             );
             assert_eq!(&b[5..5 + len], after);
             assert!(b[5 + len..].iter().all(|&x| x == 0));
+        }
+    }
+
+    #[test]
+    fn a_write_report_has_exactly_the_length_of_its_patch() {
+        for p in all_patches() {
+            let n = p.len();
+            assert_eq!(p.len(), written_by(&p).len(), "{}", p.name());
+            for wrong in [n - 1, n + 1, 32] {
+                if wrong == 0 || wrong == n {
+                    continue;
+                }
+                let data = vec![0x11; wrong];
+                let built = std::panic::catch_unwind(|| OutReport::write(&p, &data));
+                assert!(built.is_err(), "{}: {wrong} bytes", p.name());
+            }
         }
     }
 
@@ -1426,12 +1479,40 @@ mod tests {
     }
 
     #[test]
-    fn newc_is_refused_while_one_is_pending() {
+    fn a_newc_the_rom_has_pending_is_waited_for_and_not_repeated() {
+        // the request is consumed at the `reads`th read, so the first read still sees it
+        for (start, reads) in [(0x01, 2), (0x01, 4), (0x03, 3)] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x1154, &[start]);
+            dev.raise_newc(reads);
+            assert_eq!(apply(&dev, &newc()).unwrap(), Outcome::AlreadySet);
+            assert!(dev.writes().is_empty(), "{start:#04x}/{reads}");
+            assert_eq!(dev.byte(0x1154), start & !0x01);
+            assert_eq!(dev.newc_consumed(), 1);
+        }
+    }
+
+    #[test]
+    fn a_newc_that_appears_while_the_guards_are_read_is_waited_for() {
+        let dev = FakeDevice::stock();
+        let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, |d| d.raise_newc(3));
+        assert_eq!(
+            apply_patch(&mut meddled, &newc()).unwrap(),
+            Outcome::AlreadySet
+        );
+        assert!(dev.writes().is_empty());
+        assert_eq!(dev.byte(0x1154), 0x00);
+        assert_eq!(dev.newc_consumed(), 1);
+    }
+
+    #[test]
+    fn a_pending_newc_that_is_never_consumed_is_an_error() {
         let dev = FakeDevice::stock();
         dev.poke(0x1154, &[0x01]);
-        assert_refused(&dev, &newc());
-        dev.poke(0x1154, &[0x03]);
-        assert_refused(&dev, &newc());
+        dev.never_consume_newc();
+        let err = super::apply(&mut dev.clone(), &newc(), Duration::from_millis(30)).unwrap_err();
+        assert!(matches!(err, Error::Device(_)), "{err}");
+        assert!(dev.writes().is_empty());
     }
 
     #[test]
@@ -1459,12 +1540,20 @@ mod tests {
     }
 
     #[test]
-    fn a_stream_event_during_newc_is_reported() {
+    fn a_stream_event_during_newc_is_reported_as_an_outcome_and_not_an_error() {
         let dev = FakeDevice::stock();
         let _mic = dev.open_mic();
         dev.flip_on_newc(0x10);
-        let err = apply(&dev, &newc()).unwrap_err();
-        assert!(matches!(err, Error::Readback { addr: 0x1154, .. }), "{err}");
+        let event = StreamEvent {
+            before: 0x02,
+            after: 0x12,
+        };
+        assert_eq!(apply(&dev, &newc()).unwrap(), Outcome::StreamEvent(event));
+        assert_eq!(dev.writes(), vec![(0x1154, vec![0x03])]);
+        assert_eq!(dev.newc_consumed(), 1);
+        let text = event.to_string();
+        assert!(text.contains("$1154") && text.contains("0x02") && text.contains("0x12"));
+        assert!(!text.contains("eplug"), "{text}");
     }
 
     #[test]

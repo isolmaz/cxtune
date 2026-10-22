@@ -12,6 +12,7 @@ pub mod hid;
 pub mod mode;
 pub mod patches;
 pub mod protocol;
+pub mod settings;
 
 #[cfg(test)]
 mod fake;

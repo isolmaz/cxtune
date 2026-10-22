@@ -428,6 +428,14 @@ impl FakeDevice {
         self.0.borrow_mut().newc_stuck = true;
     }
 
+    /// The ROM raises a NEWC request of its own, as it does on a stream event, and consumes it
+    /// at the `reads`th read request from now.
+    pub fn raise_newc(&self, reads: usize) {
+        let mut d = self.0.borrow_mut();
+        d.mem[NEWC] |= 0x01;
+        d.newc_reads = Some(reads);
+    }
+
     /// The ROM flips these bits of `$1154` when it consumes a request, as a stream event
     /// arriving at that moment would.
     pub fn flip_on_newc(&self, bits: u8) {

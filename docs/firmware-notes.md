@@ -116,8 +116,9 @@ Guards checked there, right before each write, besides the before-bytes of the p
   bit of the patch changes; the byte is read again after the guards, right before the write;
 - `$1276/7`: the value read and the value written are in `0x0001..0x1000` (nothing with bit 15
   set);
-- `$1154`: NEWC (bit 0) is clear when read; the write is that byte, read again after the
-  guards, with bit 0 set. The request is then waited for (see below).
+- `$1154`: if NEWC (bit 0) is clear when read, the write is that byte, read again after the
+  guards, with bit 0 set. If it is set (a request of the ROM's own), nothing is written. In
+  both cases the request is then waited for (see below).
 
 ## The window images
 
@@ -331,6 +332,10 @@ silence as the only playback.
   the bit; the appliers for noise reduction and AGC run only in that reload. The ROM sets
   NEWC itself when a stream opens. A change of `$1151` bit 2 or 4 therefore takes effect at
   the next NEWC, whoever requests it. (proven)
+- The NEWC pass also loads the DAC filter (`cfc2`; from the static analysis, not observed on
+  the device). Because the ROM sets NEWC on every stream open, the firmware runs this reload
+  at each playback start as well. Whether a NEWC made while a playback stream is running
+  causes a click in the headphones was not measured (see Hazards).
 - The appliers run only while the microphone gate is satisfied; an open capture stream
   satisfies it (`$13DC = 0x01`). With no capture stream `$00A4` stays `0x00`. (proven for a
   48 kHz shared-mode capture stream; other formats were not tried)
@@ -344,25 +349,50 @@ silence as the only playback.
 
 ### NEWC request
 
-`patches::newc` reads `$1154` (refused if bit 0 is set), reads the guards, reads `$1154`
-again, writes it with bit 0 set and then polls (5 ms steps, 500 ms limit) until the ROM clears
-the bit. The other bits must then equal what was read: if they do not, a stream event
-coincided with the request and may have been overwritten by it, which cannot be told apart
-from here, so the step fails with a readback error and is not repeated. A request the ROM
-does not consume in time is an error as well. The write cannot be made atomic: the protocol
-has no read-modify-write, so the window between the read and the write is one HID round trip
-(a few milliseconds). cxtune asks for NEWC only after it changed noise reduction or AGC and a
-capture stream is open (`$13DC`); otherwise the next stream applies the change and `$1154` is
-not touched.
+`patches::newc` reads `$1154`. If bit 0 is set, the ROM has a request of its own pending.
+Its reload runs after every write cxtune has made, so it applies them: cxtune waits for it
+(5 ms polls, 500 ms limit) instead of making another request, and the setting counts as
+applied. Otherwise it reads the guards, reads `$1154` again (a request that appeared in the
+meantime is waited for in the same way), writes the byte with bit 0 set and polls until the
+ROM clears the bit. The other bits are then compared with what was read before the write. If
+they differ, a stream event coincided with the request. The settings are written and the
+reload was done, so this is reported as a stream event (a warning in the CLI, which does not
+stop `watch`), not as a failure. The request may have overwritten the ROM's own update of that
+byte, which cannot be told apart from here from an update that came after the write, so the
+request is not repeated. A request the ROM does not consume in time is an error. The write
+cannot be made atomic: the protocol has no read-modify-write, so the window between the read
+and the write is one HID round trip (a few milliseconds). cxtune asks for NEWC only after it
+changed noise reduction or AGC and a capture stream is open (`$13DC`); otherwise the next
+stream applies the change and `$1154` is not touched.
 
 Measured: 72 requests (66 with a capture stream open, 4 with only playback open, 2 with no
 stream), 40 of them as 20 off/on pairs of `mic-nr` in a row. Each was consumed within the
 limit, and in the research script before the first poll after the write (which itself takes
 50 ms). In the 58 where `$1154` was compared before and after (including all 40 of the run
-in a row, which the code enforces) it was identical. A pass increments the
+in a row) it was identical. A pass increments the
 counters `$125C..$125F` and rewrites `$00C6`; in the compared ranges (`$0000..$00FF`,
 `$0F00..$0F7F`, `$1000..$12FF`, `$13D0..$13EF`) the only other changes seen were the applier
 flags and, once each, `$0044/$0045` and `$009D`.
+
+With another process opening and closing the capture stream every 0.2 to 0.8 s (167 cycles in
+two runs), 130 alternating `mic-nr` changes each made one NEWC request while the stream was
+open: 0 errors and 11 stream events. In all 11, `$1154` went from `0x02` to `0x00` between the
+read and the end of the request, which is the capture stream closing during it. Each was
+reported as a stream event and the run went on. At the end `$1154` was `0x00` with the
+microphone closed.
+
+### Applying the saved settings
+
+`settings::ensure` (used by `watch`) applies the microphone DSP settings first, then the mode,
+then the mic boost. A DSP reload request is awaited before the mode change opens its own
+playback stream, so the request does not coincide with that stream's open and close, and the
+ROM's reload at the start of that stream sees the settings already in place. A DSP setting
+that is refused writes nothing; the mode and the mic boost are still applied and the refusal
+is returned afterwards. Any other error in the DSP step (device gone, readback mismatch) stops
+the sequence. Measured with the capture stream open: changing to quiet with noise reduction
+off wrote `$1151` at 92 ms, `$1154` at 201 ms and the first mode byte (`$14B1`) at 529 ms;
+changing back to balanced with noise reduction on wrote `$1151` at 94 ms, `$1154` at 206 ms
+and the first mode byte (`$1EFC`) at 521 ms. A second run wrote nothing.
 
 ### Results
 
@@ -371,18 +401,21 @@ flags and, once each, `$0044/$0045` and `$009D`.
 | Noise reduction (`$1151` bit 2, stock on) | `$00A4` bit 7 followed the bit after NEWC in all 12 changes. Stationary noise, median of 50 ms frames over 30 s: on -63.9 dBFS, off -52.0, on -63.9, off -52.0, on -63.9 dBFS, an 11.9 dB drop repeatable to 0.1 dB, 10.8 to 12.1 dB in every band from 20 Hz to 8 kHz. Effect on speech not measured. The click when the microphone opens reached -1.1 dBFS in the recording that started with NR off and -18 dBFS in the two that started with NR on. |
 | AGC (`$1151` bit 4, stock off) | `$00A4` bit 5 followed the bit after NEWC in all 16 changes. **No effect on stationary noise**: 90 s per state at -64 dBFS (NR on), 60 s at -52 dBFS and 45 s at -46 dBFS (NR off, boost 7), each off/on/off (and on again); level differences at most 0.1 dB and no rise over time in the 5 s profiles. The firmware ran the AGC applier, but its behaviour on speech could not be measured without an audible test signal. Shipped as experimental. |
 | Sidetone on/off (`$1151` bit 7, stock off) | With capture and playback open, `$00A8` bit 3 was set after the write (no NEWC) and cleared after the clear, (4 of 4 switches); `$1255/6` became `0x03B3` at the first switch-on; written at idle it was running as soon as both streams were open. With only one of the two streams open it stayed clear. Audible result not measured (no listening test). |
-| Sidetone level (`$1276/7`, stock `0x03B3`) | `$112A/B` followed the register for `0x1000`, `0x0001`, `0x0200` (sidetone off) and `$1255/6` followed it for `0x0200`, `0x0001`, `0x0100` (sidetone on) within 0.3 s. The unit and the loudness are unknown; values above the stock value were written only with sidetone off. |
+| Sidetone level (`$1276/7`, stock `0x03B3`) | `$112A/B` followed the register for `0x1000`, `0x0001`, `0x0200` (sidetone off) and `$1255/6` followed it for `0x0200`, `0x0001`, `0x0100` (sidetone on) within 0.3 s. The unit and the loudness are unknown; values above the stock value were written only with sidetone off. While sidetone is on, cxtune moves the gain in 4 steps of equal ratio, one guarded write each, about 93 ms apart (0.39 s in all): 947 to 200 wrote `0x0282`, `0x01B3`, `0x0127`, `0x00C8`, and 200 to 947 wrote `0x0127`, `0x01B3`, `0x0282`, `0x03B3`. With capture and silent playback open (`$00A8 = 0x38`, path running), ramps from 947 to 300 and back left `$1276/7` at `0x012C` and then `0x03B3`, and the path kept running. With sidetone off it is one write. The loudness during a ramp was not listened to. |
 | EQ preset (`$1152` bits 1:0) | **Inert, not shipped.** Writing 2, 1 or 3 was never readable back, even 8 ms later; `$1248` stayed `0x06` and a NEWC pass loaded nothing. The hook-5 routine (`$16B5`, `JSR $1650`) of the vendor patch rewrites the two bits to 0 on every pass; changing that would mean editing vendor routine code, which cxtune does not do. |
 | Mic boost (`$1017`, existing) | One step more (6 to 7) raised the noise floor from -52.0 to -45.8 dBFS (+6.2 dB), consistent with 6 dB steps. |
 
 In the recordings the largest 10 ms peaks were the same size at the toggle times as elsewhere
-(-42 dBFS at boost 6 with NR off, -36 dBFS at boost 7), so no switching transient was seen.
+(-42 dBFS at boost 6 with NR off, -36 dBFS at boost 7), so no switching transient was seen in
+the microphone recordings. Nothing was recorded or listened to on the playback side: a click
+in the headphones when a NEWC pass reloads the DAC filter while audio plays is not measured.
 
 Stock values on this device: `$1151 = 0x04`, `$1152 = 0x00` (idle and with streams open),
 `$1248 = 0x06`, `$1276/7 = b3 03`, `$1255/6 = d5 40` until the sidetone path first runs (it
 holds the last gain afterwards).
 
-Not tested: a listening test of sidetone or AGC; capture formats other than 48 kHz mono
+Not tested: a listening test of sidetone or AGC; the playback side of a NEWC request (a
+click while audio plays); capture formats other than 48 kHz mono
 shared mode (the gate compares a format value with `$115A`); a physical replug (the saved
 settings are applied by the same writes, which were exercised at idle and with streams open).
 
@@ -403,7 +436,11 @@ settings are applied by the same writes, which were exercised at idle and with s
 - **A lost update of `$1154`.** NEWC is the only write to a byte that the ROM also changes
   (stream state). The read before the write is at most one HID round trip old, and a stream
   event inside that window would be overwritten; the check after the request only shows that
-  such an event happened near the request, not that it was lost.
+  such an event happened near the request, not that it was lost. It is reported as a stream
+  event, which is a warning.
+- **A NEWC request while audio plays.** The reload includes the DAC filter load. The ROM does
+  the same at every stream open, but a request made during a call or other playback was not
+  checked for a click in the headphones, because no playback was captured or listened to.
 - **Sidetone loudness.** The gain unit is not known and `0x1000` may be unity. The level
   stays in `0x0001..0x1000`, sidetone is off by default and switching it on applies the saved
   level first; start low.

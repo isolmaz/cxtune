@@ -60,10 +60,18 @@ cxtune sidetone-level <1-4096>  set the sidetone gain register (experimental) an
 cxtune watch                    keep the remembered settings applied across replugs
 ```
 
-A noise reduction or AGC change made while a microphone stream is open is applied to the
-running stream at once; otherwise the next microphone stream applies it. Switching sidetone on
-applies the remembered level first. The commands refuse to change anything if the `$1151` byte
-holds bits other than the three they manage.
+A noise reduction or AGC change made while a microphone stream is open is followed by a
+reload request to the firmware, which applies it to the running stream at once; otherwise the
+next microphone stream applies it. If the firmware already has a reload pending, that one is
+waited for. If a stream opens or closes at the moment of the request, cxtune prints a warning
+(the setting is written and the reload was done, but the request may have overwritten the
+firmware's own update of its stream state); the warning does not stop `watch`. The reload also
+reloads the firmware's DAC filter, as it does at every stream open; a click in the headphones
+when a request is made while audio plays has not been measured.
+
+Switching sidetone on applies the remembered level first. Changing the sidetone level while
+sidetone is on moves the gain to the new value in four steps (about 0.4 s). The commands refuse
+to change anything if the `$1151` byte holds bits other than the three they manage.
 
 Settings are stored in `%APPDATA%\cxtune\config.toml`:
 
@@ -122,8 +130,12 @@ guarantee it (a crossed response that happens to satisfy a single-bit check pass
 - The DSP writes (`$1151` bits 2, 4 and 7, the sidetone gain `$1276/7`, and the NEWC request
   in `$1154`) are guarded like the rest: they need the chip-mode and DSP-bypass flags clear,
   accept only the bit subsets and range listed in the firmware notes, and read the byte again
-  right before writing. After a NEWC request the ROM must clear it and leave the other bits of
-  `$1154` as they were. `$1152`, `$0F4D` and `$040A` are never written.
+  right before writing. A NEWC request that the ROM already has pending is waited for instead
+  of repeated. After a NEWC request the ROM must clear it; if it leaves other bits of `$1154`
+  different from before, that is reported as a stream event (a warning), because it means a
+  stream opened or closed at that moment. `$1152`, `$0F4D` and `$040A` are never written.
+- A sidetone level change while sidetone is on goes through four guarded writes of equal
+  ratio, and the level stays in `0x0001..0x1000`.
 
 ## Known limitations
 
@@ -139,10 +151,14 @@ guarantee it (a crossed response that happens to satisfy a single-bit check pass
 ## Re-applying on replug
 
 `watch` polls HID enumeration once per second (no device I/O while polling). When the dongle
-appears it waits 2 s for the firmware to load its patch, then applies the saved settings. While
+appears it waits 2 s for the firmware to load its patch, then applies the saved settings: the
+microphone DSP settings first, then the mode, then the mic boost. The DSP settings come first
+so that a reload request is finished before cxtune opens its own playback stream for the mode
+change; a DSP setting that is refused does not keep the mode from being applied. While
 connected it re-verifies every 60 s, which also catches a USB reset that happened between two
 polls. Applying is idempotent: if the device already matches, nothing is written and no stream
-is opened. A readback mismatch stops `watch`.
+is opened. A readback mismatch stops `watch`; a stream event near a DSP reload request is
+printed as a warning and does not.
 
 Polling was chosen over Windows device notifications (`CM_Register_Notification` /
 `WM_DEVICECHANGE`): it needs no window or callback threading, cannot miss an event because of a

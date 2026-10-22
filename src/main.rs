@@ -8,8 +8,7 @@ use cxtune::patches::{
     APPLIED_AGC, APPLIED_NR, DSP_AGC, DSP_NR, DSP_SIDETONE, MIXER_SIDETONE, ROM_ID, SIDETONE_MAX,
     SIDETONE_MIN,
 };
-use cxtune::protocol::Transport;
-use cxtune::{Error, Result, audio, dsp, hex, hid};
+use cxtune::{Error, Result, audio, dsp, hex, hid, settings};
 
 const USAGE: &str = "\
 usage: cxtune <command>
@@ -229,17 +228,6 @@ fn level_text(level: u16) -> String {
     }
 }
 
-/// Applies a mode, then the min-hiss settle time if one is given and the mode is min-hiss.
-fn set_mode<T: Transport>(dev: &mut T, target: Mode, min_hiss_ms: Option<u16>) -> Result<usize> {
-    let mut n = mode::apply_mode(dev, target, audio::open_silence)?;
-    if target == Mode::MinHiss
-        && let Some(ms) = min_hiss_ms
-    {
-        n += usize::from(mode::tune_min_hiss(dev, ms)?);
-    }
-    Ok(n)
-}
-
 fn apply(name: &str) -> Result<()> {
     let target = Mode::parse(name).ok_or_else(|| {
         Error::Config(format!(
@@ -247,7 +235,7 @@ fn apply(name: &str) -> Result<()> {
         ))
     })?;
     let mut cfg = config::load()?;
-    let n = set_mode(&mut open()?, target, cfg.min_hiss_ms)?;
+    let n = settings::set_mode(&mut open()?, target, cfg.min_hiss_ms, audio::open_silence)?;
     println!("mode '{}' applied ({n} writes)", target.name());
     cfg.mode = Some(target);
     config::save(&cfg)
@@ -299,17 +287,20 @@ fn written_text(written: bool) -> &'static str {
 fn switch(
     what: &str,
     arg: &str,
-    set: fn(&mut hid::HidTransport, bool) -> Result<bool>,
+    set: fn(&mut hid::HidTransport, bool) -> Result<dsp::Applied>,
     remember: fn(&mut Config, bool),
 ) -> Result<()> {
     let on = parse_switch(what, arg)?;
     let mut cfg = config::load()?;
-    let written = set(&mut open()?, on)?;
+    let applied = set(&mut open()?, on)?;
     println!(
         "{what} {} ({})",
         if on { "on" } else { "off" },
-        written_text(written)
+        written_text(applied.writes > 0)
     );
+    if let Some(event) = applied.stream_event {
+        eprintln!("warning: {event}");
+    }
     remember(&mut cfg, on);
     config::save(&cfg)
 }
@@ -334,23 +325,10 @@ fn sidetone_level(arg: &str) -> Result<()> {
         ))
     })?;
     let mut cfg = config::load()?;
-    let written = dsp::set_sidetone_level(&mut open()?, level)?;
+    let written = dsp::set_sidetone_level(&mut open()?, level)? > 0;
     println!("sidetone level {level} ({})", written_text(written));
     cfg.sidetone_level = Some(level);
     config::save(&cfg)
-}
-
-/// Applies the saved settings. Idempotent: writes nothing if the device already matches.
-fn ensure<T: Transport>(dev: &mut T, cfg: &Config) -> Result<usize> {
-    let mut n = match cfg.mode {
-        Some(m) => set_mode(dev, m, cfg.min_hiss_ms)?,
-        None => 0,
-    };
-    if let Some(step) = cfg.mic_boost {
-        n += usize::from(mode::set_mic_boost(dev, step)?);
-    }
-    n += dsp::apply_config(dev, cfg)?;
-    Ok(n)
 }
 
 fn watch() -> Result<()> {
@@ -380,12 +358,15 @@ fn watch() -> Result<()> {
                         "nothing selected yet; run `cxtune apply <mode>` first".into(),
                     ));
                 }
-                ensure(&mut hid::open(&api)?, &cfg)
+                settings::ensure(&mut hid::open(&api)?, &cfg, audio::open_silence)
             });
             match result {
-                Ok(n) => {
-                    if n > 0 {
-                        println!("settings re-applied ({n} writes)");
+                Ok(report) => {
+                    if report.writes > 0 {
+                        println!("settings re-applied ({} writes)", report.writes);
+                    }
+                    for event in &report.stream_events {
+                        eprintln!("warning: {event}");
                     }
                     last_error = None;
                     next_check = Instant::now() + VERIFY;
