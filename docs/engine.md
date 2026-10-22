@@ -34,7 +34,7 @@
 
 | `Command` | Effect |
 |---|---|
-| `SetMode(Mode)` | mode: default, click-free, balanced or lowest noise |
+| `SetMode(Mode)` | mode: default, low click, balanced or lowest noise |
 | `SetMinHissMs(u16)` | lowest-noise soft-start time (20-2000 ms in steps of 10), used in lowest-noise mode |
 | `SetBalancedDecayMs(u16)` | balanced stop decay time (100-2000 ms in steps of 10), used in balanced mode |
 | `SetMicBoost(u8)` | analog mic boost 0-7 |
@@ -202,7 +202,7 @@ closed by the engine as soon as nothing needs it. A request that cannot be run i
   watched. `ClickTest` and `NoiseListen` wait for the same state before they go on, and the
   click test rests 500 ms before it plays.
 - **The tone and the recording.** The clip starts with silence of the mode's mute delay
-  (`mode::mute_delay_ms`: none in default and click-free, 650 ms in balanced, the soft-start
+  (`mode::mute_delay_ms`: none in default and low click, 650 ms in balanced, the soft-start
   time plus 150 ms in lowest noise) plus 200 ms, so the first samples are not swallowed by the
   power-up, and ends with 300 ms of silence. It is played in an exclusive 16-bit stereo stream
   when possible and a shared one otherwise, and the stream is closed when the clip is over.

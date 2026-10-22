@@ -17,7 +17,7 @@ usage: cxtune <command>
 
   status                  read and show the device state (read-only)
   apply <mode>            apply an output mode and remember it:
-                          default | click-free | balanced | lowest-noise
+                          default | low-click | balanced | lowest-noise
   soft-start <ms>         set the lowest-noise soft-start time (20-2000 in steps of 10) and
                           remember it
   decay <ms>              set the balanced stop decay time (100-2000 in steps of 10) and
@@ -289,7 +289,7 @@ fn level_text(level: u16) -> String {
 fn apply(name: &str) -> Result<()> {
     let target = Mode::parse(name).ok_or_else(|| {
         Error::Config(format!(
-            "unknown mode '{name}' (default | click-free | balanced | lowest-noise)"
+            "unknown mode '{name}' (default | low-click | balanced | lowest-noise)"
         ))
     })?;
     let mut cfg = config::load()?;

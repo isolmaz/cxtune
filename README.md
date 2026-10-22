@@ -18,7 +18,7 @@ cxtune is a small Windows 11 program (Rust) for the dongle's CX20773 codec: a co
 and a tray application.
 
 - **Output modes** with an explicit trade-off between idle noise and the click when a stream
-  starts (`default`, `click-free`, `balanced`, `lowest-noise`; details below), and two times to
+  starts (`default`, `low-click`, `balanced`, `lowest-noise`; details below), and two times to
   tune: the lowest-noise soft-start time and the balanced stop decay time.
 - **Mic boost** in eight analog steps (boost 6 gave 12.6 dB speech-to-noise against 8 dB at the
   vendor setting in a single measurement; see `docs/firmware-notes.md`).
@@ -38,12 +38,12 @@ and a tray application.
 | Mode | Idle | Stream start | Cost |
 |---|---|---|---|
 | `default` | Vendor behaviour: driver always on. Constant noise floor. | No clicks. | None. |
-| `click-free` | ROM default idle power-down. Some noise. | Low click. | None. |
+| `low-click` | ROM default idle power-down. Some noise. | Low click. | None. |
 | `balanced` | Driver clamped, analog references off. | Follows the ROM power-up order. | The first 600 ms of audio after idle are muted; opening the microphone from full idle gives a stretch of digital silence and a click first. The driver stays open for the decay time (default 800 ms) after a stream or capture ends. |
 | `lowest-noise` | Driver clamped. | Loud click. | Audio is muted for the soft-start time (default 600 ms) plus 150 ms. |
 
-The former names `stock`, `quiet` and `min-hiss` are accepted by the command line and the
-settings file. A settings file saved by this version uses the new names, which an older cxtune
+The former names `stock`, `quiet`, `click-free` and `min-hiss` are accepted by the command line
+and the settings file. A settings file saved by this version uses the new names, which an older cxtune
 rejects.
 
 Two times can be tuned. The lowest-noise soft-start time (20-2000 ms) and the balanced stop
@@ -85,7 +85,7 @@ it.
 
 ```
 cxtune status                   read and show the device state and detected mode
-cxtune apply <mode>             apply default | click-free | balanced | lowest-noise and
+cxtune apply <mode>             apply default | low-click | balanced | lowest-noise and
                                 remember it
 cxtune soft-start <ms>          set the lowest-noise soft-start time (20-2000 ms in steps of 10)
 cxtune decay <ms>               set the balanced stop decay time (100-2000 ms in steps of 10)
@@ -161,7 +161,7 @@ The file is written to a temporary file and renamed over the old one. A file wit
 keys is rejected with an error that names the file, before anything is written to the device.
 
 ```toml
-mode = "balanced"      # default | click-free | balanced | lowest-noise
+mode = "balanced"      # default | low-click | balanced | lowest-noise
 mic_boost = 6
 soft_start_ms = 600    # lowest-noise soft-start time (the former key min_hiss_ms is read too)
 decay_ms = 800         # balanced stop decay time

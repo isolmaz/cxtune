@@ -26,7 +26,7 @@ const READY_POLL: Duration = Duration::from_millis(50);
 /// The settle time is set in steps of this many milliseconds.
 pub const SETTLE_STEP_MS: u16 = 10;
 
-/// An output mode. The user-facing names are Default, Click-free, Balanced and Lowest noise.
+/// An output mode. The user-facing names are Default, Low click, Balanced and Lowest noise.
 /// A mode is also the base of a custom setup: the balanced and lowest-noise routines each have a
 /// time that can be changed in place ([`tune_decay`], [`tune_min_hiss`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,7 +34,7 @@ pub enum Mode {
     /// Default: vendor behaviour. DACs and headphone driver always powered. Constant noise
     /// floor, no clicks.
     Stock,
-    /// Click-free: ROM default idle power-down. The driver parks at 0x33 when idle. Low clicks,
+    /// Low click: ROM default idle power-down. The driver parks at 0x33 when idle. Low clicks,
     /// some idle noise floor.
     Quiet,
     /// Balanced: driver clamped at 0x77 and analog references off when idle; ROM power-up order
@@ -51,18 +51,18 @@ impl Mode {
     pub fn name(self) -> &'static str {
         match self {
             Mode::Stock => "default",
-            Mode::Quiet => "click-free",
+            Mode::Quiet => "low-click",
             Mode::Balanced => "balanced",
             Mode::MinHiss => "lowest-noise",
         }
     }
 
-    /// The mode called `s`. `stock`, `quiet` and `min-hiss` are accepted as other names of
-    /// Default, Click-free and Lowest noise.
+    /// The mode called `s`. `stock`, `quiet`, `click-free` and `min-hiss` are accepted as other
+    /// names of Default, Low click and Lowest noise.
     pub fn parse(s: &str) -> Option<Mode> {
         match s {
             "stock" => Some(Mode::Stock),
-            "quiet" => Some(Mode::Quiet),
+            "quiet" | "click-free" => Some(Mode::Quiet),
             "min-hiss" => Some(Mode::MinHiss),
             _ => Mode::ALL.into_iter().find(|m| m.name() == s),
         }
@@ -553,7 +553,7 @@ pub fn read_output<T: Transport + ?Sized>(t: &mut T) -> Result<Output> {
 impl Output {
     /// True when no stream is open on either interface and the output has settled into the idle
     /// state of `mode` (`None`: a mode that is not known): the DAC off, and the driver parked
-    /// (click-free) or clamped with the references off (balanced) or clamped (lowest noise). In
+    /// (low click) or clamped with the references off (balanced) or clamped (lowest noise). In
     /// the default mode the vendor patch holds the driver and the DAC on, so the second driver
     /// (`$0F1B` at 0x33, in every mode) alone tells.
     pub fn is_idle(&self, mode: Option<Mode>) -> bool {
@@ -575,7 +575,7 @@ impl Output {
 }
 
 /// How long the first audio of a stream that starts from idle is muted, in ms (measured, see
-/// docs/firmware-notes.md): nothing in the default and click-free modes, about 640 ms in
+/// docs/firmware-notes.md): nothing in the default and low-click modes, about 640 ms in
 /// balanced, and the soft-start time plus about 150 ms in lowest noise. `soft_start_ms` is the
 /// lowest-noise soft-start time (the routine's default if `None`); a mode that is not known is
 /// taken as the longest of the fixed ones.
@@ -1451,7 +1451,7 @@ mod tests {
     #[test]
     fn the_user_facing_names_are_the_mode_names() {
         let names: Vec<_> = Mode::ALL.iter().map(|m| m.name()).collect();
-        assert_eq!(names, ["default", "click-free", "balanced", "lowest-noise"]);
+        assert_eq!(names, ["default", "low-click", "balanced", "lowest-noise"]);
     }
 
     #[test]
@@ -1459,6 +1459,7 @@ mod tests {
         for (name, mode) in [
             ("stock", Mode::Stock),
             ("quiet", Mode::Quiet),
+            ("click-free", Mode::Quiet),
             ("min-hiss", Mode::MinHiss),
         ] {
             assert_eq!(Mode::parse(name), Some(mode), "{name}");

@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn modes_are_listed_in_the_order_of_the_choices() {
         let names: Vec<_> = (0..4).map(|i| mode_at(i).unwrap().name()).collect();
-        assert_eq!(names, ["default", "click-free", "balanced", "lowest-noise"]);
+        assert_eq!(names, ["default", "low-click", "balanced", "lowest-noise"]);
         for mode in Mode::ALL {
             assert_eq!(mode_at(mode_index(mode)), Some(mode));
         }

@@ -12,9 +12,10 @@ reads `01 15 00 00 00 03 0f e0 1f`, firmware bytes `15 00 00 00`, chip id `03`).
 6502-derived 8-bit core with extra instructions (`BRSET`/`BRCLR`/`BBRn`/`BBSn`/`SETB`/`CLRB`/
 `MOVI`/`PATCH`). All addresses below are in the 64 KiB CPU space.
 
-Mode names: the modes are *default* (the vendor patch), *click-free*, *balanced* and *lowest
-noise*. The CLI and the settings file also accept the former names `stock`, `quiet` and
-`min-hiss`, and the settings file the former key `min_hiss_ms` for `soft_start_ms`.
+Mode names: the modes are *default* (the vendor patch), *low click*, *balanced* and *lowest
+noise* (`default`, `low-click`, `balanced`, `lowest-noise` on the command line and in the settings
+file). The CLI and the settings file also accept the former names `stock`, `quiet`, `click-free`
+and `min-hiss`, and the settings file the former key `min_hiss_ms` for `soft_start_ms`.
 
 ## HID protocol (proven)
 
@@ -44,7 +45,7 @@ usage page `0x000C` (interface 3).
 | `$0F15`, `$0F16` | DAC left/right gain; bit 7 is the DAC mute. Set at idle, cleared about 36 ms after the driver reaches `0x00`. | proven |
 | `$0F3E` | Analog power-up reference. Bit 1 is the bias reference: `0x02` while active, cleared by balanced mode at idle. | proven |
 | `$0F40` bit 1, `$0F4A` bit 4, `$0F4E` bit 7 | Further steps of the analog power-up sequence (`$0F4E` bit 7 is step 0, `$0F4A` bit 4 and `$0F3E` bit 1 step 1, `$0F40` bit 1 step 2). Read as set while active. | inferred |
-| `$0F2C` | Codec power-down bits. Seen as `0x40` (default mode) and `0x60` (click-free idle). Shown by `status`, never written. | proven (values), inferred (name) |
+| `$0F2C` | Codec power-down bits. Seen as `0x40` (default mode) and `0x60` (low-click idle). Shown by `status`, never written. | proven (values), inferred (name) |
 | `$0F71` | Stream routing enables, bits 0/1 checked by the ROM driver update. | inferred |
 | `$1001..$1005` | Firmware version `15 00 00 00` and chip id `03`. | proven |
 | `$1017` | MIC_CONTROL. Bits 2:0 are the analog mic boost, 6 dB steps; vendor value `0x3C` (boost 4). cxtune writes `0x38..0x3F`. | proven |
@@ -146,7 +147,7 @@ Guards checked there, right before each write, besides the before-bytes of the p
 Layout of every image: 43 bytes, written as two reports: part 1 is `$1EFC..$1F1B` (32 bytes),
 part 2 is `$1F1C..$1F26` (11 bytes).
 
-The vendor image, in the window of default and click-free mode:
+The vendor image, in the window of default and low-click mode:
 
 ```
 2f bf 1b cd 85 12 f0 16 8d 85 12 8d ea 13 a9 01 8d 84 12 8d e9 13 a9 02
@@ -227,7 +228,7 @@ The byte sequences are proven; the annotations are inferred from the ROM disasse
 - Cost: loud start click (recorded); audio is muted for T1 plus T2 (735 ms measured with the
   defaults).
 
-### Click-free (former `quiet`)
+### Low click (former `quiet`, `click-free`)
 
 Hook `60 1B 1F 4C`, DAC holds `0x00`, vendor window. The ROM parks the driver at `0x33` when
 idle (proven), `$0F1B = 0x33`. Low click (recorded), some idle noise.
@@ -248,7 +249,7 @@ time resolution below) while it opens an exclusive-mode silent stream at 2 s and
 | Mode | Idle | Start | Stop (first poll after the close) |
 |---|---|---|---|
 | default | `03 / 00 / 33 / 02`, not muted | `$0F1B` 33 -> 00 only | `$0F1B` back to 33 |
-| click-free | `00 / 33 / 33 / 02`, muted | `03 / 00 / 00 / 02` and unmuted at once | `00 / 33 / 33 / 02`, muted |
+| low click | `00 / 33 / 33 / 02`, muted | `03 / 00 / 00 / 02` and unmuted at once | `00 / 33 / 33 / 02`, muted |
 | balanced | `00 / 77 / 33 / 00`, muted | `03 / 33 / 33 / 02` at once; `$0F1A` and `$0F1B` 00 at +589 ms; unmuted 37 ms later | `00 / 33 / 33 / 00`, muted; `$0F1A` 77 at +812 ms |
 | lowest noise | `00 / 77 / 33 / 02`, muted | `03 / 33 / 33 / 02` at once; `$0F1A` and `$0F1B` 00 at +588 ms; unmuted 148 ms later | `00 / 77 / 33 / 02`, muted |
 
@@ -259,7 +260,7 @@ time resolution below) while it opens an exclusive-mode silent stream at 2 s and
 - The mode tuples, the raw bytes (`$14B1..$14B4`, `$16C9`, `$17CA`, the 43-byte window,
   `$1017`) and the registers above were read back after installing each mode.
 - Start and stop transients in the microphone recording (previous research, 20 ms peak of the
-  high-passed signal against a median of -68 dBFS): the ROM default (click-free) shows nothing more
+  high-passed signal against a median of -68 dBFS): the ROM default (low click) shows nothing more
   than 12 dB above the noise floor; the clamp routines (lowest noise and the clamp-only routine
   below) both show a transient of about -14 dBFS at the start and again at the stop.
 
@@ -295,7 +296,7 @@ up. Proven.
 | Mode | Idle `$0F18 / $0F1A / $0F1B / $0F3E` | Capture open | After the close |
 |---|---|---|---|
 | default | `03 / 00 / 33 / 02` | nothing changes except `$00A5` = 01 and `$13DC` = 01 | nothing changes |
-| click-free | `00 / 33 / 33 / 02` | the same | the same |
+| low click | `00 / 33 / 33 / 02` | the same | the same |
 | lowest noise | `00 / 77 / 33 / 02` | the same | the same |
 | balanced | `00 / 77 / 33 / 00` | `$0F1A` 77 -> 33 and `$0F3E` 00 -> 02 within 40 ms | `$0F3E` 00 within 41 ms; `$0F1A` stays 33 and shows 77 at the next poll 0.85 s after the close |
 
@@ -548,7 +549,7 @@ that is refused writes nothing; the mode and the mic boost are still applied and
 is returned afterwards. Any other error in the DSP step (device gone, readback mismatch) stops
 the sequence. The result always carries the report of what was done before the error (writes
 made and stream events seen); only the writes of a mode change that fails part-way are not
-counted. Measured with the capture stream open: changing to click-free with noise reduction
+counted. Measured with the capture stream open: changing to low click with noise reduction
 off wrote `$1151` at 92 ms, `$1154` at 201 ms and the first mode byte (`$14B1`) at 529 ms;
 changing back to balanced with noise reduction on wrote `$1151` at 94 ms, `$1154` at 206 ms
 and the first mode byte (`$1EFC`) at 521 ms. A second run wrote nothing.

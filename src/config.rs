@@ -202,7 +202,7 @@ mod tests {
     fn modes_are_written_by_their_names_and_read_by_those_and_the_older_ones() {
         for (mode, name) in [
             (Mode::Stock, "default"),
-            (Mode::Quiet, "click-free"),
+            (Mode::Quiet, "low-click"),
             (Mode::Balanced, "balanced"),
             (Mode::MinHiss, "lowest-noise"),
         ] {
@@ -216,6 +216,7 @@ mod tests {
         for (old, mode) in [
             ("stock", Mode::Stock),
             ("quiet", Mode::Quiet),
+            ("click-free", Mode::Quiet),
             ("min-hiss", Mode::MinHiss),
         ] {
             assert_eq!(
