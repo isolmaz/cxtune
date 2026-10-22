@@ -105,6 +105,8 @@ struct Inner {
     newc_stuck: bool,
     /// Bits of `$1154` the ROM flips when it consumes a request, as a stream event would.
     newc_flip: u8,
+    /// Bytes the ROM sets when it consumes a request, without updating `$1154`.
+    newc_poke: Vec<(usize, u8)>,
     newc_consumed: usize,
 }
 
@@ -189,6 +191,9 @@ impl Inner {
     fn settle(&mut self) {
         self.mem[MIC_STREAM] = u8::from(self.mic_open);
         self.mem[PLAYBACK_STREAM] = u8::from(self.stream_seen);
+        self.mem[NEWC] = (self.mem[NEWC] & !0x12)
+            | (u8::from(self.mic_open) << 1)
+            | (u8::from(self.stream_seen) << 4);
         let sidetone = self.mic_open && self.stream_seen && self.mem[DSP_ENABLE] & 0x80 != 0;
         self.mem[MIXER] = (u8::from(self.mic_open) << 5)
             | (u8::from(self.stream_seen) << 4)
@@ -220,6 +225,9 @@ impl Inner {
         }
         self.newc_reads = None;
         self.mem[NEWC] = (self.mem[NEWC] & !0x01) ^ self.newc_flip;
+        for (addr, value) in self.newc_poke.drain(..) {
+            self.mem[addr] = value;
+        }
         self.newc_consumed += 1;
         self.evaluate();
     }
@@ -387,6 +395,7 @@ impl FakeDevice {
             newc_delay: 1,
             newc_stuck: false,
             newc_flip: 0,
+            newc_poke: Vec::new(),
             newc_consumed: 0,
         })));
         dev.0.borrow_mut().settle();
@@ -440,6 +449,12 @@ impl FakeDevice {
     /// arriving at that moment would.
     pub fn flip_on_newc(&self, bits: u8) {
         self.0.borrow_mut().newc_flip = bits;
+    }
+
+    /// When the ROM consumes a request it also sets the byte at `addr`, as a stream event
+    /// arriving at that moment would, while `$1154` keeps the stream bits it had.
+    pub fn poke_on_newc(&self, addr: u16, value: u8) {
+        self.0.borrow_mut().newc_poke.push((addr as usize, value));
     }
 
     pub fn mem(&self) -> Vec<u8> {

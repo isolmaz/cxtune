@@ -65,7 +65,9 @@ reload request to the firmware, which applies it to the running stream at once; 
 next microphone stream applies it. If the firmware already has a reload pending, that one is
 waited for. If a stream opens or closes at the moment of the request, cxtune prints a warning
 (the setting is written and the reload was done, but the request may have overwritten the
-firmware's own update of its stream state); the warning does not stop `watch`. The reload also
+firmware's own update of its stream state, which is also reported when the stream bits of
+`$1154` do not match the capture and playback streams after the request); the warning does not
+stop `watch`. The reload also
 reloads the firmware's DAC filter, as it does at every stream open; a click in the headphones
 when a request is made while audio plays has not been measured.
 
@@ -132,8 +134,9 @@ guarantee it (a crossed response that happens to satisfy a single-bit check pass
   accept only the bit subsets and range listed in the firmware notes, and read the byte again
   right before writing. A NEWC request that the ROM already has pending is waited for instead
   of repeated. After a NEWC request the ROM must clear it; if it leaves other bits of `$1154`
-  different from before, that is reported as a stream event (a warning), because it means a
-  stream opened or closed at that moment. `$1152`, `$0F4D` and `$040A` are never written.
+  different from before, or its stream bits do not match the capture and playback streams
+  (`$13DC`, `$13DD`), that is reported as a stream event (a warning), because it means a stream
+  opened or closed at that moment. `$1152`, `$0F4D` and `$040A` are never written.
 - A sidetone level change while sidetone is on goes through four guarded writes of equal
   ratio, and the level stays in `0x0001..0x1000`.
 

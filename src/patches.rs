@@ -75,6 +75,11 @@ pub const SIDETONE_MAX: u16 = 0x1000;
 pub const SIDETONE_DEFAULT: u16 = 0x03B3;
 /// Alternate setting of the microphone capture interface: non-zero while a capture stream is open.
 pub const MIC_STREAM: u16 = 0x13DC;
+/// The same for the playback interface.
+pub const PLAYBACK_STREAM: u16 = 0x13DD;
+/// Bits of the NEWC byte that follow the capture and the playback stream.
+const NEWC_CAPTURE: u8 = 0x02;
+const NEWC_PLAYBACK: u8 = 0x10;
 /// Applier flags of the ROM, read-only: bit 7 is set while noise reduction is applied and bit 5
 /// while AGC is applied. They follow `$1151` only at the stream-open reload or a NEWC pass, and
 /// only while the microphone gate is satisfied.
@@ -604,7 +609,8 @@ pub fn sidetone_level(level: u16) -> Result<Patch> {
 /// Asks the ROM to reload the DSP settings now. If the ROM already has a request pending, that
 /// reload comes after every write made so far, so it is waited for instead of repeated. The ROM
 /// must clear the request within [`NEWC_TIMEOUT`]; if the other bits of the byte then differ
-/// from what was read, the outcome is [`Outcome::StreamEvent`].
+/// from what was read, or its stream bits do not match the capture and playback streams
+/// (`$13DC`, `$13DD`), the outcome is [`Outcome::StreamEvent`].
 pub fn newc() -> Patch {
     Patch {
         name: "NEWC request ($1154 bit 0)".into(),
@@ -615,10 +621,11 @@ pub fn newc() -> Patch {
     }
 }
 
-/// The other bits of `$1154` (stream state owned by the ROM) were not the same after a NEWC
-/// request as before it: a stream event happened near the request. The request may have
-/// overwritten the ROM's own update of that byte, which cannot be told apart from an update
-/// that came after it.
+/// A stream event happened near a NEWC request: the other bits of `$1154` (stream state owned
+/// by the ROM) were not the same after the request as before it, or, when they were, they do not
+/// match the capture and playback streams that the ROM reports in `$13DC` and `$13DD`. The
+/// request may have overwritten the ROM's own update of that byte, which cannot be told apart
+/// from an update that came after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StreamEvent {
     pub before: u8,
@@ -627,13 +634,25 @@ pub struct StreamEvent {
 
 impl fmt::Display for StreamEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "a stream event changed ${NEWC_ADDR:04X} from {:#04x} to {:#04x} while the DSP reload \
-             was requested; the reload was done, but the request may have overwritten the ROM's \
-             own update of that byte (this cannot be detected)",
-            self.before, self.after
-        )
+        if self.before == self.after {
+            write!(
+                f,
+                "after the DSP reload was requested, the stream bits of ${NEWC_ADDR:04X} \
+                 ({:#04x}) do not match the capture and playback streams (${MIC_STREAM:04X}, \
+                 ${PLAYBACK_STREAM:04X}); a stream event coincided with the request, and the \
+                 request may have overwritten the ROM's own update of that byte (this cannot be \
+                 corrected from here)",
+                self.after
+            )
+        } else {
+            write!(
+                f,
+                "a stream event changed ${NEWC_ADDR:04X} from {:#04x} to {:#04x} while the DSP \
+                 reload was requested; the reload was done, but the request may have overwritten \
+                 the ROM's own update of that byte (this cannot be detected)",
+                self.before, self.after
+            )
+        }
     }
 }
 
@@ -699,13 +718,14 @@ fn apply<T: Transport + ?Sized>(t: &mut T, p: &Patch, newc_timeout: Duration) ->
 
     if matches!(p.change, Change::Newc) {
         let after = wait_for_newc_clear(t, p, newc_timeout)?;
-        return Ok(if after == before[0] {
-            Outcome::Written
-        } else {
+        let event = after != before[0] || !stream_bits_match(t, after)?;
+        return Ok(if event {
             Outcome::StreamEvent(StreamEvent {
                 before: before[0],
                 after,
             })
+        } else {
+            Outcome::Written
         });
     }
     let got = read_mem(t, p.addr, len)?;
@@ -718,6 +738,14 @@ fn apply<T: Transport + ?Sized>(t: &mut T, p: &Patch, newc_timeout: Duration) ->
         });
     }
     Ok(Outcome::Written)
+}
+
+/// True if the stream bits of the NEWC byte `byte` agree with the capture and playback streams
+/// that the ROM reports separately.
+fn stream_bits_match<T: Transport + ?Sized>(t: &mut T, byte: u8) -> Result<bool> {
+    let capture = read_mem(t, MIC_STREAM, 1)?[0] != 0;
+    let playback = read_mem(t, PLAYBACK_STREAM, 1)?[0] != 0;
+    Ok((byte & NEWC_CAPTURE != 0) == capture && (byte & NEWC_PLAYBACK != 0) == playback)
 }
 
 fn check_guards<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<()> {
@@ -806,6 +834,9 @@ fn wait_for_newc_clear<T: Transport + ?Sized>(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use super::*;
     use crate::fake::{BALANCED_HEX, FakeDevice, MIN_HISS_HEX, VENDOR_HEX, bytes};
     use crate::mode::Mode;
@@ -1560,12 +1591,67 @@ mod tests {
     fn newc_reads_the_stream_bits_again_right_before_writing() {
         // a capture stream opens while the guards are read: its bit must survive the request
         let dev = FakeDevice::stock();
-        let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, |d| d.poke(0x1154, &[0x02]));
+        let mic = Rc::new(RefCell::new(None));
+        let slot = Rc::clone(&mic);
+        let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, move |d| {
+            *slot.borrow_mut() = Some(d.open_mic());
+        });
         assert_eq!(
             apply_patch(&mut meddled, &newc()).unwrap(),
             Outcome::Written
         );
         assert_eq!(dev.writes(), vec![(0x1154, vec![0x03])]);
         assert_eq!(dev.byte(0x1154), 0x02);
+        assert!(mic.borrow().is_some());
+    }
+
+    #[test]
+    fn stream_bits_that_agree_with_the_streams_are_not_an_event() {
+        for (mic, playback, byte) in [
+            (false, false, 0x00),
+            (true, false, 0x02),
+            (false, true, 0x10),
+            (true, true, 0x12),
+        ] {
+            let dev = FakeDevice::stock();
+            let _mic = mic.then(|| dev.open_mic());
+            let _playback = playback.then(|| dev.open_active_stream().unwrap());
+            assert_eq!(dev.byte(0x1154), byte);
+            assert_eq!(apply(&dev, &newc()).unwrap(), Outcome::Written);
+            assert_eq!(dev.byte(0x1154), byte);
+        }
+    }
+
+    #[test]
+    fn stream_bits_that_disagree_with_the_streams_after_a_request_are_an_event() {
+        // the stream registers change during the request while $1154 keeps its bits, as when
+        // the request overwrote the ROM's own update
+        for (mic, playback, addr, value, bits) in [
+            (true, false, 0x13DC, 0x00, 0x02),
+            (false, false, 0x13DC, 0x01, 0x00),
+            (true, true, 0x13DD, 0x00, 0x12),
+            (true, false, 0x13DD, 0x01, 0x02),
+        ] {
+            let dev = FakeDevice::stock();
+            let _mic = mic.then(|| dev.open_mic());
+            let _playback = playback.then(|| dev.open_active_stream().unwrap());
+            dev.poke_on_newc(addr, value);
+            let event = StreamEvent {
+                before: bits,
+                after: bits,
+            };
+            assert_eq!(
+                apply(&dev, &newc()).unwrap(),
+                Outcome::StreamEvent(event),
+                "${addr:04X} = {value}"
+            );
+            assert_eq!(dev.writes(), vec![(0x1154, vec![bits | 0x01])]);
+            let text = event.to_string();
+            assert!(text.contains("$1154") && text.contains("$13DC"), "{text}");
+            assert!(
+                text.contains("$13DD") && !text.contains("changed"),
+                "{text}"
+            );
+        }
     }
 }

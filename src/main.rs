@@ -358,15 +358,19 @@ fn watch() -> Result<()> {
                         "nothing selected yet; run `cxtune apply <mode>` first".into(),
                     ));
                 }
-                settings::ensure(&mut hid::open(&api)?, &cfg, audio::open_silence)
+                let attempt = settings::ensure(&mut hid::open(&api)?, &cfg, audio::open_silence);
+                for event in &attempt.report.stream_events {
+                    eprintln!("warning: {event}");
+                }
+                match attempt.error {
+                    Some(e) => Err(e),
+                    None => Ok(attempt.report),
+                }
             });
             match result {
                 Ok(report) => {
                     if report.writes > 0 {
                         println!("settings re-applied ({} writes)", report.writes);
-                    }
-                    for event in &report.stream_events {
-                        eprintln!("warning: {event}");
                     }
                     last_error = None;
                     next_check = Instant::now() + VERIFY;

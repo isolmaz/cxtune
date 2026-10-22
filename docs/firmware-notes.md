@@ -355,11 +355,14 @@ Its reload runs after every write cxtune has made, so it applies them: cxtune wa
 applied. Otherwise it reads the guards, reads `$1154` again (a request that appeared in the
 meantime is waited for in the same way), writes the byte with bit 0 set and polls until the
 ROM clears the bit. The other bits are then compared with what was read before the write. If
-they differ, a stream event coincided with the request. The settings are written and the
-reload was done, so this is reported as a stream event (a warning in the CLI, which does not
-stop `watch`), not as a failure. The request may have overwritten the ROM's own update of that
-byte, which cannot be told apart from here from an update that came after the write, so the
-request is not repeated. A request the ROM does not consume in time is an error. The write
+they differ, a stream event coincided with the request. If they do not, bit 1 is compared with
+`$13DC != 0` and bit 4 with `$13DD != 0` (the ROM keeps `$1154` bits 1 and 4 equal to the
+capture and playback stream state): a disagreement means the request wrote back stale stream
+bits over an update of the ROM's, and counts as a stream event too. The settings are written and the
+reload was done, so this is reported as a stream event (a warning in the CLI and the engine,
+which does not stop anything), not as a failure. The request may have overwritten the ROM's own
+update of that byte, which cannot be told apart from here from an update that came after the
+write, so the request is not repeated. A request the ROM does not consume in time is an error. The write
 cannot be made atomic: the protocol has no read-modify-write, so the window between the read
 and the write is one HID round trip (a few milliseconds). cxtune asks for NEWC only after it
 changed noise reduction or AGC and a capture stream is open (`$13DC`); otherwise the next
@@ -383,13 +386,17 @@ microphone closed.
 
 ### Applying the saved settings
 
-`settings::ensure` (used by `watch`) applies the microphone DSP settings first, then the mode,
-then the mic boost. A DSP reload request is awaited before the mode change opens its own
+`settings::ensure` (used by the engine) applies the microphone DSP settings first, then the mode,
+then the mic boost. A saved sidetone level is written whether sidetone is on or off (switching
+sidetone on writes it first; switching it off comes before the level, so the level then
+jumps). A DSP reload request is awaited before the mode change opens its own
 playback stream, so the request does not coincide with that stream's open and close, and the
 ROM's reload at the start of that stream sees the settings already in place. A DSP setting
 that is refused writes nothing; the mode and the mic boost are still applied and the refusal
 is returned afterwards. Any other error in the DSP step (device gone, readback mismatch) stops
-the sequence. Measured with the capture stream open: changing to quiet with noise reduction
+the sequence. The result always carries the report of what was done before the error (writes
+made and stream events seen); only the writes of a mode change that fails part-way are not
+counted. Measured with the capture stream open: changing to quiet with noise reduction
 off wrote `$1151` at 92 ms, `$1154` at 201 ms and the first mode byte (`$14B1`) at 529 ms;
 changing back to balanced with noise reduction on wrote `$1151` at 94 ms, `$1154` at 206 ms
 and the first mode byte (`$1EFC`) at 521 ms. A second run wrote nothing.

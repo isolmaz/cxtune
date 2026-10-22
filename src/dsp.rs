@@ -7,13 +7,13 @@
 //! word (`$1276`); the ROM applies both within one main-loop pass, while a capture and a
 //! playback stream are open. See docs/firmware-notes.md for what was measured.
 
-use crate::Result;
 use crate::config::Config;
 use crate::patches::{
     self, DSP_ENABLE, DSP_SIDETONE, MIC_STREAM, Outcome, Patch, SIDETONE_LEVEL_ADDR, SIDETONE_MAX,
     SIDETONE_MIN, StreamEvent, apply_patch,
 };
 use crate::protocol::{Transport, read_mem};
+use crate::{Error, Result};
 
 /// Number of gain steps when the sidetone level changes while sidetone is on. Each step is a
 /// separate guarded write.
@@ -42,6 +42,15 @@ impl Report {
         self.writes += applied.writes;
         self.stream_events.extend(applied.stream_event);
     }
+}
+
+/// What an attempt to apply several settings did, and the error that stopped it, if any. The
+/// report holds the writes made and the stream events seen before the error, so a refusal does
+/// not hide them.
+#[derive(Debug, Default)]
+pub struct Attempt {
+    pub report: Report,
+    pub error: Option<Error>,
 }
 
 /// Sets microphone noise reduction.
@@ -110,22 +119,37 @@ pub fn set_sidetone_with_level<T: Transport + ?Sized>(
     Ok(n)
 }
 
-/// Applies the DSP settings that `cfg` holds. Settings that are not in `cfg` are left as the
-/// device has them.
-pub fn apply_config<T: Transport + ?Sized>(t: &mut T, cfg: &Config) -> Result<Report> {
+/// Applies the DSP settings that `cfg` holds, stopping at the first error. Settings that are not
+/// in `cfg` are left as the device has them. A saved sidetone level is written whether sidetone
+/// is on or off; switching sidetone on writes it first.
+pub fn apply_config<T: Transport + ?Sized>(t: &mut T, cfg: &Config) -> Attempt {
     let mut report = Report::default();
+    let error = apply_settings(t, cfg, &mut report).err();
+    Attempt { report, error }
+}
+
+fn apply_settings<T: Transport + ?Sized>(
+    t: &mut T,
+    cfg: &Config,
+    report: &mut Report,
+) -> Result<()> {
     if let Some(on) = cfg.mic_nr {
         report.add(set_noise_reduction(t, on)?);
     }
     if let Some(on) = cfg.mic_agc {
         report.add(set_agc(t, on)?);
     }
-    if let Some(on) = cfg.sidetone {
-        report.writes += set_sidetone_with_level(t, on, cfg.sidetone_level)?;
-    } else if let Some(level) = cfg.sidetone_level {
+    if cfg.sidetone == Some(true) {
+        report.writes += set_sidetone_with_level(t, true, cfg.sidetone_level)?;
+        return Ok(());
+    }
+    if cfg.sidetone == Some(false) {
+        report.writes += usize::from(set_sidetone(t, false)?);
+    }
+    if let Some(level) = cfg.sidetone_level {
         report.writes += set_sidetone_level(t, level)?;
     }
-    Ok(report)
+    Ok(())
 }
 
 /// Writes `patch`; if that changed a byte and a capture stream is open, asks the ROM to reload
@@ -372,10 +396,17 @@ mod tests {
         assert_eq!(d.writes(), vec![(0x1151, vec![0x04])]);
     }
 
+    /// Applies `cfg` and asserts that nothing went wrong.
+    fn apply_all(d: &FakeDevice, cfg: &Config) -> Report {
+        let attempt = apply_config(&mut d.clone(), cfg);
+        assert!(attempt.error.is_none(), "{:?}", attempt.error);
+        attempt.report
+    }
+
     #[test]
     fn the_saved_settings_are_applied_and_the_rest_left_alone() {
         let d = dev();
-        let none = apply_config(&mut d.clone(), &Config::default()).unwrap();
+        let none = apply_all(&d, &Config::default());
         assert_eq!(none, Report::default());
         assert!(d.writes().is_empty());
 
@@ -386,7 +417,7 @@ mod tests {
             sidetone_level: Some(0x0200),
             ..Config::default()
         };
-        assert_eq!(apply_config(&mut d.clone(), &cfg).unwrap().writes, 4);
+        assert_eq!(apply_all(&d, &cfg).writes, 4);
         assert_eq!(
             d.writes(),
             vec![
@@ -398,7 +429,7 @@ mod tests {
         );
         // everything holds now: applying again writes nothing
         d.clear_writes();
-        assert_eq!(apply_config(&mut d.clone(), &cfg).unwrap().writes, 0);
+        assert_eq!(apply_all(&d, &cfg).writes, 0);
         assert!(d.writes().is_empty());
 
         // a level without a sidetone switch is applied; it does not switch sidetone on
@@ -407,9 +438,52 @@ mod tests {
             sidetone_level: Some(0x0100),
             ..Config::default()
         };
-        assert_eq!(apply_config(&mut d.clone(), &cfg).unwrap().writes, 1);
+        assert_eq!(apply_all(&d, &cfg).writes, 1);
         assert_eq!(d.writes(), vec![(0x1276, vec![0x00, 0x01])]);
         assert_eq!(d.byte(0x1151), 0x04);
+    }
+
+    #[test]
+    fn a_saved_level_is_written_while_sidetone_is_off_and_after_it_is_switched_off() {
+        let d = dev();
+        let cfg = Config {
+            sidetone: Some(false),
+            sidetone_level: Some(0x0200),
+            ..Config::default()
+        };
+        assert_eq!(apply_all(&d, &cfg).writes, 1);
+        assert_eq!(d.writes(), vec![(0x1276, vec![0x00, 0x02])]);
+
+        // sidetone is on at the stock level: it is switched off first, so the level jumps
+        // instead of moving in steps
+        let d = dev();
+        d.poke(0x1151, &[0x84]);
+        assert_eq!(apply_all(&d, &cfg).writes, 2);
+        assert_eq!(
+            d.writes(),
+            vec![(0x1151, vec![0x04]), (0x1276, vec![0x00, 0x02])]
+        );
+    }
+
+    #[test]
+    fn a_refused_setting_keeps_the_report_of_the_ones_before_it() {
+        let d = dev();
+        let _mic = d.open_mic();
+        d.flip_on_newc(0x10);
+        // the sidetone level is outside what cxtune replaces, after two settings were applied
+        d.poke(0x1276, &0x8000u16.to_le_bytes());
+        let cfg = Config {
+            mic_nr: Some(false),
+            mic_agc: Some(true),
+            sidetone_level: Some(0x0200),
+            ..Config::default()
+        };
+        let attempt = apply_config(&mut d.clone(), &cfg);
+        assert!(matches!(attempt.error, Some(Error::Refused(_))));
+        assert_eq!(attempt.report.writes, 4);
+        assert_eq!(attempt.report.writes, d.writes().len());
+        assert_eq!(attempt.report.stream_events.len(), 2);
+        assert_eq!(d.byte(0x1151), 0x10);
     }
 
     #[test]
@@ -423,7 +497,7 @@ mod tests {
             sidetone_level: Some(0x0200),
             ..Config::default()
         };
-        let report = apply_config(&mut d.clone(), &cfg).unwrap();
+        let report = apply_all(&d, &cfg);
         // two settings with a reload request each, and the level
         assert_eq!(report.writes, 5);
         assert_eq!(report.writes, d.writes().len());
