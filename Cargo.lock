@@ -955,6 +955,7 @@ version = "0.1.0"
 dependencies = [
  "cxtune",
  "embed-resource",
+ "i-slint-backend-testing",
  "png",
  "raw-window-handle",
  "slint",

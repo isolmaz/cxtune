@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 
 fn main() {
+    // The tests look elements up by label, which needs the debug info; release builds leave it out.
+    let debug_info = std::env::var("PROFILE").is_ok_and(|profile| profile == "debug");
     let config = slint_build::CompilerConfiguration::new()
         .with_style("fluent".into())
+        .with_debug_info(debug_info)
         .with_bundled_translations("lang");
     slint_build::compile_with_config("ui/app.slint", config).unwrap();
 

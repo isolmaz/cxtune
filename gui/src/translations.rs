@@ -8,7 +8,7 @@ const FILES: [&str; 6] = [
     include_str!("../ui/app.slint"),
     include_str!("../ui/components.slint"),
     include_str!("../ui/contract.slint"),
-    include_str!("../ui/tabs.slint"),
+    include_str!("../ui/pages.slint"),
     include_str!("../ui/texts.slint"),
     include_str!("../ui/theme.slint"),
 ];
@@ -16,7 +16,16 @@ const TEXTS: &str = include_str!("../ui/texts.slint");
 const TURKISH: &str = include_str!("../lang/tr/LC_MESSAGES/cxtune-gui.po");
 
 /// Texts that read the same in Turkish.
-const SAME_IN_TURKISH: [&str; 5] = ["cxtune: {}", "{} ms", "AGC", "+{} dB", "{} dB"];
+const SAME_IN_TURKISH: [&str; 8] = [
+    "cxtune: {}",
+    "{} ms",
+    "AGC",
+    "Sidetone",
+    "+{} dB",
+    "{} dB",
+    "{}: {}, {}: {}, {}: {}",
+    "≈ {} ms",
+];
 
 /// The string literal that starts at `text[0]` (an opening quote), unescaped, and the rest.
 fn literal(text: &str) -> (String, &str) {
@@ -131,13 +140,10 @@ fn texts_that_name_a_button_use_the_label_of_the_button() {
         assert!(FILES.iter().any(|file| file.contains(text)), "{text}");
         assert!(turkish(text).contains(&button), "{text}");
     }
-    let mode = turkish("Minimum hiss");
-    assert!(
-        turkish(
-            "Only Minimum hiss uses the start delay. After audio starts it stays muted for this long plus 100 ms."
-        )
-        .contains(&mode)
-    );
+    let mode = turkish("Lowest noise");
+    let help = "Used only by Lowest noise. After audio starts it stays muted for this time plus about 150 ms.";
+    assert!(FILES.iter().any(|file| file.contains(help)));
+    assert!(turkish(help).contains(&mode));
 }
 
 /// The texts of the functions of `texts.slint` from the one that starts with `from` up to the
@@ -152,9 +158,9 @@ fn texts_between(from: &str, to: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_two_status_lines_fit_the_footer_in_both_languages() {
-    // the footer shows each line on one line and elides what does not fit; the snapshots of
-    // the longest of these were looked at, and these are their lengths
+fn the_status_lines_and_the_about_lines_fit_one_line_in_both_languages() {
+    // the footer and the About card show each line on one line and elide what does not fit; the
+    // snapshots of the longest of these were looked at, and these are their lengths
     let entries = translations();
     let turkish = |english: &str| {
         entries
@@ -163,12 +169,13 @@ fn the_two_status_lines_fit_the_footer_in_both_languages() {
             .map(|(_, _, translation)| translation.clone())
             .unwrap_or_else(|| panic!("{english}"))
     };
-    for (from, to, limit) in [
-        ("function title(", "function hint(", 36),
-        ("function hint(", "function mode-note(", 54),
+    for (from, to, count, limit) in [
+        ("function title(", "function hint(", 21, 36),
+        ("function hint(", "function pill(", 14, 54),
+        ("function about-line(", "function level-db(", 4, 76),
     ] {
         let texts = texts_between(from, to);
-        assert!(texts.len() > 10, "{from}");
+        assert_eq!(texts.len(), count, "{from}");
         for text in texts {
             for line in [text.clone(), turkish(&text)] {
                 assert!(
@@ -181,22 +188,26 @@ fn the_two_status_lines_fit_the_footer_in_both_languages() {
 }
 
 #[test]
-fn the_disclaimer_names_the_vendors_and_the_usb_id_in_both_languages() {
+fn the_about_lines_name_the_vendors_and_the_usb_id_in_both_languages() {
     let entries = translations();
-    let (_, english, turkish) = entries
-        .iter()
-        .find(|(_, text, _)| text.starts_with("cxtune is an independent project."))
-        .expect("the disclaimer");
-    for text in [english, turkish] {
-        for name in ["HyperX", "HP", "Synaptics"] {
-            assert!(text.contains(name), "{name} is missing from {text}");
+    for (english, needles) in [
+        (
+            "Not affiliated with HyperX, HP or Synaptics.",
+            ["HyperX", "HP", "Synaptics"].as_slice(),
+        ),
+        (
+            "Made for the HyperX Cloud II USB sound card (USB 0951:16A4).",
+            ["HyperX", "0951:16A4"].as_slice(),
+        ),
+    ] {
+        let (_, _, turkish) = entries
+            .iter()
+            .find(|(_, text, _)| text == english)
+            .unwrap_or_else(|| panic!("{english}"));
+        for text in [english, turkish] {
+            for needle in needles {
+                assert!(text.contains(needle), "{needle} is missing from {text}");
+            }
         }
-    }
-    let (_, english, turkish) = entries
-        .iter()
-        .find(|(_, text, _)| text.starts_with("Supports the HyperX"))
-        .expect("the supported device");
-    for text in [english, turkish] {
-        assert!(text.contains("0951:16A4"), "{text}");
     }
 }

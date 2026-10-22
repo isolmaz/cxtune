@@ -1,32 +1,112 @@
 import { Palette } from "std-widgets.slint";
+import { Hiss, Pop, Tone } from "contract.slint";
 
-// The compact Windows 11 dialog: a lighter content layer over a darker page and footer band,
-// on a grid of 96-DPI pixels.
+// The 720 x 480 window on a 4 px grid: a header, a navigation column and a page, a footer band.
+// The page has 24 px at its sides and 16 px above and below; everything on it is as wide as the
+// page (512 px).
 export global Grid {
-    out property <length> width: 480px;
-    out property <length> tab-bar: 48px;
-    out property <length> content: 240px;
+    out property <length> width: 720px;
+    out property <length> height: 480px;
+    out property <length> header: 64px;
     out property <length> footer: 60px;
-    out property <length> height: tab-bar + content + footer;
-    out property <length> margin: 20px;
-    // the control column starts at 170px: the margin plus this
-    out property <length> label: 150px;
-    out property <length> row: 30px;
-    out property <length> gap: 6px;
-    out property <length> button: 130px;
+    out property <length> nav: 160px;
+    out property <length> margin-x: 24px;
+    out property <length> margin-y: 16px;
+    // between the title, the groups and the info bars of a page
+    out property <length> group-gap: 12px;
+    // between the cards and rows of a group
+    out property <length> gap: 4px;
+    // between the mode cards
+    out property <length> gutter: 8px;
+    // the padding of a card, a row and an info bar
+    out property <length> pad: 12px;
+    // a setting row, from its left edge: the glyph column, a gap, the label, and at the right edge
+    // of the row (minus the padding) the control. A slider is `slider` wide and ends `value-gap`
+    // plus `value` before the control's edge, so that every slider and every value is where it is
+    // on any other page.
+    out property <length> row: 48px;
+    out property <length> row-icon: 20px;
+    out property <length> row-gap: 12px;
+    out property <length> slider: 200px;
+    out property <length> value: 64px;
+    out property <length> value-gap: 8px;
+    // a combo box or a button in a row
+    out property <length> control: 160px;
+    // the mode cards: the head holds the name and, for the recommended mode, the badge, then come
+    // the three traits
+    out property <length> mode-head: 42px;
+    out property <length> trait: 20px;
+    out property <length> mode-card: 130px;
 }
 
+// The type ramp. A text uses one of these sizes; the glyphs of Segoe Fluent Icons use `icon`
+// (`chevron` for a chevron).
+export global Type {
+    // page title, semibold
+    out property <length> title: 20px;
+    // device name, semibold
+    out property <length> device: 16px;
+    // row and card titles, regular (semibold on the title of a card)
+    out property <length> row: 14px;
+    // body, values and buttons
+    out property <length> body: 13px;
+    // captions and everything secondary
+    out property <length> caption: 12px;
+    out property <length> icon: 16px;
+    out property <length> chevron: 12px;
+}
+
+// Windows 11 layers over a Mica-like window background, in both colour schemes. The accent is the
+// one of Windows; the text colours are TextFillColorPrimary, -Secondary and -Disabled.
 export global Surface {
     out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
-    out property <color> page: dark ? #202020 : #F3F3F3;
-    out property <color> card: dark ? #2B2B2B : #FBFBFB;
-    out property <color> stroke: dark ? #3A3A3A : #E5E5E5;
-    out property <color> text: dark ? #FFFFFF : #1A1A1A;
-    out property <color> quiet: dark ? #C5C5C5 : #5D5D5D;
-    out property <color> critical: dark ? #FF99A4 : #C42B1C;
+    out property <brush> window: dark ? @linear-gradient(165deg, #2B2E37 0%, #212329 42%, #1B1C20 100%) : @linear-gradient(165deg, #E7EDF8 0%, #F0F2F8 42%, #F6F6F8 100%);
+    out property <color> layer: dark ? #FFFFFF0A : #FFFFFF73;
+    out property <color> card: dark ? #FFFFFF0F : #FFFFFFB8;
+    out property <color> card-hover: dark ? #FFFFFF17 : #FFFFFFE0;
+    out property <color> stroke: dark ? #FFFFFF14 : #00000014;
+    out property <color> stroke-strong: dark ? #FFFFFF8A : #0000007A;
+    out property <color> control: dark ? #FFFFFF12 : #FFFFFFB8;
+    out property <color> control-stroke: dark ? #FFFFFF1A : #00000019;
+    out property <color> control-disabled: dark ? #FFFFFF0B : #F9F9F94D;
+
+    out property <color> text: dark ? #FFFFFF : #1B1B1B;
+    out property <color> secondary: dark ? #FFFFFFC5 : #0000009E;
+    out property <color> disabled: dark ? #FFFFFF5D : #0000005C;
+
+    out property <brush> accent: Palette.accent-background;
+    out property <brush> on-accent: Palette.accent-foreground;
+    out property <brush> accent-soft: Palette.accent-background.with-alpha(dark ? 0.15 : 0.1);
+
     out property <color> good: dark ? #6CCB5F : #0F7B0F;
-    out property <color> caution: dark ? #FCE100 : #9D5D00;
-    out property <color> plate: dark ? #D6D6D6 : #EDEDED;
-    // the box of an explanation
+    out property <color> caution: dark ? #FFC857 : #8A5A00;
+    out property <color> critical: dark ? #FF8A8A : #C42B1C;
+
+    // the explanation that appears next to a "?"
     out property <color> popup: dark ? #383838 : #FFFFFF;
+    // the product photo on a lighter stage, so that the black device shows in the dark scheme
+    out property <brush> stage: dark ? @radial-gradient(circle, #8A91A0 0%, #565C69 60%, #444955 100%) : @radial-gradient(circle, #FFFFFF 0%, #E4E8F0 75%, #D9DEE8 100%);
+
+    out property <color> meter-off: dark ? #FFFFFF16 : #0000001A;
+}
+
+// The colour of what an indicator or the status says.
+export global Signal {
+    public pure function tone(tone: Tone) -> color {
+        return tone == Tone.critical ? Surface.critical : tone == Tone.caution ? Surface.caution : Surface.good;
+    }
+
+    public pure function hiss(kind: Hiss) -> color {
+        return kind == Hiss.constant ? Surface.critical : kind == Hiss.some ? Surface.caution : Surface.good;
+    }
+
+    // the glyph of each trait of the modes, by position: noise, click, delay
+    public pure function trait-glyph(position: int) -> string {
+        return position == 0 ? "\u{E9D2}" : position == 1 ? "\u{E945}" : "\u{E916}";
+    }
+
+    // a click that was not measured has no colour
+    public pure function pop(kind: Pop) -> color {
+        return kind == Pop.none ? Surface.good : kind == Pop.low ? Surface.caution : kind == Pop.loud ? Surface.critical : Surface.secondary;
+    }
 }

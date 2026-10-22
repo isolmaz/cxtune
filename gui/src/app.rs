@@ -9,7 +9,7 @@ use cxtune::config;
 use cxtune::engine::{self, Command, Engine, ErrorKind, Event, Handle, Snapshot};
 use cxtune::mode::Mode;
 use cxtune::volume::Side;
-use slint::{CloseRequestResponse, ComponentHandle, Timer, TimerMode, Weak};
+use slint::{CloseRequestResponse, ComponentHandle, ModelRc, Timer, TimerMode, VecModel, Weak};
 
 use crate::controls::{self, Controls};
 use crate::lang::{self, Lang};
@@ -20,7 +20,7 @@ use crate::throttle::Throttle;
 use crate::ui::{MainWindow, Model, Tray};
 use crate::{autostart, instance};
 
-/// The index of the About tab of the window.
+/// The index of the About page of the window.
 const ABOUT_TAB: i32 = 4;
 /// A slider sends at most one command per this long, and the last value always.
 const PACE: Duration = Duration::from_millis(100);
@@ -108,7 +108,10 @@ pub fn install(
     model.set_settle_max(f32::from(controls::SETTLE_MAX_MS));
     model.set_settle_step(f32::from(cxtune::mode::SETTLE_STEP_MS));
     model.set_boost_max(f32::from(controls::BOOST_MAX));
-    model.set_level_positions(controls::LEVEL_POSITIONS);
+    model.set_level_min(f32::from(cxtune::patches::SIDETONE_MIN));
+    model.set_level_max(f32::from(cxtune::patches::SIDETONE_MAX));
+    model.set_level_step(f32::from(controls::LEVEL_STEP));
+    model.set_recommended_mode(controls::mode_index(controls::RECOMMENDED_MODE));
     model.set_autostart(autostart::is_enabled().unwrap_or(false));
 
     let paced = || Paced {
@@ -158,7 +161,7 @@ fn connect(window: &MainWindow, tray: &Tray) {
     model.on_noise_reduction_toggled(|on| with_app(|app| app.noise_reduction_toggled(on)));
     model.on_agc_toggled(|on| with_app(|app| app.agc_toggled(on)));
     model.on_sidetone_toggled(|on| with_app(|app| app.sidetone_toggled(on)));
-    model.on_level_changed(|position| with_app(|app| app.level_changed(position)));
+    model.on_level_changed(|value| with_app(|app| app.level_changed(value)));
     model.on_slider_released(|| with_app(App::flush_all));
     model.on_autostart_toggled(|on| with_app(|app| app.autostart_toggled(on)));
     model.on_language_selected(|index| with_app(|app| app.language_selected(index)));
@@ -248,7 +251,8 @@ impl App {
                         with_app(|app| app.on_event(generation, event));
                     });
                 });
-                // an engine that cannot be delivered because the loop has ended is dropped here
+                // Once the event loop has ended Slint 1.18.1 still accepts the call and never runs
+                // it; the engine in it then ends with the process.
                 let _ = slint::invoke_from_event_loop(move || {
                     with_app(|app| app.on_started(generation, started));
                 });
@@ -258,6 +262,14 @@ impl App {
             log(&format!("could not start the engine thread: {error}"));
             self.start_problem = Some(Problem::StartFailed);
         }
+        self.render();
+    }
+
+    /// Development only: shows `snapshot` as if the engine had reported it.
+    #[cfg(feature = "snapshot")]
+    pub fn preview(&mut self, snapshot: Snapshot) {
+        self.touched = Touched::default();
+        self.snapshot = Some(snapshot);
         self.render();
     }
 
@@ -345,23 +357,17 @@ impl App {
         }
         if !touched.level {
             controls.level = shown.level;
-            model.set_level_position(controls::level_position(shown.level));
         }
-        model.set_level(i32::from(controls.level));
+        model.set_level(f32::from(controls.level));
 
         let running = self.engine.as_ref().is_some_and(Engine::is_running);
         let usable = running && status.controls;
         let controls = self.controls;
         model.set_controls_enabled(usable);
-        model.set_mode_recommended(controls.mode == controls::RECOMMENDED_MODE);
         model.set_delay_enabled(usable && controls.mode == Mode::MinHiss);
-        let indicators = controls::indicators(controls.mode, controls.settle_ms);
-        model.set_hiss(indicators.hiss);
-        model.set_pop(indicators.pop);
-        model.set_delay(indicators.delay);
-        model.set_delay_ms(indicators.delay_ms);
+        let indicators = Mode::ALL.map(|mode| controls::indicators(mode, controls.settle_ms));
+        model.set_indicators(ModelRc::new(VecModel::from(indicators.to_vec())));
         model.set_boost_db(controls::gain_db(controls.boost));
-        model.set_boost_recommended(controls.boost == controls::BOOST_RECOMMENDED);
 
         model.set_title(status.title);
         model.set_hint(status.hint);
@@ -536,8 +542,7 @@ impl App {
             self.controls.level = level;
             if let Some(window) = self.window.upgrade() {
                 let model = window.global::<Model>();
-                model.set_level(i32::from(level));
-                model.set_level_position(controls::level_position(level));
+                model.set_level(f32::from(level));
             }
             self.send(Command::SetSidetoneLevel(level));
         }
@@ -546,15 +551,15 @@ impl App {
         self.send(Command::SetSidetone(on));
     }
 
-    fn level_changed(&mut self, position: f32) {
-        let level = controls::level_at(position);
+    fn level_changed(&mut self, value: f32) {
+        let level = controls::level_at(value);
         if level == self.controls.level {
             return;
         }
         self.touched.level = true;
         self.controls.level = level;
         if let Some(window) = self.window.upgrade() {
-            window.global::<Model>().set_level(i32::from(level));
+            window.global::<Model>().set_level(f32::from(level));
         }
         self.send_paced(Slot::Level, Command::SetSidetoneLevel(level));
     }
@@ -615,7 +620,12 @@ impl App {
         self.show_window();
     }
 
+    /// Does nothing once the program is quitting: a launch that arrives while the engine is
+    /// being stopped must not bring the hidden window back.
     fn show_window(&mut self) {
+        if self.quitting {
+            return;
+        }
         if let Some(window) = self.window.upgrade() {
             platform::show_and_raise(window.window());
             self.sound.watch(true);

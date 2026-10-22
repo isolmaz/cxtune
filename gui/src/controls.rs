@@ -2,13 +2,13 @@
 
 use cxtune::config::Config;
 use cxtune::engine::Readback;
-use cxtune::mode::{Mode, SETTLE_STEP_MS};
+use cxtune::mode::{Mode, SETTLE_STEP_MS, mute_delay_ms};
 use cxtune::patches::{
     MIC_MAX, MIC_MIN, SETTLE_DEFAULT, SETTLE_MAX, SETTLE_MIN, SIDETONE_DEFAULT, SIDETONE_MAX,
     SIDETONE_MIN,
 };
 
-use crate::ui::{Delay, Hiss, Pop};
+use crate::ui::{Delay, Hiss, ModeIndicators, Pop};
 
 pub const SETTLE_MIN_MS: u16 = SETTLE_MIN as u16 * SETTLE_STEP_MS;
 pub const SETTLE_MAX_MS: u16 = SETTLE_MAX as u16 * SETTLE_STEP_MS;
@@ -31,37 +31,27 @@ pub fn gain_db(step: u8) -> i32 {
 /// The mode that the recommended settings use.
 pub const RECOMMENDED_MODE: Mode = Mode::Balanced;
 
-/// What a mode costs and gives, for the indicators under the mode selector. The words are the
-/// README's; the delay is the time that the start of audio is muted, measured on the device
-/// (docs/firmware-notes.md): none in stock and quiet mode, 0.59 s plus 37 ms in balanced mode,
-/// and in minimum hiss the start delay plus the fixed 100 ms. The start pop of balanced mode was
-/// not measured.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Indicators {
-    pub hiss: Hiss,
-    pub pop: Pop,
-    pub delay: Delay,
-    /// The delay in ms where it depends on the start delay.
-    pub delay_ms: i32,
-}
-
-pub fn indicators(mode: Mode, settle_ms: u16) -> Indicators {
+/// What a mode costs and gives, for the indicators on its card. The words are the README's; the
+/// delay is the engine's own figure for the time that the start of audio is muted
+/// (`mode::mute_delay_ms`). The start pop of balanced mode was not measured.
+pub fn indicators(mode: Mode, settle_ms: u16) -> ModeIndicators {
     let (hiss, pop, delay) = match mode {
         Mode::Stock => (Hiss::Constant, Pop::None, Delay::None),
         Mode::Quiet => (Hiss::Some, Pop::Low, Delay::None),
-        Mode::Balanced => (Hiss::Cut, Pop::NotMeasured, Delay::About600Ms),
+        Mode::Balanced => (Hiss::Cut, Pop::NotMeasured, Delay::Fixed),
         Mode::MinHiss => (Hiss::Cut, Pop::Loud, Delay::Settle),
     };
-    Indicators {
+    ModeIndicators {
         hiss,
         pop,
         delay,
-        delay_ms: i32::from(settle_ms) + 100,
+        delay_ms: mute_delay_ms(Some(mode), Some(settle_ms)) as i32,
     }
 }
 
-/// The level that switching sidetone on starts with when the user has not chosen one: far below
-/// the stock level, because the unit of the register is not known and sidetone can be loud.
+/// The level that switching sidetone on starts with when the user has not chosen one: 200 is
+/// +0.78 dB, about 3 dB below the vendor's +3.7 dB, because the loudness of sidetone was never
+/// measured and it can be loud.
 pub const SIDETONE_START: u16 = 200;
 
 /// The level to set before sidetone is switched on, if there is one. The vendor's level was
@@ -71,9 +61,9 @@ pub fn level_before_sidetone(level: u16, chosen: bool) -> Option<u16> {
     (!chosen && level == SIDETONE_DEFAULT).then_some(SIDETONE_START)
 }
 
-/// The sidetone slider spans this many positions on a logarithmic scale, so that the low
-/// levels, where sidetone should start, get as much room as the high ones.
-pub const LEVEL_POSITIONS: f32 = 1000.0;
+/// A key press moves the sidetone slider by this much: half a dB, counting 256 to the dB as the
+/// ROM's USB audio code does.
+pub const LEVEL_STEP: u16 = 128;
 
 /// Every value a control shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,17 +152,12 @@ pub fn mode_at(index: i32) -> Option<Mode> {
         .and_then(|index| Mode::ALL.get(index).copied())
 }
 
-/// The sidetone register value at a slider position (0 to [`LEVEL_POSITIONS`]).
-pub fn level_at(position: f32) -> u16 {
-    let span = (SIDETONE_MAX as f32 / SIDETONE_MIN as f32).ln();
-    let level = SIDETONE_MIN as f32 * (position / LEVEL_POSITIONS * span).exp();
-    (level.round() as u16).clamp(SIDETONE_MIN, SIDETONE_MAX)
-}
-
-/// The slider position of a sidetone register value.
-pub fn level_position(level: u16) -> f32 {
-    let span = (SIDETONE_MAX as f32 / SIDETONE_MIN as f32).ln();
-    LEVEL_POSITIONS * (level as f32 / SIDETONE_MIN as f32).ln() / span
+/// The sidetone register value at a slider value. The slider is linear in the register, so it is
+/// linear in dB.
+pub fn level_at(value: f32) -> u16 {
+    value
+        .round()
+        .clamp(f32::from(SIDETONE_MIN), f32::from(SIDETONE_MAX)) as u16
 }
 
 #[cfg(test)]
@@ -298,17 +283,25 @@ mod tests {
     }
 
     #[test]
-    fn the_sidetone_slider_covers_the_whole_register_range_logarithmically() {
+    fn the_sidetone_slider_covers_the_whole_register_range_and_nothing_else() {
         assert_eq!(level_at(0.0), SIDETONE_MIN);
-        assert_eq!(level_at(LEVEL_POSITIONS), SIDETONE_MAX);
         assert_eq!(level_at(-50.0), SIDETONE_MIN);
-        assert_eq!(level_at(LEVEL_POSITIONS + 50.0), SIDETONE_MAX);
-        // equal steps on the slider are equal ratios of the level: half way is the geometric mean
-        assert_eq!(level_at(LEVEL_POSITIONS / 2.0), 64);
-        assert!(
-            level_at(250.0) < 10,
-            "the lowest quarter is the lowest levels"
-        );
+        assert_eq!(level_at(f32::from(SIDETONE_MAX) + 50.0), SIDETONE_MAX);
+        assert_eq!(level_at(1000.4), 1000);
+        assert_eq!(level_at(1000.6), 1001);
+    }
+
+    #[test]
+    fn equal_steps_on_the_sidetone_slider_are_equal_steps_in_the_register() {
+        let step = f32::from(LEVEL_STEP);
+        let start = f32::from(SIDETONE_MIN);
+        for k in 1..=31 {
+            let (before, after) = (
+                level_at(start + step * (k - 1) as f32),
+                level_at(start + step * k as f32),
+            );
+            assert_eq!(after - before, LEVEL_STEP, "step {k}");
+        }
     }
 
     #[test]
@@ -336,18 +329,23 @@ mod tests {
     fn the_indicators_show_what_the_documentation_measured_and_say_what_it_did_not() {
         let stock = indicators(Mode::Stock, 600);
         assert_eq!(
-            (stock.hiss, stock.pop, stock.delay),
-            (Hiss::Constant, Pop::None, Delay::None)
+            (stock.hiss, stock.pop, stock.delay, stock.delay_ms),
+            (Hiss::Constant, Pop::None, Delay::None, 0)
         );
         let quiet = indicators(Mode::Quiet, 600);
         assert_eq!(
-            (quiet.hiss, quiet.pop, quiet.delay),
-            (Hiss::Some, Pop::Low, Delay::None)
+            (quiet.hiss, quiet.pop, quiet.delay, quiet.delay_ms),
+            (Hiss::Some, Pop::Low, Delay::None, 0)
         );
         let balanced = indicators(Mode::Balanced, 600);
         assert_eq!(
-            (balanced.hiss, balanced.pop, balanced.delay),
-            (Hiss::Cut, Pop::NotMeasured, Delay::About600Ms)
+            (
+                balanced.hiss,
+                balanced.pop,
+                balanced.delay,
+                balanced.delay_ms
+            ),
+            (Hiss::Cut, Pop::NotMeasured, Delay::Fixed, 650)
         );
         let min_hiss = indicators(Mode::MinHiss, 300);
         assert_eq!(
@@ -357,7 +355,7 @@ mod tests {
                 min_hiss.delay,
                 min_hiss.delay_ms
             ),
-            (Hiss::Cut, Pop::Loud, Delay::Settle, 400)
+            (Hiss::Cut, Pop::Loud, Delay::Settle, 450)
         );
     }
 
@@ -384,7 +382,7 @@ mod tests {
     #[test]
     fn every_register_value_survives_a_trip_through_the_slider() {
         for level in SIDETONE_MIN..=SIDETONE_MAX {
-            assert_eq!(level_at(level_position(level)), level, "{level}");
+            assert_eq!(level_at(f32::from(level)), level, "{level}");
         }
     }
 }

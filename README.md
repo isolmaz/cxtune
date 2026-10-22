@@ -107,22 +107,25 @@ cxtune watch                    keep the remembered settings applied across repl
 
 `target\release\cxtune-gui.exe` is a small window and notification-area icon on top of the same
 engine (Windows 11, Turkish and English). It follows the light or dark scheme of Windows, has no
-console window and closes to the notification area.
+console window and closes to the notification area. A list of pages on the left leads to the
+four below, and a header shows the dongle and its state (it also has level meters, which
+show nothing yet).
 
-- **Output**: the four modes with Hiss, Pop and Delay indicators that show only what was measured
-  (and say so when something was not), the start delay of minimum hiss, the headphone volume and
-  **Apply recommended** (balanced mode, microphone boost 6, noise reduction on, AGC and sidetone
-  off).
+- **Output**: the four modes (Default, Low click, Balanced, Lowest noise) as cards with Noise
+  floor, Click and Mute delay indicators that show only what was measured (and say so when
+  something was not), the soft-start time of Lowest noise, the speaker volume and **Apply
+  recommended** (balanced mode, microphone boost 6, noise reduction on, AGC and sidetone off).
 - **Microphone**: boost with the gain compared with the vendor's setting, noise reduction, AGC
   (experimental) and the microphone volume.
-- **Sidetone** (experimental, with a note not to turn on Windows' "Listen to this device" as
-  well) and **General**: start with Windows, language, the log folder.
-- **About**: version, the supported device and the disclaimer.
+- **Sidetone** (experimental, the level in dB, with a note not to turn on Windows' "Listen to this
+  device" as well) and **General**: start with Windows, language, the log folder and **About**
+  (version, the supported device and the disclaimer).
 - The **notification-area icon** switches the mode, re-applies the settings and shows the
   window; its tooltip is the short status. `cxtune-gui.exe --minimized` starts it in the
   notification area, and only one copy runs at a time.
-- The **status** is one line for what is wrong and one for what to do; technical details are only
-  in the log (`%LOCALAPPDATA%\cxtune\cxtune.log`).
+- The **status**: a pill in the header says how the dongle stands; the band at the bottom appears
+  only for what is going on or needs an action, in one line for what is wrong and one for what to
+  do. Technical details are only in the log (`%LOCALAPPDATA%\cxtune\cxtune.log`).
 - The volume sliders are the Windows volume of the dongle's playback and capture endpoints
   (the same as the Windows mixer and the buttons on the dongle); no HID report is involved.
 
