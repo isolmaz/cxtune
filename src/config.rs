@@ -145,6 +145,7 @@ fn render(cfg: &Config) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testdir::TempDir;
 
     #[test]
     fn round_trips_every_mode_and_option() {
@@ -207,13 +208,6 @@ mod tests {
         assert_eq!(render(&cfg), "mic_nr = false\n");
     }
 
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("cxtune-config-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
     fn sample() -> Config {
         Config {
             mode: Some(Mode::MinHiss),
@@ -228,7 +222,7 @@ mod tests {
 
     #[test]
     fn a_saved_file_replaces_the_old_one_whole_and_leaves_no_temporary_file() {
-        let dir = scratch_dir("replace");
+        let dir = TempDir::new("config-replace");
         let file = dir.join("config.toml");
         let old = Config {
             mode: Some(Mode::Quiet),
@@ -252,21 +246,19 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, ["config.toml"]);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn saving_creates_the_directory() {
-        let dir = scratch_dir("create");
+        let dir = TempDir::new("config-create");
         let file = dir.join("nested").join("config.toml");
         save_to(&file, &sample()).unwrap();
         assert_eq!(load_from(&file).unwrap(), sample());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn a_failed_save_names_the_file_and_leaves_the_old_one_and_no_temporary_file() {
-        let dir = scratch_dir("failed");
+        let dir = TempDir::new("config-failed");
         let file = dir.join("config.toml");
         let old = Config {
             mode: Some(Mode::Stock),
@@ -281,18 +273,14 @@ mod tests {
         assert!(err.contains(&file.display().to_string()), "{err}");
         assert_eq!(load_from(&file).unwrap(), old);
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn an_unreadable_file_is_named_in_the_error() {
-        let dir = std::env::temp_dir().join(format!("cxtune-config-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TempDir::new("config-unreadable");
         let file = dir.join("config.toml");
         std::fs::write(&file, "profile = \"idle\"\n").unwrap();
         let err = load_from(&file).unwrap_err().to_string();
-        std::fs::remove_dir_all(&dir).unwrap();
         assert!(err.contains(&file.display().to_string()), "{err}");
         assert!(err.contains("profile = \"idle\""), "{err}");
         assert_eq!(

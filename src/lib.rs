@@ -20,6 +20,9 @@ pub mod settings;
 #[cfg(test)]
 mod fake;
 
+#[cfg(test)]
+mod testdir;
+
 use std::fmt;
 
 #[derive(Debug)]

@@ -1,5 +1,6 @@
 //! The command line must stay away from the dongle while another process controls it.
 
+use std::path::PathBuf;
 use std::process::Command;
 
 use cxtune::Error;
@@ -9,6 +10,15 @@ fn cxtune() -> Command {
     Command::new(env!("CARGO_BIN_EXE_cxtune"))
 }
 
+/// A directory that is removed when the test ends, also when it fails.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 // One test, so that no other test of this file takes the lock for a moment in between.
 #[test]
 fn every_device_command_is_refused_while_the_lock_is_held() {
@@ -16,9 +26,10 @@ fn every_device_command_is_refused_while_the_lock_is_held() {
     let _held = NamedLock::device();
     assert!(matches!(NamedLock::device(), Err(Error::Busy(_))));
 
-    let appdata = std::env::temp_dir().join(format!("cxtune-cli-lock-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&appdata);
-    std::fs::create_dir_all(&appdata).unwrap();
+    let appdata =
+        Scratch(std::env::temp_dir().join(format!("cxtune-cli-lock-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&appdata.0);
+    std::fs::create_dir_all(&appdata.0).unwrap();
 
     let commands: [&[&str]; 9] = [
         &["status"],
@@ -34,7 +45,7 @@ fn every_device_command_is_refused_while_the_lock_is_held() {
     for args in commands {
         let out = cxtune()
             .args(args)
-            .env("APPDATA", &appdata)
+            .env("APPDATA", &appdata.0)
             .output()
             .unwrap();
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -45,8 +56,7 @@ fn every_device_command_is_refused_while_the_lock_is_held() {
         );
     }
     // a refused command writes no config
-    assert_eq!(std::fs::read_dir(&appdata).unwrap().count(), 0);
-    std::fs::remove_dir_all(&appdata).unwrap();
+    assert_eq!(std::fs::read_dir(&appdata.0).unwrap().count(), 0);
 
     // the usage message needs no device and so no lock
     let out = cxtune().output().unwrap();
