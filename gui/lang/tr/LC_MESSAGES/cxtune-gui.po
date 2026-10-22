@@ -204,8 +204,8 @@ msgid "Open log folder"
 msgstr "Günlük klasörünü aç"
 
 msgctxt "ui"
-msgid "HyperX Cloud II USB sound card"
-msgstr "HyperX Cloud II USB ses kartı"
+msgid "Drawing of the USB sound card"
+msgstr "USB ses kartı çizimi"
 
 msgctxt "ui"
 msgid "Version {}"

@@ -19,6 +19,95 @@ export component Note inherits Text {
 }
 
 // A small coloured pill: "Experimental", "Recommended".
+// A flat drawing of the inline USB control box of the sound card: the cable, the box with its
+// minus, centre and plus buttons, and the 3.5 mm plug. One colour, so it follows the scheme.
+export component DeviceDrawing inherits Rectangle {
+    width: 120px;
+    height: 74px;
+    accessible-role: image;
+    accessible-label: @tr("ui" => "Drawing of the USB sound card");
+
+    Path {
+        x: 0px;
+        y: 0px;
+        width: 120px;
+        height: 74px;
+        viewbox-width: 120;
+        viewbox-height: 74;
+        commands: "M 0 64 C 20 64 16 37 34 37";
+        stroke: Surface.quiet;
+        stroke-width: 3px;
+        stroke-line-cap: round;
+    }
+
+    Rectangle {
+        x: 34px;
+        y: 22px;
+        width: 56px;
+        height: 30px;
+        border-radius: 9px;
+        border-width: 2px;
+        border-color: Surface.quiet;
+        background: Surface.card;
+    }
+
+    // minus
+    Rectangle {
+        x: 43px;
+        y: 36px;
+        width: 8px;
+        height: 2px;
+        background: Surface.quiet;
+    }
+
+    // centre button
+    Rectangle {
+        x: 57px;
+        y: 32px;
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        border-width: 2px;
+        border-color: Surface.quiet;
+    }
+
+    // plus
+    Rectangle {
+        x: 73px;
+        y: 36px;
+        width: 8px;
+        height: 2px;
+        background: Surface.quiet;
+    }
+
+    Rectangle {
+        x: 76px;
+        y: 33px;
+        width: 2px;
+        height: 8px;
+        background: Surface.quiet;
+    }
+
+    // the 3.5 mm plug: sleeve and tip
+    Rectangle {
+        x: 90px;
+        y: 31px;
+        width: 14px;
+        height: 12px;
+        border-radius: 2px;
+        background: Surface.quiet;
+    }
+
+    Rectangle {
+        x: 106px;
+        y: 34px;
+        width: 12px;
+        height: 6px;
+        border-radius: 3px;
+        background: Surface.quiet;
+    }
+}
+
 export component Badge inherits VerticalLayout {
     in property <string> label;
     in property <color> tone: Surface.caution;

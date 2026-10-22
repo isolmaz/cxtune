@@ -1,6 +1,6 @@
 import { Button, ComboBox, Slider } from "std-widgets.slint";
 import { Delay, Model, Pop } from "contract.slint";
-import { Badge, Help, Indicator, LinkText, Note, Row, Tab, ToggleRow, VolumeRow } from "components.slint";
+import { Badge, DeviceDrawing, Help, Indicator, LinkText, Note, Row, Tab, ToggleRow, VolumeRow } from "components.slint";
 import { Surface } from "theme.slint";
 import { Texts } from "texts.slint";
 
@@ -302,23 +302,7 @@ export component AboutTab inherits Tab {
     HorizontalLayout {
         spacing: 16px;
 
-        Rectangle {
-            width: 120px;
-            height: 74px;
-            border-radius: 6px;
-            background: Surface.plate;
-
-            Image {
-                source: @image-url("../assets/dongle.png");
-                x: 5px;
-                y: 5px;
-                width: parent.width - 10px;
-                height: parent.height - 10px;
-                image-fit: contain;
-                accessible-role: image;
-                accessible-label: @tr("ui" => "HyperX Cloud II USB sound card");
-            }
-        }
+        DeviceDrawing { }
 
         VerticalLayout {
             alignment: center;
