@@ -387,7 +387,7 @@ microphone closed.
 
 ### Applying the saved settings
 
-`settings::ensure` (used by the engine) applies the microphone DSP settings first, then the mode,
+`settings::ensure` (used by the engine, see [engine.md](engine.md)) applies the microphone DSP settings first, then the mode,
 then the mic boost. A saved sidetone level is written whether sidetone is on or off (switching
 sidetone on writes it first; switching it off comes before the level, so the level then
 jumps). A DSP reload request is awaited before the mode change opens its own

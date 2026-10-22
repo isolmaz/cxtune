@@ -44,7 +44,7 @@ The playback EQ preset is not offered: the vendor patch resets it on every pass,
 effect on this firmware.
 
 Because RAM is reset on every replug, `watch` re-applies the remembered settings whenever the
-dongle appears.
+dongle appears (see "Keeping the settings applied").
 
 ## Usage
 
@@ -57,8 +57,8 @@ cxtune mic-nr <on|off>          set microphone noise reduction and remember it
 cxtune mic-agc <on|off>         set microphone AGC (experimental) and remember it
 cxtune sidetone <on|off>        set sidetone (experimental) and remember it
 cxtune sidetone-level <1-4096>  set the sidetone gain register (experimental) and remember it
-cxtune watch                    keep the remembered settings applied across replugs
-                                (holds the dongle; other commands are refused meanwhile)
+cxtune watch                    keep the remembered settings applied across replugs and
+                                wake-ups (holds the dongle; other commands are refused)
 ```
 
 A noise reduction or AGC change made while a microphone stream is open is followed by a
@@ -159,21 +159,51 @@ response that happens to satisfy a single-bit check passes).
 - Patch RAM that does not match a known mode (for example from another tool) is refused and
   nothing is written; replugging the dongle restores the vendor patch.
 
-## Re-applying on replug
+## Keeping the settings applied (`watch` and the engine)
 
-`watch` polls HID enumeration once per second (no device I/O while polling). When the dongle
-appears it waits 2 s for the firmware to load its patch, then applies the saved settings: the
-microphone DSP settings first, then the mode, then the mic boost. The DSP settings come first
-so that a reload request is finished before cxtune opens its own playback stream for the mode
-change; a DSP setting that is refused does not keep the mode from being applied. While
-connected it re-verifies every 60 s, which also catches a USB reset that happened between two
-polls. Applying is idempotent: if the device already matches, nothing is written and no stream
-is opened. A readback mismatch stops `watch`; a stream event near a DSP reload request is
-printed as a warning and does not.
+`watch` runs the background engine (`cxtune::engine`, described in
+[docs/engine.md](docs/engine.md)) without a user interface and prints what it does. The
+engine is also what the tray application will use. It owns the dongle: one worker thread does
+all HID and audio-stream access, and it holds the device lock for as long as it runs.
 
-Polling was chosen over Windows device notifications (`CM_Register_Notification` /
-`WM_DEVICECHANGE`): it needs no window or callback threading, cannot miss an event because of a
-registration race, and the cost of enumerating HID devices once a second is negligible.
+- **Arrival.** HID enumeration is polled once per second (no device I/O). A dongle that
+  appears is left alone for 2 s so that its firmware can load the patch, then read and, if it
+  differs from the saved settings, brought to them: the microphone DSP settings first, then the
+  mode, then the mic boost. The DSP settings come first so that a reload request is finished
+  before cxtune opens its own playback stream for the mode change; a DSP setting that is
+  refused does not keep the mode from being applied. A dongle that disappears again within the
+  2 s is never touched, so a flapping cable causes no writes and no errors.
+- **Drift.** A connected dongle is read every 15 s and compared with the saved settings; only
+  a difference leads to writes. This also catches a USB reset that happened between two polls,
+  or another tool changing the patch RAM.
+- **Sleep.** The computer waking from sleep or hibernation is noticed as a gap of more than
+  5 s in the engine's wall-clock rhythm. The dongle may have restarted, so it is left alone for
+  2 s and then verified.
+- **Failures.** A dongle that is connected but does not answer is retried with growing pauses
+  (2 s up to 30 s); a failed silent stream is retried (5 s up to 60 s); a refusal by a safety
+  check is retried three times (5 s, 15 s, 60 s) because a patch that is still loading looks
+  unrecognised; a write that does not stick twice (10 s, 60 s). A failure that persists is
+  reported once. After the last retry the engine waits for a new command, a re-apply or a
+  replug. A dongle that disappears while it is being used is a disconnect, not an error.
+- **Commands.** Setting commands change the saved settings at once and the dongle at most
+  150 ms later, with the latest values: a slider moved for a second causes a handful of
+  writes, not one per step. The settings file is rewritten once per burst.
+
+Applying is idempotent: if the device already matches, nothing is written and no stream is
+opened. A stream event near a DSP reload request is printed as a warning and does not stop
+anything.
+
+Polling and a wall-clock gap were chosen over Windows notifications
+(`RegisterDeviceNotification` / `CM_Register_Notification` for the dongle,
+`PowerRegisterSuspendResumeNotification` / `WM_POWERBROADCAST` for sleep): they need no window,
+message pump or callback threading, cannot miss an event through a registration race, and
+cannot be lost when a notification is dropped; enumerating HID devices once a second and
+comparing two clocks cost next to nothing. A missed or late detection costs at most one
+verification interval, because the periodic read finds the difference anyway.
+
+The engine writes a diagnostic log to `%LOCALAPPDATA%\cxtune\cxtune.log` (arrivals, passes,
+writes made, warnings, errors; no settings beyond the saved ones). At 256 KiB it is renamed to
+`cxtune.log.1`, replacing the older one, so the two files stay below 512 KiB.
 
 ## Building
 
@@ -213,5 +243,6 @@ run-at-login). Options considered:
 
 **Recommendation: Slint with its Fluent style, plus `tray-icon` for the notification-area
 icon.** It gives a Windows 11 look with modest code and dependencies, and the existing core
-(`cxtune` library) plugs in unchanged; the `watch` loop would move to a background thread.
+(`cxtune` library) plugs in unchanged: the user interface sends `engine::Command`s through a
+`Handle` and shows the `Snapshot`s that the engine's event sink delivers.
 Check Slint's license terms (GPLv3, royalty-free, or commercial) before publishing.

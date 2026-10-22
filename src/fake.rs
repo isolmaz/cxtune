@@ -24,8 +24,7 @@
 //!   with its NEWC bit added to the byte it holds, the sidetone level stays in its range, and
 //!   none of the three is written while the chip-mode or DSP-bypass flags are set.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::mode::{Mode, Stream};
 use crate::protocol::{OutReport, Transport};
@@ -93,6 +92,12 @@ struct Inner {
     stop_stream_after_writes: Option<usize>,
     /// Writes that arrived while a stream was open but not yet shown by the codec.
     early_writes: usize,
+    /// Every report the device has been sent, reads and writes.
+    requests: usize,
+    /// The device restarts when it is sent this many reports.
+    restart_at_request: Option<usize>,
+    /// The dongle is unplugged: every report fails.
+    unplugged: bool,
     streams_opened: usize,
     pending: Option<Vec<u8>>,
     /// A capture stream is open.
@@ -112,7 +117,7 @@ struct Inner {
 
 /// A handle to the fake dongle; clones share the same device.
 #[derive(Clone)]
-pub struct FakeDevice(Rc<RefCell<Inner>>);
+pub struct FakeDevice(Arc<Mutex<Inner>>);
 
 /// An open silent stream. Dropping it closes the stream.
 pub struct FakeStream(FakeDevice);
@@ -122,7 +127,7 @@ pub struct FakeMic(FakeDevice);
 
 impl Drop for FakeMic {
     fn drop(&mut self) {
-        let mut d = self.0.0.borrow_mut();
+        let mut d = self.0.lock();
         d.mic_open = false;
         d.mem[NEWC] &= !0x02;
         d.evaluate();
@@ -134,7 +139,7 @@ impl Drop for FakeMic {
 
 impl Drop for FakeStream {
     fn drop(&mut self) {
-        let mut d = self.0.0.borrow_mut();
+        let mut d = self.0.lock();
         d.stop_stream();
         if !std::thread::panicking() {
             d.settle();
@@ -144,7 +149,7 @@ impl Drop for FakeStream {
 
 impl Stream for FakeStream {
     fn check(&self) -> Result<()> {
-        if self.0.0.borrow().stream_open {
+        if self.0.lock().stream_open {
             Ok(())
         } else {
             Err(Error::Audio("the silent stream stopped".into()))
@@ -156,6 +161,17 @@ impl Inner {
     fn stop_stream(&mut self) {
         self.stream_open = false;
         self.stream_seen = false;
+    }
+
+    /// The dongle restarts: `fresh` is the memory the vendor patch loads, and every stream is gone.
+    fn restart(&mut self, fresh: Vec<u8>) {
+        self.mem = fresh;
+        self.stream_open = false;
+        self.stream_seen = false;
+        self.mic_open = false;
+        self.pending = None;
+        self.newc_reads = None;
+        self.settle();
     }
 
     fn running(&self) -> Running {
@@ -348,6 +364,12 @@ fn min_hiss_with_any_settle(window: &[u8]) -> bool {
 }
 
 impl FakeDevice {
+    /// The device state. A poisoned lock is used as it is: the panic that poisoned it is the
+    /// test failure, and the fake's own drops must not add a second one.
+    fn lock(&self) -> MutexGuard<'_, Inner> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Memory as the vendor patch leaves it after plug-in, with the device idle.
     pub fn stock() -> Self {
         Self::in_mode(Mode::Stock)
@@ -376,7 +398,7 @@ impl FakeDevice {
         put(0x1000, &[0x01]);
         put(DSP_ENABLE, &[0x04]);
         put(SIDETONE_LEVEL, &[0xB3, 0x03]);
-        let dev = Self(Rc::new(RefCell::new(Inner {
+        let dev = Self(Arc::new(Mutex::new(Inner {
             mem,
             writes: Vec::new(),
             ignore_writes: false,
@@ -388,6 +410,9 @@ impl FakeDevice {
             reads_until_seen: 0,
             stop_stream_after_writes: None,
             early_writes: 0,
+            requests: 0,
+            restart_at_request: None,
+            unplugged: false,
             streams_opened: 0,
             pending: None,
             mic_open: false,
@@ -398,13 +423,13 @@ impl FakeDevice {
             newc_poke: Vec::new(),
             newc_consumed: 0,
         })));
-        dev.0.borrow_mut().settle();
+        dev.lock().settle();
         dev
     }
 
     /// Opens a capture stream: the ROM reloads the DSP settings for it.
     pub fn open_mic(&self) -> FakeMic {
-        let mut d = self.0.borrow_mut();
+        let mut d = self.lock();
         d.mic_open = true;
         d.mem[NEWC] |= 0x02;
         d.evaluate();
@@ -424,23 +449,23 @@ impl FakeDevice {
 
     /// NEWC requests the ROM has consumed.
     pub fn newc_consumed(&self) -> usize {
-        self.0.borrow().newc_consumed
+        self.lock().newc_consumed
     }
 
     /// The ROM takes `reads` reads to consume a NEWC request (default 1).
     pub fn consume_newc_after_reads(&self, reads: usize) {
-        self.0.borrow_mut().newc_delay = reads;
+        self.lock().newc_delay = reads;
     }
 
     /// The ROM never consumes a NEWC request.
     pub fn never_consume_newc(&self) {
-        self.0.borrow_mut().newc_stuck = true;
+        self.lock().newc_stuck = true;
     }
 
     /// The ROM raises a NEWC request of its own, as it does on a stream event, and consumes it
     /// at the `reads`th read request from now.
     pub fn raise_newc(&self, reads: usize) {
-        let mut d = self.0.borrow_mut();
+        let mut d = self.lock();
         d.mem[NEWC] |= 0x01;
         d.newc_reads = Some(reads);
     }
@@ -448,80 +473,108 @@ impl FakeDevice {
     /// The ROM flips these bits of `$1154` when it consumes a request, as a stream event
     /// arriving at that moment would.
     pub fn flip_on_newc(&self, bits: u8) {
-        self.0.borrow_mut().newc_flip = bits;
+        self.lock().newc_flip = bits;
     }
 
     /// When the ROM consumes a request it also sets the byte at `addr`, as a stream event
     /// arriving at that moment would, while `$1154` keeps the stream bits it had.
     pub fn poke_on_newc(&self, addr: u16, value: u8) {
-        self.0.borrow_mut().newc_poke.push((addr as usize, value));
+        self.lock().newc_poke.push((addr as usize, value));
     }
 
     pub fn mem(&self) -> Vec<u8> {
-        self.0.borrow().mem.clone()
+        self.lock().mem.clone()
     }
 
     pub fn byte(&self, addr: u16) -> u8 {
-        self.0.borrow().mem[addr as usize]
+        self.lock().mem[addr as usize]
     }
 
     /// Overwrites memory directly, as test setup; the device is left idle with no stream.
     pub fn poke(&self, addr: u16, data: &[u8]) {
-        let mut d = self.0.borrow_mut();
+        let mut d = self.lock();
         let a = addr as usize;
         d.mem[a..a + data.len()].copy_from_slice(data);
     }
 
     /// Brings the playback registers in line with memory that was just poked.
     pub fn settle(&self) {
-        self.0.borrow_mut().settle();
+        self.lock().settle();
     }
 
     pub fn writes(&self) -> Vec<(u16, Vec<u8>)> {
-        self.0.borrow().writes.clone()
+        self.lock().writes.clone()
     }
 
     pub fn clear_writes(&self) {
-        self.0.borrow_mut().writes.clear();
+        self.lock().writes.clear();
     }
 
     /// Write requests are recorded but do not change memory.
     pub fn ignore_writes(&self) {
-        self.0.borrow_mut().ignore_writes = true;
+        self.lock().ignore_writes = true;
     }
 
     /// The device stops accepting writes after `n` more have gone through, as if unplugged.
     pub fn fail_after_writes(&self, n: usize) {
-        let mut d = self.0.borrow_mut();
+        let mut d = self.lock();
         d.fail_after_writes = Some(d.writes.len() + n);
     }
 
     pub fn clear_failure(&self) {
-        self.0.borrow_mut().fail_after_writes = None;
+        self.lock().fail_after_writes = None;
+    }
+
+    /// Every report sent to the device so far, reads and writes.
+    pub fn requests(&self) -> usize {
+        self.lock().requests
+    }
+
+    /// Every report fails from now on, as if the cable were pulled.
+    pub fn unplug(&self) {
+        self.lock().unplugged = true;
+    }
+
+    /// The device answers again. Its memory is as it was: use [`FakeDevice::replug`] for a
+    /// device that restarted.
+    pub fn plug_in(&self) {
+        self.lock().unplugged = false;
+    }
+
+    /// The dongle restarted: the vendor patch is loaded afresh and every stream is gone.
+    pub fn replug(&self) {
+        let fresh = FakeDevice::stock().mem();
+        self.lock().restart(fresh);
+    }
+
+    /// The dongle restarts when it is sent its `n`th report from now.
+    pub fn replug_at_request(&self, n: usize) {
+        let mut d = self.lock();
+        d.restart_at_request = Some(d.requests + n);
     }
 
     /// Opening a stream fails, as if the endpoint were missing.
     pub fn remove_endpoint(&self) {
-        self.0.borrow_mut().no_endpoint = true;
+        self.lock().no_endpoint = true;
     }
 
     pub fn streams_opened(&self) -> usize {
-        self.0.borrow().streams_opened
+        self.lock().streams_opened
     }
 
     pub fn stream_is_open(&self) -> bool {
-        self.0.borrow().stream_open
+        self.lock().stream_open
     }
 
     /// Writes made after a stream was opened but before the codec showed it.
     pub fn early_writes(&self) -> usize {
-        self.0.borrow().early_writes
+        self.lock().early_writes
     }
 
     /// Opens a stream that the codec already shows.
     pub fn open_active_stream(&self) -> Result<FakeStream> {
         let stream = self.open_stream()?;
-        let mut d = self.0.borrow_mut();
+        let mut d = self.lock();
         d.stream_seen = true;
         d.settle();
         Ok(stream)
@@ -529,23 +582,23 @@ impl FakeDevice {
 
     /// True once the codec shows the stream.
     pub fn codec_sees_stream(&self) -> bool {
-        self.0.borrow().stream_seen
+        self.lock().stream_seen
     }
 
     /// The codec never shows a stream that is opened, as if the endpoint were not the one
     /// behind the dongle's output.
     pub fn never_show_streams(&self) {
-        self.0.borrow_mut().stream_delay = usize::MAX;
+        self.lock().stream_delay = usize::MAX;
     }
 
     /// The running stream stops after `n` more writes, as if the audio thread had failed.
     pub fn stop_stream_after_writes(&self, n: usize) {
-        let mut d = self.0.borrow_mut();
+        let mut d = self.lock();
         d.stop_stream_after_writes = Some(d.writes.len() + n);
     }
 
     pub fn open_stream(&self) -> Result<FakeStream> {
-        let mut d = self.0.borrow_mut();
+        let mut d = self.lock();
         if d.no_endpoint {
             return Err(Error::Audio("no playback endpoint".into()));
         }
@@ -560,7 +613,16 @@ impl FakeDevice {
 
 impl Transport for FakeDevice {
     fn send(&mut self, report: &OutReport) -> Result<()> {
-        let mut d = self.0.borrow_mut();
+        let mut d = self.lock();
+        if d.unplugged {
+            return Err(Error::Device("device disconnected".into()));
+        }
+        d.requests += 1;
+        if d.restart_at_request == Some(d.requests) {
+            d.restart_at_request = None;
+            let fresh = FakeDevice::stock().mem();
+            d.restart(fresh);
+        }
         let b = report.as_bytes();
         assert_eq!(b[0], 0x04, "OUT report id");
         let len = b[2] as usize;
@@ -601,7 +663,10 @@ impl Transport for FakeDevice {
 
     fn receive(&mut self) -> Result<Vec<u8>> {
         let mut r = vec![0u8; 33];
-        let mut d = self.0.borrow_mut();
+        let mut d = self.lock();
+        if d.unplugged {
+            return Err(Error::Device("device disconnected".into()));
+        }
         if let Some(data) = d.pending.take() {
             r[0] = 0x05;
             r[1..1 + data.len()].copy_from_slice(&data);

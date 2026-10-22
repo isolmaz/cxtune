@@ -1,8 +1,7 @@
 use std::process::ExitCode;
-use std::thread::sleep;
-use std::time::{Duration, Instant};
 
 use cxtune::config::{self, Config};
+use cxtune::engine::{Engine, Event, Phase, Snapshot};
 use cxtune::lock::NamedLock;
 use cxtune::mode::{self, Mode, State};
 use cxtune::patches::{
@@ -25,17 +24,10 @@ usage: cxtune <command>
                           and remember it
   sidetone-level <1-4096> sidetone gain register (experimental, unit not measured, device
                           default 947) and remember it; start low, sidetone can be loud
-  watch                   keep the remembered settings applied across replugs
+  watch                   keep the remembered settings applied across replugs; holds the
+                          dongle for as long as it runs, so other commands are refused
 
 Changes live in volatile RAM only; replugging the dongle restores the vendor patch.";
-
-/// How often `watch` checks whether the dongle is present (enumeration only, no device I/O).
-const POLL: Duration = Duration::from_secs(1);
-/// Wait after the dongle appears so its firmware can load the patch from EEPROM.
-const SETTLE: Duration = Duration::from_secs(2);
-/// While connected, re-verify the state this often in case a USB reset was missed.
-const VERIFY: Duration = Duration::from_secs(60);
-const RETRY: Duration = Duration::from_secs(5);
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -58,7 +50,7 @@ fn main() -> ExitCode {
         }
         ["sidetone", v] => locked(|| sidetone(v)),
         ["sidetone-level", v] => locked(|| sidetone_level(v)),
-        ["watch"] => locked(watch),
+        ["watch"] => watch(),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -344,66 +336,39 @@ fn sidetone_level(arg: &str) -> Result<()> {
 }
 
 fn watch() -> Result<()> {
-    let mut api = hid::api()?;
+    let _engine = Engine::start(report)?;
     println!("watching for the dongle (Ctrl+C to stop)");
-    let mut present = false;
-    let mut next_check = Instant::now();
-    let mut last_error: Option<String> = None;
     loop {
-        if let Err(e) = api.refresh_devices() {
-            eprintln!("enumeration failed: {e}");
-        }
-        let found = hid::find(&api).is_some();
-        if found && !present {
-            println!("dongle connected");
-            next_check = Instant::now() + SETTLE;
-            last_error = None;
-        } else if !found && present {
-            println!("dongle disconnected");
-        }
-        present = found;
+        std::thread::park();
+    }
+}
 
-        if present && Instant::now() >= next_check {
-            let result = config::load().and_then(|cfg| {
-                if cfg == Config::default() {
-                    return Err(Error::Config(
-                        "nothing selected yet; run `cxtune apply <mode>` first".into(),
-                    ));
-                }
-                let attempt = settings::ensure(&mut hid::open(&api)?, &cfg, audio::open_silence);
-                for event in &attempt.report.stream_events {
-                    eprintln!("warning: {event}");
-                }
-                match attempt.error {
-                    Some(e) => Err(e),
-                    None => Ok(attempt.report),
-                }
-            });
-            match result {
-                Ok(report) => {
-                    if report.writes > 0 {
-                        println!("settings re-applied ({} writes)", report.writes);
-                    }
-                    last_error = None;
-                    next_check = Instant::now() + VERIFY;
-                }
-                Err(e @ Error::Readback { .. }) => return Err(e),
-                Err(e) => {
-                    let msg = e.to_string();
-                    if last_error.as_deref() != Some(msg.as_str()) {
-                        eprintln!("error: {msg}");
-                    }
-                    last_error = Some(msg);
-                    next_check = Instant::now() + RETRY;
-                }
-            }
-        }
-        sleep(POLL);
+fn report(event: Event) {
+    match event {
+        Event::State(state) => println!("{}", describe(&state)),
+        Event::Warning(message) => eprintln!("warning: {message}"),
+        Event::Error(failure) => eprintln!("error ({}): {}", failure.kind, failure.message),
+    }
+}
+
+fn describe(state: &Snapshot) -> String {
+    let phase = match (state.phase, &state.device) {
+        (Phase::Disconnected, _) => "dongle not connected",
+        (Phase::Waiting, _) => "dongle connected, waiting for its firmware",
+        (Phase::Applying, _) => "applying the saved settings",
+        (Phase::Connected, None) => "dongle connected",
+        (Phase::Connected, Some(_)) if state.in_sync() => "dongle holds the saved settings",
+        (Phase::Connected, Some(_)) => "dongle differs from the saved settings",
+    };
+    match &state.device {
+        Some(device) => format!("{phase}: {device}"),
+        None => phase.to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use cxtune::engine::Readback;
     use cxtune::patches::{BALANCED_WINDOW, SIDETONE_DEFAULT};
 
     use super::*;
@@ -444,6 +409,48 @@ mod tests {
             assert!(note.contains("DOES NOT MATCH"), "{note}");
             assert!(note.contains(&hex(&ROM_ID)), "{note}");
         }
+    }
+
+    #[test]
+    fn watch_describes_each_state_in_one_line() {
+        let readback = Readback::of(&balanced(ROM_ID));
+        let state = |phase, device: Option<Readback>, mode| Snapshot {
+            phase,
+            settings: Config {
+                mode,
+                ..Config::default()
+            },
+            device,
+            error: None,
+        };
+        assert_eq!(
+            describe(&state(Phase::Disconnected, None, None)),
+            "dongle not connected"
+        );
+        assert_eq!(
+            describe(&state(Phase::Waiting, None, None)),
+            "dongle connected, waiting for its firmware"
+        );
+        assert_eq!(
+            describe(&state(Phase::Applying, Some(readback.clone()), None)),
+            format!("applying the saved settings: {readback}")
+        );
+        assert_eq!(
+            describe(&state(
+                Phase::Connected,
+                Some(readback.clone()),
+                Some(Mode::Balanced)
+            )),
+            format!("dongle holds the saved settings: {readback}")
+        );
+        assert_eq!(
+            describe(&state(
+                Phase::Connected,
+                Some(readback.clone()),
+                Some(Mode::Quiet)
+            )),
+            format!("dongle differs from the saved settings: {readback}")
+        );
     }
 
     #[test]

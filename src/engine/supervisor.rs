@@ -1,0 +1,1202 @@
+//! The engine's state machine: what to do about the dongle, and when.
+//!
+//! It owns the saved settings and every decision, and does nothing by itself: the worker thread
+//! calls [`Supervisor::command`] with what arrived and [`Supervisor::step`] when
+//! [`Supervisor::next_wake`] has passed. Time comes from an injected clock, so the tests drive it
+//! with a fake device and a clock they advance by hand.
+//!
+//! - **Presence** is polled (enumeration only, no device I/O). A dongle that appears is left
+//!   alone for [`SETTLE`] so that its firmware can load the patch; one that disappears again
+//!   before that never gets touched, so a flapping cable causes no writes and no errors.
+//! - **Verification** reads the dongle once per [`VERIFY`] and compares it with the saved
+//!   settings. Only a difference leads to writes, so a dongle that is in order is only read.
+//! - **Commands** change the saved settings at once and the dongle at most [`COALESCE`] later,
+//!   with the latest values, however many arrived.
+//! - **Failures** are retried by a schedule that depends on their kind ([`retry_delay`]) and
+//!   reported once while they persist. A failure while the dongle is gone is a disconnect.
+
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+use super::Backend;
+use super::types::{Command, ErrorKind, Event, Failure, Phase, Readback, Snapshot};
+use crate::config::{self, Config};
+use crate::dsp::Attempt;
+use crate::{Error, mode, patches, settings};
+
+/// How often the presence of the dongle is checked.
+pub(super) const POLL: Duration = Duration::from_secs(1);
+/// How long a dongle that appeared (or a computer that woke up) is left alone, so that the
+/// firmware can load its patch.
+pub(super) const SETTLE: Duration = Duration::from_secs(2);
+/// How long after the first of a burst of commands the dongle and the settings file are written.
+pub(super) const COALESCE: Duration = Duration::from_millis(150);
+/// How often a connected dongle is compared with the saved settings.
+pub(super) const VERIFY: Duration = Duration::from_secs(15);
+
+/// How long to wait before the next attempt after `failures` failed attempts in a row (at least
+/// one), or `None` to stop until something changes: a command, a re-apply, or the dongle coming
+/// back.
+pub(super) fn retry_delay(kind: ErrorKind, failures: u32) -> Option<Duration> {
+    let nth = failures.saturating_sub(1) as usize;
+    let backoff = |first: u64, cap: u64| Some(Duration::from_secs((first << nth.min(16)).min(cap)));
+    let steps = |secs: &[u64]| secs.get(nth).map(|&s| Duration::from_secs(s));
+    match kind {
+        ErrorKind::Communication => backoff(2, 30),
+        ErrorKind::Audio => backoff(5, 60),
+        // a patch that is still loading looks unrecognised for a moment; a lasting refusal is
+        // not worth more than a few looks
+        ErrorKind::Refused => steps(&[5, 15, 60]),
+        ErrorKind::Verify => steps(&[10, 60]),
+        ErrorKind::Config | ErrorKind::Invalid => None,
+    }
+}
+
+pub(super) struct Supervisor<B: Backend> {
+    backend: B,
+    cfg: Config,
+    cfg_path: PathBuf,
+    sink: Box<dyn FnMut(Event)>,
+    log: Box<dyn FnMut(&str)>,
+    clock: Box<dyn Fn() -> Instant>,
+
+    present: bool,
+    next_poll: Instant,
+    enumeration_error: Option<String>,
+    /// When the dongle is next read and, if it differs, written. `None`: nothing is scheduled.
+    work_at: Option<Instant>,
+    /// When the settings file is next written.
+    save_at: Option<Instant>,
+    /// The next pass applies the saved settings whether or not the dongle seems to hold them.
+    force: bool,
+    /// The next opportunity reads the dongle.
+    refresh: bool,
+    /// Failed passes in a row.
+    failures: u32,
+
+    phase: Phase,
+    device: Option<Readback>,
+    error: Option<Failure>,
+    published: Option<Snapshot>,
+}
+
+impl<B: Backend> Supervisor<B> {
+    pub(super) fn new(
+        backend: B,
+        cfg: Config,
+        cfg_path: PathBuf,
+        sink: Box<dyn FnMut(Event)>,
+        log: Box<dyn FnMut(&str)>,
+        clock: Box<dyn Fn() -> Instant>,
+    ) -> Self {
+        let now = clock();
+        let mut supervisor = Supervisor {
+            backend,
+            cfg,
+            cfg_path,
+            sink,
+            log,
+            clock,
+            present: false,
+            next_poll: now,
+            enumeration_error: None,
+            work_at: None,
+            save_at: None,
+            force: false,
+            refresh: false,
+            failures: 0,
+            phase: Phase::Disconnected,
+            device: None,
+            error: None,
+            published: None,
+        };
+        supervisor.note("engine started");
+        supervisor.poll(now);
+        supervisor.publish();
+        supervisor
+    }
+
+    fn now(&self) -> Instant {
+        (self.clock)()
+    }
+
+    /// When [`Supervisor::step`] next has something to do.
+    pub(super) fn next_wake(&self) -> Instant {
+        let work = self.work_at.filter(|_| self.present);
+        let look =
+            (self.refresh && self.present && self.phase != Phase::Waiting).then(|| self.now());
+        [Some(self.next_poll), work, self.save_at, look]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(self.next_poll)
+    }
+
+    /// Takes one command. Nothing is written to the dongle here; the next steps do that.
+    pub(super) fn command(&mut self, command: Command) {
+        let now = self.now();
+        let mut next = self.cfg.clone();
+        let checked = match command {
+            Command::SetMode(mode) => {
+                next.mode = Some(mode);
+                Ok(())
+            }
+            Command::SetMinHissMs(ms) => {
+                mode::settle_units(ms).map(|_| next.min_hiss_ms = Some(ms))
+            }
+            Command::SetMicBoost(step) => {
+                patches::mic_boost(step).map(|_| next.mic_boost = Some(step))
+            }
+            Command::SetNoiseReduction(on) => {
+                next.mic_nr = Some(on);
+                Ok(())
+            }
+            Command::SetAgc(on) => {
+                next.mic_agc = Some(on);
+                Ok(())
+            }
+            Command::SetSidetone(on) => {
+                next.sidetone = Some(on);
+                Ok(())
+            }
+            Command::SetSidetoneLevel(level) => {
+                patches::sidetone_level(level).map(|_| next.sidetone_level = Some(level))
+            }
+            Command::Reapply => {
+                if self.present {
+                    self.force = true;
+                    self.schedule(now);
+                } else {
+                    self.note("re-apply ignored: the dongle is not connected");
+                }
+                return;
+            }
+            Command::Refresh => {
+                self.refresh = true;
+                return;
+            }
+        };
+        if let Err(error) = checked {
+            let message = match error {
+                Error::Refused(message) => message,
+                other => other.to_string(),
+            };
+            self.emit(Event::Error(Failure {
+                kind: ErrorKind::Invalid,
+                message,
+            }));
+            return;
+        }
+        if next != self.cfg {
+            self.cfg = next;
+            self.save_at.get_or_insert(now + COALESCE);
+        }
+        self.schedule(now + COALESCE);
+    }
+
+    /// The computer woke up from sleep or hibernation: the dongle may have restarted, so it is
+    /// left alone for [`SETTLE`] and then verified.
+    pub(super) fn resumed(&mut self) {
+        self.note("the computer resumed");
+        if self.present {
+            let now = self.now();
+            self.wait_for_firmware(now);
+        }
+    }
+
+    /// Does what is due: checks presence, writes the settings file, reads and, if needed,
+    /// writes the dongle. Then publishes the state if it changed.
+    pub(super) fn step(&mut self) {
+        let now = self.now();
+        if now >= self.next_poll {
+            self.next_poll = now + POLL;
+            self.poll(now);
+        }
+        if self.save_at.is_some_and(|at| now >= at) {
+            self.save();
+        }
+        if self.present {
+            if self.work_at.is_some_and(|at| now >= at) {
+                self.work();
+            } else if self.refresh && self.phase != Phase::Waiting {
+                self.look();
+            }
+        }
+        self.publish();
+    }
+
+    /// Writes what is still unsaved. Called when the engine stops.
+    pub(super) fn finish(&mut self) {
+        if self.save_at.is_some() {
+            self.save();
+        }
+        self.note("engine stopped");
+    }
+
+    /// Brings the next pass forward to `due` unless one is already due earlier. A dongle that is
+    /// still settling keeps its own schedule.
+    fn schedule(&mut self, due: Instant) {
+        self.failures = 0;
+        if self.present && self.phase != Phase::Waiting {
+            self.work_at = Some(self.work_at.map_or(due, |at| at.min(due)));
+        }
+    }
+
+    fn poll(&mut self, now: Instant) {
+        match self.backend.present() {
+            Ok(present) => {
+                self.enumeration_error = None;
+                self.presence(present, now);
+            }
+            Err(error) => {
+                let text = error.to_string();
+                if self.enumeration_error.as_ref() != Some(&text) {
+                    self.note(format!("enumeration failed: {text}"));
+                }
+                self.enumeration_error = Some(text);
+            }
+        }
+    }
+
+    fn presence(&mut self, present: bool, now: Instant) {
+        if present == self.present {
+            return;
+        }
+        self.present = present;
+        if present {
+            self.note("the dongle connected");
+            self.wait_for_firmware(now);
+        } else {
+            self.note("the dongle disconnected");
+            self.forget_device();
+            self.phase = Phase::Disconnected;
+        }
+    }
+
+    fn wait_for_firmware(&mut self, now: Instant) {
+        self.forget_device();
+        self.phase = Phase::Waiting;
+        self.work_at = Some(now + SETTLE);
+    }
+
+    /// Drops everything that was learned about the dongle in the session that just ended.
+    fn forget_device(&mut self) {
+        self.device = None;
+        self.error = None;
+        self.failures = 0;
+        self.force = false;
+        self.refresh = false;
+    }
+
+    /// Reads the dongle and, if it differs from the saved settings, writes them.
+    fn work(&mut self) {
+        let force = std::mem::take(&mut self.force);
+        self.refresh = false;
+        let result = self.sync(force);
+        let now = self.now();
+        match result {
+            Ok(()) => {
+                if self.error.take().is_some() {
+                    self.note("recovered");
+                }
+                self.failures = 0;
+                self.phase = Phase::Connected;
+                self.work_at = Some(now + VERIFY);
+            }
+            Err(failure) => self.failed(failure, now),
+        }
+    }
+
+    /// Reads the dongle and publishes what it holds; writes nothing.
+    fn look(&mut self) {
+        self.refresh = false;
+        if let Err(failure) = self.read() {
+            let now = self.now();
+            self.failed(failure, now);
+        }
+    }
+
+    fn read(&mut self) -> Result<(B::Dev, Readback), Failure> {
+        let mut dev = self.backend.open()?;
+        let state = mode::read_state(&mut dev)?;
+        let seen = Readback::of(&state);
+        self.device = Some(seen.clone());
+        Ok((dev, seen))
+    }
+
+    fn sync(&mut self, force: bool) -> Result<(), Failure> {
+        let (mut dev, seen) = self.read()?;
+        let drift = seen.differences(&self.cfg);
+        if drift.is_empty() && !force {
+            return Ok(());
+        }
+        self.phase = Phase::Applying;
+        self.publish();
+        self.note(if drift.is_empty() {
+            "applying the saved settings (re-apply requested)".to_string()
+        } else {
+            format!(
+                "applying the saved settings; the dongle differs in: {}",
+                drift.join(", ")
+            )
+        });
+
+        let Attempt { report, error } =
+            settings::ensure(&mut dev, &self.cfg, || self.backend.open_stream());
+        self.note(format!("{} writes made", report.writes));
+        for event in &report.stream_events {
+            self.warn(event.to_string());
+        }
+        let after = mode::read_state(&mut dev).map(|state| Readback::of(&state));
+        if let Ok(after) = &after {
+            self.device = Some(after.clone());
+        }
+        if let Some(error) = error {
+            return Err(error.into());
+        }
+        let left = after?.differences(&self.cfg);
+        if left.is_empty() {
+            Ok(())
+        } else {
+            Err(Failure {
+                kind: ErrorKind::Verify,
+                message: format!(
+                    "after the saved settings were applied the dongle does not hold: {}",
+                    left.join(", ")
+                ),
+            })
+        }
+    }
+
+    fn failed(&mut self, failure: Failure, now: Instant) {
+        // A dongle that went away while it was being used is a disconnect, not an error.
+        if failure.kind == ErrorKind::Communication && matches!(self.backend.present(), Ok(false)) {
+            self.note(format!("the dongle went away: {}", failure.message));
+            self.presence(false, now);
+            return;
+        }
+        self.failures += 1;
+        self.phase = Phase::Connected;
+        self.work_at = retry_delay(failure.kind, self.failures).map(|delay| now + delay);
+        match self.work_at {
+            Some(at) => self.note(format!(
+                "failed ({} in a row), next attempt in {} s",
+                self.failures,
+                at.saturating_duration_since(now).as_secs()
+            )),
+            None => self.note("failed; no further attempt until something changes"),
+        }
+        if self.error.as_ref() != Some(&failure) {
+            self.note(format!("error ({}): {}", failure.kind, failure.message));
+            self.emit(Event::Error(failure.clone()));
+        }
+        self.error = Some(failure);
+    }
+
+    fn save(&mut self) {
+        self.save_at = None;
+        match config::save_to(&self.cfg_path, &self.cfg) {
+            Ok(()) => self.note(format!("saved settings: {:?}", self.cfg)),
+            Err(error) => {
+                let failure = Failure::from(error);
+                self.note(format!("error ({}): {}", failure.kind, failure.message));
+                self.emit(Event::Error(failure));
+            }
+        }
+    }
+
+    fn publish(&mut self) {
+        let snapshot = Snapshot {
+            phase: self.phase,
+            settings: self.cfg.clone(),
+            device: self.device.clone(),
+            error: self.error.clone(),
+        };
+        if self.published.as_ref() != Some(&snapshot) {
+            self.published = Some(snapshot.clone());
+            self.emit(Event::State(snapshot));
+        }
+    }
+
+    fn emit(&mut self, event: Event) {
+        (self.sink)(event);
+    }
+
+    fn note(&mut self, message: impl AsRef<str>) {
+        (self.log)(message.as_ref());
+    }
+
+    fn warn(&mut self, message: String) {
+        self.note(format!("warning: {message}"));
+        self.emit(Event::Warning(message));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+    use crate::engine::testing::Rig;
+    use crate::fake::FakeDevice;
+    use crate::mode::Mode;
+
+    /// Settings that the stock dongle needs a mode change and a mic boost write for.
+    fn settings() -> Config {
+        Config {
+            mode: Some(Mode::Balanced),
+            mic_boost: Some(6),
+            mic_nr: Some(true),
+            mic_agc: Some(false),
+            sidetone: Some(false),
+            ..Config::default()
+        }
+    }
+
+    /// A connected dongle that has been brought to [`settings`].
+    fn connected() -> Rig {
+        let mut rig = Rig::new(settings(), true);
+        rig.run(5.0);
+        assert_eq!(rig.phase(), Phase::Connected);
+        assert!(rig.snapshot().in_sync(), "{:?}", rig.snapshot());
+        rig
+    }
+
+    fn level_writes(rig: &Rig) -> Vec<u16> {
+        rig.dev
+            .writes()
+            .into_iter()
+            .filter(|(addr, _)| *addr == 0x1276)
+            .map(|(_, data)| u16::from_le_bytes([data[0], data[1]]))
+            .collect()
+    }
+
+    fn applying(rig: &Rig) -> usize {
+        rig.states()
+            .iter()
+            .filter(|s| s.phase == Phase::Applying)
+            .count()
+    }
+
+    #[test]
+    fn the_first_state_already_says_whether_the_dongle_is_there() {
+        let there = Rig::new(settings(), true);
+        assert_eq!(there.states().len(), 1);
+        assert_eq!(there.phase(), Phase::Waiting);
+        assert_eq!(there.opens(), 0);
+
+        let away = Rig::new(settings(), false);
+        assert_eq!(away.states().len(), 1);
+        assert_eq!(away.phase(), Phase::Disconnected);
+    }
+
+    #[test]
+    fn a_dongle_that_appears_is_left_alone_until_its_firmware_has_loaded() {
+        let mut rig = Rig::new(settings(), false);
+        rig.run(3.0);
+        assert_eq!(rig.phase(), Phase::Disconnected);
+        assert_eq!(rig.opens(), 0);
+
+        rig.set_present(true);
+        rig.run(1.9);
+        assert_eq!(rig.phase(), Phase::Waiting);
+        assert_eq!((rig.opens(), rig.dev.requests()), (0, 0));
+
+        rig.run(2.2);
+        assert_eq!(rig.phase(), Phase::Connected);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.dev.streams_opened(), 1);
+    }
+
+    #[test]
+    fn a_command_given_while_the_dongle_settles_does_not_cut_the_wait_short() {
+        let mut rig = Rig::new(settings(), true);
+        rig.run(0.5);
+        assert_eq!(rig.phase(), Phase::Waiting);
+        rig.send(Command::SetMicBoost(7));
+        rig.run(1.0);
+        assert_eq!((rig.phase(), rig.opens()), (Phase::Waiting, 0));
+        rig.run(1.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.dev.byte(0x1017), 0x3F);
+    }
+
+    #[test]
+    fn what_was_learned_about_a_dongle_is_forgotten_when_it_goes_away() {
+        let dev = FakeDevice::stock();
+        // an unsupported firmware: a refusal is open and the readback is known
+        dev.poke(0x1001, &[0x16]);
+        let mut rig = Rig::with_device(dev, settings(), true);
+        rig.run(5.0);
+        assert!(rig.snapshot().error.is_some() && rig.snapshot().device.is_some());
+
+        rig.set_present(false);
+        rig.run(2.0);
+        let snapshot = rig.snapshot();
+        assert_eq!(
+            (snapshot.phase, snapshot.device, snapshot.error),
+            (Phase::Disconnected, None, None)
+        );
+    }
+
+    #[test]
+    fn a_dongle_that_goes_away_while_settling_starts_the_wait_again() {
+        let mut rig = Rig::new(settings(), false);
+        rig.run(1.0);
+        rig.set_present(true);
+        rig.run(1.0); // seen by the poll at 2 s: settled at 4 s
+        assert_eq!(rig.phase(), Phase::Waiting);
+        rig.set_present(false);
+        rig.run(1.0); // gone at 3 s
+        assert_eq!(rig.phase(), Phase::Disconnected);
+        rig.set_present(true);
+        rig.run(1.0); // back at 4 s: settled at 6 s, not at 4 s
+        assert_eq!(rig.phase(), Phase::Waiting);
+        rig.run(1.0);
+        assert_eq!((rig.phase(), rig.opens()), (Phase::Waiting, 0));
+        rig.run(1.2);
+        assert_eq!(rig.phase(), Phase::Connected);
+        assert!(rig.snapshot().in_sync());
+    }
+
+    #[test]
+    fn a_cable_that_keeps_failing_causes_no_writes_and_no_errors() {
+        let mut rig = Rig::new(settings(), false);
+        // every presence is seen by one poll, then it is gone again
+        for i in 0..40 {
+            rig.set_present(i % 2 == 0);
+            rig.run(1.0);
+        }
+        assert_eq!((rig.opens(), rig.dev.requests()), (0, 0));
+        assert!(rig.errors().is_empty() && rig.warnings().is_empty());
+        assert_eq!(applying(&rig), 0);
+        assert!(rig.log().len() <= 2 * 40 + 2, "{}", rig.log().len());
+
+        rig.set_present(true);
+        rig.run(5.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.dev.streams_opened(), 1);
+        assert_eq!(applying(&rig), 1);
+    }
+
+    #[test]
+    fn a_dongle_that_restarts_again_and_again_is_restored_once_per_restart() {
+        let mut rig = connected();
+        let per_restore = rig.dev.writes().len();
+        assert!(per_restore > 0);
+        for round in 1..=5 {
+            rig.set_present(false);
+            rig.run(1.5);
+            rig.dev.replug();
+            rig.set_present(true);
+            rig.run(5.0);
+            assert!(rig.snapshot().in_sync(), "round {round}");
+            assert_eq!(
+                rig.dev.writes().len(),
+                per_restore * (round + 1),
+                "round {round}"
+            );
+        }
+        assert!(rig.errors().is_empty());
+        assert_eq!(rig.dev.streams_opened(), 6);
+    }
+
+    #[test]
+    fn a_dongle_that_is_in_order_is_only_read() {
+        let mut rig = connected();
+        let (writes, requests, opens) = (rig.dev.writes().len(), rig.dev.requests(), rig.opens());
+        rig.run(60.0);
+        assert_eq!(rig.dev.writes().len(), writes);
+        assert_eq!(rig.dev.streams_opened(), 1);
+        assert!(rig.dev.requests() > requests);
+        // one reading per VERIFY
+        let passes = rig.opens() - opens;
+        assert!((3..=5).contains(&passes), "{passes}");
+        assert!(rig.errors().is_empty());
+        assert_eq!(applying(&rig), 1);
+    }
+
+    #[test]
+    fn drift_is_found_by_the_periodic_check_and_put_right() {
+        let mut rig = connected();
+        let writes = rig.dev.writes().len();
+        rig.dev.poke(0x1017, &[0x3C]);
+        rig.run(VERIFY.as_secs_f64() + 1.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.dev.byte(0x1017), 0x3E);
+        assert_eq!(rig.dev.writes().len(), writes + 1);
+        assert_eq!(rig.dev.streams_opened(), 1);
+        assert!(
+            rig.log()
+                .iter()
+                .any(|line| line.ends_with("differs in: mic boost"))
+        );
+    }
+
+    #[test]
+    fn a_restart_between_two_polls_is_found_by_the_periodic_check() {
+        let mut rig = connected();
+        rig.dev.replug();
+        rig.run(VERIFY.as_secs_f64() + 1.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.dev.streams_opened(), 2);
+        assert!(rig.errors().is_empty());
+    }
+
+    #[test]
+    fn a_burst_of_commands_writes_only_the_last_value() {
+        let mut rig = connected();
+        for level in 1..=100 {
+            rig.send(Command::SetSidetoneLevel(level));
+        }
+        rig.run(1.0);
+        assert_eq!(level_writes(&rig), [100]);
+        assert_eq!(rig.saved().sidetone_level, Some(100));
+        assert_eq!(rig.snapshot().settings.sidetone_level, Some(100));
+        assert!(rig.snapshot().in_sync());
+        // one write of the settings file for the whole burst
+        let saves = rig
+            .log()
+            .iter()
+            .filter(|l| l.starts_with("saved settings"))
+            .count();
+        assert_eq!(saves, 1);
+    }
+
+    #[test]
+    fn commands_spread_over_the_window_save_the_settings_file_once() {
+        let mut rig = connected();
+        let saves = |rig: &Rig| {
+            rig.log()
+                .iter()
+                .filter(|l| l.starts_with("saved settings"))
+                .count()
+        };
+        let before = saves(&rig);
+        for level in 1..=10 {
+            rig.send(Command::SetSidetoneLevel(level));
+            rig.run(0.01);
+        }
+        assert_eq!(
+            saves(&rig),
+            before,
+            "the file waits for the end of the window"
+        );
+        rig.run(1.0);
+        assert_eq!(saves(&rig), before + 1);
+        assert_eq!(rig.saved().sidetone_level, Some(10));
+    }
+
+    #[test]
+    fn a_command_that_repeats_a_saved_setting_writes_neither_the_file_nor_the_dongle() {
+        let mut rig = connected();
+        let writes = rig.dev.writes().len();
+        let saved = rig.log().len();
+        rig.send(Command::SetMicBoost(6));
+        rig.send(Command::SetNoiseReduction(true));
+        rig.send(Command::SetMode(Mode::Balanced));
+        rig.run(1.0);
+        assert_eq!(rig.dev.writes().len(), writes);
+        assert!(
+            !rig.log()[saved..]
+                .iter()
+                .any(|line| line.starts_with("saved settings"))
+        );
+        assert!(!rig.config_path.exists());
+    }
+
+    #[test]
+    fn a_device_list_that_cannot_be_read_changes_nothing_and_is_logged_once_per_kind() {
+        let mut rig = connected();
+        let logged = |rig: &Rig| {
+            rig.log()
+                .iter()
+                .filter(|l| l.starts_with("enumeration failed"))
+                .count()
+        };
+        rig.set_enumeration_fails(true);
+        rig.run(30.0);
+        assert_eq!(rig.phase(), Phase::Connected);
+        assert!(rig.snapshot().in_sync());
+        assert!(rig.errors().is_empty());
+        assert_eq!(logged(&rig), 1);
+
+        // a failure after a success is a new one
+        rig.set_enumeration_fails(false);
+        rig.run(3.0);
+        rig.set_enumeration_fails(true);
+        rig.run(3.0);
+        assert_eq!(logged(&rig), 2);
+
+        // the dongle going away while the list cannot be read is noticed afterwards
+        rig.set_present(false);
+        rig.run(3.0);
+        assert_eq!(rig.phase(), Phase::Connected);
+        rig.set_enumeration_fails(false);
+        rig.run(1.5);
+        assert_eq!(rig.phase(), Phase::Disconnected);
+    }
+
+    #[test]
+    fn a_slider_moved_for_a_while_is_written_in_a_bounded_number_of_steps() {
+        let mut rig = connected();
+        rig.send(Command::SetSidetone(true));
+        rig.run(1.0);
+        let before = level_writes(&rig).len();
+
+        // 50 commands in half a second, with sidetone on: each change of the level is a ramp
+        // of 4 writes
+        for step in 1..=50u16 {
+            rig.send(Command::SetSidetoneLevel(step * 20));
+            rig.run(0.01);
+        }
+        rig.run(1.0);
+        let steps = level_writes(&rig).split_off(before);
+        assert_eq!(steps.last(), Some(&1000));
+        let windows = (0.5 / COALESCE.as_secs_f64()).ceil() as usize + 1;
+        assert!(steps.len() <= windows * 4, "{} writes", steps.len());
+        assert!(rig.snapshot().in_sync());
+    }
+
+    #[test]
+    fn commands_that_cancel_out_write_nothing() {
+        let mut rig = connected();
+        let writes = rig.dev.writes().len();
+        rig.send(Command::SetMode(Mode::Quiet));
+        rig.send(Command::SetMicBoost(2));
+        rig.send(Command::SetMode(Mode::Balanced));
+        rig.send(Command::SetMicBoost(6));
+        rig.run(1.0);
+        assert_eq!(rig.dev.writes().len(), writes);
+        assert_eq!(rig.dev.streams_opened(), 1);
+    }
+
+    #[test]
+    fn a_command_is_written_after_the_window_and_not_before() {
+        let mut rig = connected();
+        rig.send(Command::SetMicBoost(7));
+        rig.run(COALESCE.as_secs_f64() - 0.05);
+        assert_eq!(rig.dev.byte(0x1017), 0x3E);
+        rig.run(0.1);
+        assert_eq!(rig.dev.byte(0x1017), 0x3F);
+    }
+
+    #[test]
+    fn settings_chosen_while_the_dongle_is_away_are_saved_and_applied_when_it_returns() {
+        let mut rig = Rig::new(Config::default(), false);
+        rig.send(Command::SetMode(Mode::Quiet));
+        rig.send(Command::SetMicBoost(7));
+        rig.send(Command::SetNoiseReduction(false));
+        rig.run(3.0);
+        assert_eq!(rig.opens(), 0);
+        let saved = rig.saved();
+        assert_eq!(
+            (saved.mode, saved.mic_boost, saved.mic_nr),
+            (Some(Mode::Quiet), Some(7), Some(false))
+        );
+
+        rig.set_present(true);
+        rig.run(6.0);
+        let device = rig.snapshot().device.unwrap();
+        assert_eq!(
+            (device.mode, device.mic_boost, device.noise_reduction),
+            (Some(Mode::Quiet), Some(7), false)
+        );
+        assert!(rig.snapshot().in_sync());
+    }
+
+    #[test]
+    fn values_out_of_range_are_rejected_and_change_nothing() {
+        let mut rig = connected();
+        let opens = rig.opens();
+        rig.clear_events();
+        let bad = [
+            Command::SetMicBoost(8),
+            Command::SetSidetoneLevel(0),
+            Command::SetSidetoneLevel(4097),
+            Command::SetMinHissMs(15),
+            Command::SetMinHissMs(10),
+            Command::SetMinHissMs(2010),
+        ];
+        for command in bad {
+            rig.send(command);
+        }
+        rig.run(1.0);
+        let errors = rig.errors();
+        assert_eq!(errors.len(), bad.len());
+        assert!(errors.iter().all(|e| e.kind == ErrorKind::Invalid));
+        assert!(
+            errors[0].message.contains("mic boost 8"),
+            "{}",
+            errors[0].message
+        );
+        // nothing changed: no new state, no file, no pass over the dongle
+        assert!(rig.states().is_empty());
+        assert!(!rig.config_path.exists());
+        assert_eq!(rig.opens(), opens);
+    }
+
+    #[test]
+    fn a_settings_file_that_cannot_be_written_is_reported_and_the_dongle_still_gets_the_settings() {
+        let mut rig = connected();
+        // a directory where the file belongs
+        std::fs::create_dir_all(&rig.config_path).unwrap();
+        rig.send(Command::SetMicBoost(7));
+        rig.run(1.0);
+        let errors = rig.errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].kind, ErrorKind::Config);
+        assert!(
+            errors[0].message.contains("config.toml"),
+            "{}",
+            errors[0].message
+        );
+        assert_eq!(rig.dev.byte(0x1017), 0x3F);
+    }
+
+    #[test]
+    fn the_unsaved_settings_are_written_when_the_engine_stops() {
+        let mut rig = Rig::new(Config::default(), false);
+        rig.send(Command::SetMicBoost(3));
+        assert!(!rig.config_path.exists());
+        rig.sup.finish();
+        assert_eq!(rig.saved().mic_boost, Some(3));
+        assert_eq!(rig.log().last().map(String::as_str), Some("engine stopped"));
+    }
+
+    #[test]
+    fn a_dongle_that_is_there_but_does_not_answer_is_retried_with_growing_pauses_and_reported_once()
+    {
+        let mut rig = Rig::new(settings(), true);
+        rig.dev.unplug();
+        rig.run(2.5);
+        assert_eq!(rig.opens(), 1);
+        rig.run(60.0);
+        // pauses of 2, 4, 8, 16 and 30 s
+        let attempts = rig.opens();
+        assert!((5..=8).contains(&attempts), "{attempts}");
+        let errors = rig.errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].kind, ErrorKind::Communication);
+        assert_eq!(rig.snapshot().error.as_ref(), Some(&errors[0]));
+        assert_eq!(rig.phase(), Phase::Connected);
+
+        rig.dev.plug_in();
+        rig.run(31.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.snapshot().error, None);
+        assert_eq!(rig.errors().len(), 1);
+    }
+
+    #[test]
+    fn a_failure_after_a_recovery_starts_again_with_the_short_pauses() {
+        let mut rig = Rig::new(settings(), true);
+        rig.dev.unplug();
+        rig.run(20.0);
+        rig.dev.plug_in();
+        rig.run(31.0);
+        assert!(rig.snapshot().in_sync());
+
+        // the next reading fails: the pauses are 2 and 4 s again, not the 30 s the earlier run
+        // of failures had reached, and the new failure is reported
+        rig.dev.unplug();
+        let before = rig.opens();
+        rig.run(VERIFY.as_secs_f64() + 0.5 + 2.1 + 4.1);
+        assert_eq!(rig.opens() - before, 3);
+        assert_eq!(rig.errors().len(), 2);
+    }
+
+    #[test]
+    fn a_dongle_that_vanishes_during_a_pass_is_a_disconnect_and_not_an_error() {
+        let mut rig = Rig::new(settings(), true);
+        rig.vanish_on_open.store(true, Ordering::SeqCst);
+        rig.run(4.0);
+        assert_eq!(rig.phase(), Phase::Disconnected);
+        assert!(rig.errors().is_empty());
+
+        rig.vanish_on_open.store(false, Ordering::SeqCst);
+        rig.dev.plug_in();
+        rig.dev.replug();
+        rig.set_present(true);
+        rig.run(6.0);
+        assert!(rig.snapshot().in_sync());
+    }
+
+    #[test]
+    fn a_change_cut_short_by_the_cable_is_completed_when_the_dongle_returns() {
+        let mut rig = Rig::new(settings(), true);
+        let (dev, present) = (rig.dev.clone(), rig.present.clone());
+        // the cable fails after the first three writes of the mode change
+        rig.on_stream(move || {
+            present.store(false, Ordering::SeqCst);
+            dev.fail_after_writes(3);
+        });
+        rig.run(4.0);
+        assert_eq!(rig.phase(), Phase::Disconnected);
+        assert!(rig.errors().is_empty());
+        assert_eq!(rig.dev.writes().len(), 3);
+
+        rig.on_stream(|| {});
+        rig.dev.clear_failure();
+        rig.set_present(true);
+        rig.run(6.0);
+        assert!(rig.snapshot().in_sync());
+        let mut expected = FakeDevice::in_mode(Mode::Balanced).mem();
+        expected[0x1017] = 0x3E;
+        assert_eq!(rig.dev.mem(), expected);
+        assert!(rig.errors().is_empty());
+    }
+
+    #[test]
+    fn a_refusal_keeps_the_report_of_what_was_done_and_is_not_retried_for_ever() {
+        let dev = FakeDevice::stock();
+        let _mic = dev.open_mic();
+        dev.flip_on_newc(0x10);
+        // noise reduction and AGC are applied, then the sidetone level is refused, and the
+        // mode and the mic boost are still applied
+        dev.poke(0x1276, &0x8000u16.to_le_bytes());
+        let cfg = Config {
+            mic_nr: Some(false),
+            mic_agc: Some(true),
+            sidetone_level: Some(0x0200),
+            ..settings()
+        };
+        let mut rig = Rig::with_device(dev, cfg, true);
+        rig.run(6.0);
+
+        assert_eq!(rig.warnings().len(), 2);
+        let errors = rig.errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].kind, ErrorKind::Refused);
+        assert!(errors[0].message.contains("$1276"), "{}", errors[0].message);
+        let snapshot = rig.snapshot();
+        let device = snapshot.device.unwrap();
+        assert_eq!(device.mode, Some(Mode::Balanced));
+        assert_eq!(device.mic_boost, Some(6));
+        assert!(!device.noise_reduction && device.agc);
+        assert_eq!(snapshot.error.as_ref(), Some(&errors[0]));
+        assert_eq!(snapshot.phase, Phase::Connected);
+
+        // looks again after 5, 15 and 60 s, then stops
+        rig.run(300.0);
+        assert_eq!(rig.opens(), 4);
+        assert_eq!(rig.errors().len(), 1);
+        assert_eq!(rig.warnings().len(), 2);
+
+        // a refresh reads without starting over; a re-apply starts over
+        rig.send(Command::Refresh);
+        rig.run(1.0);
+        assert_eq!(rig.opens(), 5);
+        rig.run(300.0);
+        assert_eq!(rig.opens(), 5);
+        rig.send(Command::Reapply);
+        rig.run(1.0);
+        assert_eq!(rig.opens(), 6);
+        rig.run(6.0);
+        assert_eq!(rig.opens(), 7);
+        assert_eq!(rig.errors().len(), 1);
+    }
+
+    #[test]
+    fn a_dongle_that_stops_holding_the_settings_right_after_they_were_applied_is_a_verify_failure()
+    {
+        // how many reports a pass over a stock dongle sends
+        let mut probe = Rig::new(settings(), true);
+        probe.run(5.0);
+        let pass = probe.dev.requests();
+
+        // the same pass, with the dongle restarting at the start of the final reading (16 reports)
+        let mut rig = Rig::new(settings(), true);
+        rig.dev.replug_at_request(pass - 15);
+        rig.run(3.0);
+        let errors = rig.errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].kind, ErrorKind::Verify);
+        assert!(
+            errors[0].message.contains("does not hold: mode, mic boost"),
+            "{}",
+            errors[0].message
+        );
+        assert_eq!(rig.snapshot().error.as_ref(), Some(&errors[0]));
+        assert!(!rig.snapshot().in_sync());
+
+        // the next attempt, 10 s later, finds the stock patch and applies the settings again
+        rig.run(10.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.snapshot().error, None);
+        assert_eq!(rig.dev.streams_opened(), 2);
+    }
+
+    #[test]
+    fn a_write_that_does_not_stick_is_a_verify_failure_that_is_tried_twice_more() {
+        let dev = FakeDevice::stock();
+        dev.ignore_writes();
+        let mut rig = Rig::with_device(dev, settings(), true);
+        rig.run(200.0);
+        let errors = rig.errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].kind, ErrorKind::Verify);
+        assert!(
+            errors[0].message.contains("READBACK MISMATCH"),
+            "{}",
+            errors[0].message
+        );
+        // after 10 and 60 s
+        assert_eq!(rig.opens(), 3);
+    }
+
+    #[test]
+    fn an_unsupported_firmware_is_reported_and_nothing_is_written() {
+        let dev = FakeDevice::stock();
+        dev.poke(0x1001, &[0x16]);
+        let mut rig = Rig::with_device(dev.clone(), settings(), true);
+        rig.run(10.0);
+        let snapshot = rig.snapshot();
+        assert!(!snapshot.device.unwrap().firmware_supported);
+        assert_eq!(snapshot.error.unwrap().kind, ErrorKind::Refused);
+        assert!(rig.dev.writes().is_empty());
+        assert_eq!(rig.dev.streams_opened(), 0);
+
+        // with nothing saved there is nothing to refuse
+        let mut rig = Rig::with_device(dev, Config::default(), true);
+        rig.run(10.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.snapshot().error, None);
+    }
+
+    #[test]
+    fn after_the_computer_wakes_the_dongle_is_left_alone_and_then_verified() {
+        let mut rig = connected();
+        rig.dev.replug();
+        let requests = rig.dev.requests();
+        rig.sup.resumed();
+        rig.run(1.9);
+        assert_eq!(rig.phase(), Phase::Waiting);
+        assert_eq!(rig.dev.requests(), requests);
+        assert_eq!(rig.snapshot().device, None);
+
+        rig.run(0.2);
+        assert_eq!(rig.phase(), Phase::Connected);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.dev.streams_opened(), 2);
+    }
+
+    #[test]
+    fn waking_with_the_dongle_away_changes_nothing() {
+        let mut rig = Rig::new(settings(), false);
+        rig.run(2.0);
+        let before = rig.states().len();
+        rig.sup.resumed();
+        rig.run(3.0);
+        assert_eq!(rig.phase(), Phase::Disconnected);
+        assert_eq!(rig.states().len(), before);
+        assert_eq!(rig.opens(), 0);
+    }
+
+    #[test]
+    fn a_refresh_reads_without_writing_and_a_reapply_writes_what_differs() {
+        let mut rig = connected();
+        let writes = rig.dev.writes().len();
+        rig.dev.poke(0x1017, &[0x3C]);
+        rig.send(Command::Refresh);
+        rig.run(0.5);
+        assert_eq!(rig.dev.writes().len(), writes);
+        let snapshot = rig.snapshot();
+        assert_eq!(snapshot.device.as_ref().unwrap().mic_boost, Some(4));
+        assert!(!snapshot.in_sync());
+        assert_eq!(snapshot.phase, Phase::Connected);
+
+        rig.send(Command::Reapply);
+        rig.run(0.5);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.dev.writes().len(), writes + 1);
+    }
+
+    #[test]
+    fn a_reapply_runs_even_when_nothing_seems_to_differ() {
+        let mut rig = connected();
+        let (opens, writes) = (rig.opens(), rig.dev.writes().len());
+        rig.send(Command::Reapply);
+        rig.run(0.5);
+        assert_eq!(rig.opens(), opens + 1);
+        assert_eq!(rig.dev.writes().len(), writes);
+        assert!(rig.log().iter().any(|l| l.contains("re-apply requested")));
+    }
+
+    #[test]
+    fn requests_that_need_the_dongle_wait_for_it() {
+        let mut rig = Rig::new(settings(), false);
+        rig.send(Command::Reapply);
+        rig.send(Command::Refresh);
+        rig.run(3.0);
+        assert_eq!(rig.opens(), 0);
+        assert!(rig.log().iter().any(|l| l.contains("re-apply ignored")));
+
+        // a dongle that is still loading its firmware is not read either
+        rig.set_present(true);
+        rig.run(1.5);
+        rig.send(Command::Refresh);
+        rig.run(0.4);
+        assert_eq!(rig.phase(), Phase::Waiting);
+        assert_eq!(rig.opens(), 0);
+        rig.run(1.2);
+        assert!(rig.snapshot().in_sync());
+    }
+
+    #[test]
+    fn the_state_holds_the_saved_settings_and_every_managed_readback() {
+        let rig = connected();
+        let snapshot = rig.snapshot();
+        assert_eq!(snapshot.settings, settings());
+        let device = snapshot.device.unwrap();
+        assert!(device.firmware_supported);
+        assert_eq!(device.mode, Some(Mode::Balanced));
+        assert_eq!(device.mic_boost, Some(6));
+        assert!(device.noise_reduction && !device.agc && !device.sidetone);
+        assert_eq!(device.sidetone_level, 947);
+        assert!(
+            rig.log()
+                .iter()
+                .any(|l| l.ends_with("differs in: mode, mic boost"))
+        );
+    }
+
+    #[test]
+    fn a_state_is_only_published_when_it_changes() {
+        let mut rig = connected();
+        rig.run(120.0);
+        rig.send(Command::SetSidetoneLevel(500));
+        rig.send(Command::SetSidetoneLevel(500));
+        rig.run(30.0);
+        let states = rig.states();
+        for pair in states.windows(2) {
+            assert_ne!(pair[0], pair[1]);
+        }
+    }
+
+    #[test]
+    fn retries_follow_the_schedule_of_the_kind_of_failure() {
+        let secs = |kind, n| retry_delay(kind, n).map(|d| d.as_secs());
+        let run = |kind, n: std::ops::RangeInclusive<u32>| -> Vec<Option<u64>> {
+            n.map(|i| secs(kind, i)).collect()
+        };
+        assert_eq!(
+            run(ErrorKind::Communication, 1..=7),
+            [2, 4, 8, 16, 30, 30, 30].map(Some)
+        );
+        assert_eq!(
+            run(ErrorKind::Audio, 1..=6),
+            [5, 10, 20, 40, 60, 60].map(Some)
+        );
+        assert_eq!(
+            run(ErrorKind::Refused, 1..=4),
+            [Some(5), Some(15), Some(60), None]
+        );
+        assert_eq!(run(ErrorKind::Verify, 1..=3), [Some(10), Some(60), None]);
+        assert_eq!(secs(ErrorKind::Config, 1), None);
+        assert_eq!(secs(ErrorKind::Invalid, 1), None);
+        // a long run of failures does not overflow
+        assert_eq!(secs(ErrorKind::Communication, u32::MAX), Some(30));
+        assert_eq!(secs(ErrorKind::Audio, 1000), Some(60));
+    }
+}

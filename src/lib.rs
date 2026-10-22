@@ -8,6 +8,7 @@
 pub mod audio;
 pub mod config;
 pub mod dsp;
+pub mod engine;
 pub mod hid;
 pub mod lock;
 pub mod log;
