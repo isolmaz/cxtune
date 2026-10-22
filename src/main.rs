@@ -156,12 +156,12 @@ fn tune(arg: &str) -> Result<()> {
     let ms: u16 = arg
         .parse()
         .map_err(|_| Error::Config(format!("settle time must be a number of ms, got '{arg}'")))?;
+    let mut cfg = config::load()?;
     let written = mode::tune_min_hiss(&mut open()?, ms)?;
     println!(
         "min-hiss settle time {ms} ms{}",
         if written { " set" } else { " already set" }
     );
-    let mut cfg = config::load()?;
     cfg.min_hiss_ms = Some(ms);
     config::save(&cfg)
 }
@@ -170,13 +170,12 @@ fn mic_boost(arg: &str) -> Result<()> {
     let step: u8 = arg
         .parse()
         .map_err(|_| Error::Config(format!("mic boost must be 0-7, got '{arg}'")))?;
-    let mut dev = open()?;
-    let written = mode::set_mic_boost(&mut dev, step)?;
+    let mut cfg = config::load()?;
+    let written = mode::set_mic_boost(&mut open()?, step)?;
     println!(
         "mic boost {step}{}",
         if written { " set" } else { " already set" }
     );
-    let mut cfg = config::load()?;
     cfg.mic_boost = Some(step);
     config::save(&cfg)
 }

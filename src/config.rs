@@ -1,7 +1,7 @@
 //! Settings in `%APPDATA%\cxtune\config.toml`: the selected mode, mic boost and min-hiss
 //! settle time. The file uses `key = value` lines (a TOML subset).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::mode::{self, Mode};
 use crate::{Error, Result};
@@ -22,11 +22,16 @@ pub fn path() -> Result<PathBuf> {
 }
 
 pub fn load() -> Result<Config> {
-    let path = path()?;
-    match std::fs::read_to_string(&path) {
-        Ok(text) => parse(&text),
+    load_from(&path()?)
+}
+
+/// Reads the file at `path`; a missing file is the default settings. Every error names the file.
+fn load_from(path: &Path) -> Result<Config> {
+    let named = |why: &dyn std::fmt::Display| Error::Config(format!("{}: {why}", path.display()));
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse(&text).map_err(|e| named(&e)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-        Err(e) => Err(Error::Config(format!("{}: {e}", path.display()))),
+        Err(e) => Err(named(&e)),
     }
 }
 
@@ -110,5 +115,21 @@ mod tests {
         assert!(parse("min_hiss_ms = 605").is_err());
         assert!(parse("min_hiss_ms = 20").is_ok());
         assert!(parse("min_hiss_ms = 2000").is_ok());
+    }
+
+    #[test]
+    fn an_unreadable_file_is_named_in_the_error() {
+        let dir = std::env::temp_dir().join(format!("cxtune-config-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.toml");
+        std::fs::write(&file, "profile = \"idle\"\n").unwrap();
+        let err = load_from(&file).unwrap_err().to_string();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.contains(&file.display().to_string()), "{err}");
+        assert!(err.contains("profile = \"idle\""), "{err}");
+        assert_eq!(
+            load_from(&dir.join("missing.toml")).unwrap(),
+            Config::default()
+        );
     }
 }

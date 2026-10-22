@@ -51,6 +51,10 @@ mic_boost = 6
 min_hiss_ms = 600
 ```
 
+A config file with keys from an earlier version (`profile`, `idle`, `clamp`) is rejected with
+an error that names the file, before anything is written to the device; delete it or rewrite it
+with the keys above.
+
 Do not run cxtune at the same time as another tool that reads codec memory over HID (for
 example a second cxtune or the vendor software poking the same interface): the read protocol
 has no request tag, so concurrent readers can receive each other's responses. The safety checks
