@@ -167,6 +167,8 @@ and never touch real hardware. With the dongle connected,
 `cargo run --release --example trace -- <open_s> <close_s> <total_s>` opens and closes a silent
 stream and prints every change of the playback registers with a timestamp; it only reads and,
 like the commands, refuses to run while another cxtune process controls the dongle.
+`cargo run --example volume -- get` reads the volume and mute state of the dongle's Windows
+audio endpoints (`set` and `mute` change them).
 
 ### License
 
