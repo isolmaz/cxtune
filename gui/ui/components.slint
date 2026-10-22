@@ -957,14 +957,17 @@ component Meter inherits Rectangle {
     }
 }
 
+// The meter of the header. Without a level it is dimmed and has no value.
 export component MeterRow inherits HorizontalLayout {
     in property <string> tag;
     in property <string> label;
     in property <bool> active;
     in property <float> db;
     spacing: 8px;
-    accessible-role: text;
+    opacity: root.active ? 1 : 0.6;
+    accessible-role: progress-indicator;
     accessible-label: root.label;
+    accessible-value: root.active ? @tr("ui" => "{} dB", Math.round(root.db)) : "";
 
     Text {
         text: root.tag;
@@ -986,12 +989,91 @@ export component MeterRow inherits HorizontalLayout {
     }
 
     Text {
-        text: root.active ? @tr("ui" => "{} dB", Math.round(root.db)) : "–";
+        text: root.active ? @tr("ui" => "{} dB", Math.round(root.db)) : "";
         font-size: Type.caption;
-        color: root.active ? Surface.text : Surface.disabled;
+        color: Surface.text;
         vertical-alignment: center;
         horizontal-alignment: right;
         width: 52px;
         accessible-role: none;
+    }
+}
+
+// "General > About" in the size of a page title: the parent is a link back, the current page
+// comes last.
+export component Breadcrumb inherits HorizontalLayout {
+    in property <string> parent;
+    in property <string> current;
+    callback back();
+    height: 32px;
+    spacing: 8px;
+    alignment: start;
+
+    Rectangle {
+        min-width: parent-title.preferred-width;
+        horizontal-stretch: 0;
+        forward-focus: keys;
+        accessible-role: button;
+        accessible-label: root.parent;
+        accessible-action-default => {
+            root.back();
+        }
+
+        parent-title := Text {
+            text: root.parent;
+            font-size: Type.title;
+            font-weight: 600;
+            color: touch.has-hover || keys.has-focus ? Surface.text : Surface.secondary;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        if keys.has-focus: Rectangle {
+            x: -4px;
+            y: 2px;
+            width: parent.width + 8px;
+            height: parent.height - 4px;
+            border-radius: 4px;
+            border-width: 2px;
+            border-color: Surface.text;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.back();
+            }
+        }
+
+        keys := FocusScope {
+            width: 0px;
+            key-pressed(event) => {
+                if event.text == Key.Space || event.text == Key.Return {
+                    root.back();
+                    return accept;
+                }
+                return reject;
+            }
+        }
+    }
+
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 0;
+        Icon {
+            text: "\u{E76C}";
+            font-size: Type.chevron;
+            color: Surface.secondary;
+            width: 12px;
+        }
+    }
+
+    Text {
+        text: root.current;
+        font-size: Type.title;
+        font-weight: 600;
+        color: Surface.text;
+        vertical-alignment: center;
+        horizontal-stretch: 0;
     }
 }

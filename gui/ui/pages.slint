@@ -1,6 +1,6 @@
 import { ComboBox } from "std-widgets.slint";
 import { Model } from "contract.slint";
-import { AppSlider, Caption, Card, DeviceTile, FluentButton, Group, Help, Icon, InfoBar, ModeGroup, Row, SwitchControl, Trailing } from "components.slint";
+import { AppSlider, Breadcrumb, Caption, Card, DeviceTile, FluentButton, Group, Help, Icon, InfoBar, ModeGroup, Row, SwitchControl, Trailing } from "components.slint";
 import { Grid, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
@@ -422,56 +422,11 @@ export component GeneralPage inherits Page {
 }
 
 export component AboutPage inherits Page {
-    // "General > About": the way back to the page that it belongs to
-    HorizontalLayout {
-        height: 32px;
-        spacing: 8px;
-        alignment: start;
-
-        Rectangle {
-            min-width: parent-title.preferred-width;
-            horizontal-stretch: 0;
-            accessible-role: button;
-            accessible-label: @tr("ui" => "General");
-            accessible-action-default => {
-                Model.tab = 3;
-            }
-
-            parent-title := Text {
-                text: @tr("ui" => "General");
-                font-size: Type.title;
-                font-weight: 600;
-                color: parent-touch.has-hover ? Surface.text : Surface.secondary;
-                vertical-alignment: center;
-                accessible-role: none;
-            }
-
-            parent-touch := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    Model.tab = 3;
-                }
-            }
-        }
-
-        VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-            Icon {
-                text: "\u{E76C}";
-                font-size: Type.chevron;
-                color: Surface.secondary;
-                width: 12px;
-            }
-        }
-
-        Text {
-            text: @tr("ui" => "About");
-            font-size: Type.title;
-            font-weight: 600;
-            color: Surface.text;
-            vertical-alignment: center;
-            horizontal-stretch: 0;
+    Breadcrumb {
+        parent: @tr("ui" => "General");
+        current: @tr("ui" => "About");
+        back => {
+            Model.tab = 3;
         }
     }
 

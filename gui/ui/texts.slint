@@ -214,6 +214,26 @@ export global Texts {
         return @tr("ui" => "≈ {} ms", ms);
     }
 
+    // The pill of the header says how the dongle stands; the footer is for what is going on and for
+    // what needs an action.
+    pure function calm(kind: Title) -> bool {
+        return kind == Title.in-sync || kind == Title.disconnected || kind == Title.waiting || kind == Title.stopped;
+    }
+
+    public pure function footer-headline(kind: Title, advice: Hint) -> string {
+        if calm(kind) {
+            return advice == Hint.see-log ? hint(advice) : "";
+        }
+        return title(kind);
+    }
+
+    public pure function footer-detail(kind: Title, advice: Hint) -> string {
+        if calm(kind) || advice == Hint.saved {
+            return "";
+        }
+        return hint(advice);
+    }
+
     public pure function state(on: bool) -> string {
         return on ? @tr("ui" => "On") : @tr("ui" => "Off");
     }

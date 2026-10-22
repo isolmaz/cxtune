@@ -1,5 +1,5 @@
 import { Model, Title } from "contract.slint";
-import { Caption, DeviceTile, FluentButton, Hover, LinkText, MeterRow, Nav, StatusPill, CardTitle } from "components.slint";
+import { Caption, DeviceTile, FluentButton, Hover, LinkText, MeterRow, Nav, RowText, StatusPill } from "components.slint";
 import { AboutPage, GeneralPage, MicrophonePage, OutputPage, SidetonePage } from "pages.slint";
 import { Grid, Signal, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
@@ -52,20 +52,11 @@ component Header inherits Rectangle {
             }
 
             HorizontalLayout {
-                spacing: 8px;
                 alignment: start;
 
                 StatusPill {
                     text: Texts.pill(Model.title);
                     tone: Signal.tone(Model.tone);
-                }
-
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 0;
-                    Caption {
-                        text: @tr("ui" => "USB sound card");
-                    }
                 }
             }
         }
@@ -93,6 +84,8 @@ component Header inherits Rectangle {
 }
 
 component Footer inherits Rectangle {
+    property <string> headline: Texts.footer-headline(Model.title, Model.hint);
+    property <string> detail: Texts.footer-detail(Model.title, Model.hint);
     background: Surface.layer;
 
     Rectangle {
@@ -106,7 +99,7 @@ component Footer inherits Rectangle {
         padding-right: 6px;
         spacing: 8px;
 
-        VerticalLayout {
+        if root.headline != "": VerticalLayout {
             alignment: center;
             horizontal-stretch: 0;
             Rectangle {
@@ -117,21 +110,25 @@ component Footer inherits Rectangle {
             }
         }
 
-        VerticalLayout {
+        if root.headline != "": VerticalLayout {
             alignment: center;
             horizontal-stretch: 1;
 
-            CardTitle {
-                text: Texts.title(Model.title);
+            RowText {
+                text: root.headline;
                 overflow: elide;
                 height: 20px;
             }
 
-            if Texts.hint(Model.hint) != "": Caption {
-                text: Texts.hint(Model.hint);
+            if root.detail != "": Caption {
+                text: root.detail;
                 overflow: elide;
                 height: 16px;
             }
+        }
+
+        if root.headline == "": Rectangle {
+            horizontal-stretch: 1;
         }
 
         if Model.details: VerticalLayout {
@@ -200,15 +197,6 @@ export component MainWindow inherits Window {
                     chosen(page) => {
                         Model.tab = page;
                     }
-                }
-
-                Caption {
-                    x: 16px;
-                    y: parent.height - 28px;
-                    width: parent.width - 32px;
-                    height: 16px;
-                    text: @tr("ui" => "cxtune {}", Model.version);
-                    color: Surface.secondary;
                 }
             }
 

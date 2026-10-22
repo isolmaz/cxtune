@@ -12,10 +12,6 @@ msgid "HyperX Cloud II USB sound card"
 msgstr "HyperX Cloud II USB ses kartı"
 
 msgctxt "ui"
-msgid "USB sound card"
-msgstr "USB ses kartı"
-
-msgctxt "ui"
 msgid "Output level"
 msgstr "Çıkış düzeyi"
 
@@ -46,10 +42,6 @@ msgstr "Yan ton"
 msgctxt "ui"
 msgid "General"
 msgstr "Genel"
-
-msgctxt "ui"
-msgid "cxtune {}"
-msgstr "cxtune {}"
 
 msgctxt "ui"
 msgid "cxtune: {}"
