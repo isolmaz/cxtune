@@ -203,7 +203,8 @@ verification interval, because the periodic read finds the difference anyway.
 
 The engine writes a diagnostic log to `%LOCALAPPDATA%\cxtune\cxtune.log` (arrivals, passes,
 writes made, warnings, errors; no settings beyond the saved ones). At 256 KiB it is renamed to
-`cxtune.log.1`, replacing the older one, so the two files stay below 512 KiB.
+`cxtune.log.1`, replacing the older one. If another program holds either file open so that the
+rename is refused, the current file is emptied instead, so the two files stay within 512 KiB.
 
 ## Building
 

@@ -1,9 +1,11 @@
 //! A small rotating log file for diagnostics: `%LOCALAPPDATA%\cxtune\cxtune.log`.
 //!
 //! Lines are appended with a UTC timestamp. When the file would pass its size limit it is
-//! renamed to `cxtune.log.1` (replacing the older one) and a new file is started, so the two
-//! files together stay below twice the limit. Logging never fails the caller: a file that
-//! cannot be opened or written is skipped and tried again with the next line.
+//! renamed to `cxtune.log.1` (replacing the older one) and a new file is started. A program that
+//! holds either file open without delete sharing blocks the rename; the current file is then
+//! emptied instead. Either way the two files together stay within twice the limit. Logging never
+//! fails the caller: a file that cannot be opened or written is skipped and tried again with the
+//! next line.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -82,7 +84,9 @@ impl Log {
 
     fn rotate(&mut self) {
         self.file = None;
-        let _ = std::fs::rename(&self.path, self.path.with_extension("log.1"));
+        if std::fs::rename(&self.path, self.path.with_extension("log.1")).is_err() {
+            let _ = File::create(&self.path);
+        }
         self.reopen();
     }
 }
@@ -114,13 +118,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("cxtune-log-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    use crate::testdir::TempDir;
 
     fn read(path: &Path) -> String {
         std::fs::read_to_string(path).unwrap_or_default()
@@ -143,7 +141,7 @@ mod tests {
 
     #[test]
     fn lines_are_appended_with_a_timestamp_on_one_line_each() {
-        let dir = scratch_dir("append");
+        let dir = TempDir::new("log-append");
         let path = dir.join("cxtune.log");
         let mut log = Log::open(path.clone(), DEFAULT_LIMIT);
         log.line("first");
@@ -161,12 +159,11 @@ mod tests {
             assert!(stamp.ends_with('Z') && stamp.contains('T'), "{line}");
             assert_eq!(rest, message);
         }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn the_log_rotates_and_stays_bounded() {
-        let dir = scratch_dir("rotate");
+        let dir = TempDir::new("log-rotate");
         let path = dir.join("cxtune.log");
         let old = dir.join("cxtune.log.1");
         let limit = 400;
@@ -199,12 +196,78 @@ mod tests {
         let first_current = number(current.lines().next().unwrap());
         let last_previous = number(previous.lines().last().unwrap());
         assert_eq!(first_current, last_previous + 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Opens `path` the way a viewer that follows the file does: others may read and write it,
+    /// but not rename or delete it.
+    fn hold_without_delete_sharing(path: &Path) -> File {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ_WRITE: u32 = 1 | 2;
+        OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ_WRITE)
+            .open(path)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_log_stays_bounded_when_the_older_file_is_held_open() {
+        let dir = TempDir::new("log-held-old");
+        let path = dir.join("cxtune.log");
+        let old = dir.join("cxtune.log.1");
+        std::fs::write(
+            &old, "older
+",
+        )
+        .unwrap();
+        let _held = hold_without_delete_sharing(&old);
+        let limit = 400;
+        let mut log = Log::open(path.clone(), limit);
+        for i in 0..200 {
+            log.line(&format!("message number {i:03}"));
+            let size = path.metadata().unwrap().len();
+            assert!(size <= limit, "{size} bytes after {i} lines");
+        }
+        assert_eq!(
+            read(&old),
+            "older
+"
+        );
+        assert!(
+            read(&path)
+                .lines()
+                .last()
+                .unwrap()
+                .ends_with("message number 199")
+        );
+    }
+
+    #[test]
+    fn the_log_stays_bounded_when_the_current_file_is_held_open() {
+        let dir = TempDir::new("log-held-current");
+        let path = dir.join("cxtune.log");
+        let limit = 400;
+        let mut log = Log::open(path.clone(), limit);
+        log.line("first");
+        let _held = hold_without_delete_sharing(&path);
+        for i in 0..200 {
+            log.line(&format!("message number {i:03}"));
+            let size = path.metadata().unwrap().len();
+            assert!(size <= limit, "{size} bytes after {i} lines");
+        }
+        assert!(
+            read(&path)
+                .lines()
+                .last()
+                .unwrap()
+                .ends_with("message number 199")
+        );
+        assert!(!dir.join("cxtune.log.1").exists());
     }
 
     #[test]
     fn a_log_that_cannot_be_opened_does_not_fail_the_caller() {
-        let dir = scratch_dir("broken");
+        let dir = TempDir::new("log-broken");
         // a directory where the file should be
         let path = dir.join("cxtune.log");
         std::fs::create_dir(&path).unwrap();
@@ -216,6 +279,5 @@ mod tests {
         std::fs::remove_dir(&path).unwrap();
         log.line("written");
         assert!(read(&path).ends_with("written\n"));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
