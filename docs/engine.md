@@ -111,9 +111,12 @@ All decisions are in `engine::supervisor`; the worker loop calls `command` with 
   sidetone off, sidetone level 947; `docs/firmware-notes.md`) while the settings differ from that
   has restarted without the poll seeing it go. It is handled like an arrival: what was learned
   about the dongle (including the corrections below) is forgotten, it is `Waiting` for `SETTLE`,
-  and then it is brought to the settings. No warning is sent and nothing counts as drift, however
-  often it happens; that makes the verification, not the poll, the one that finds a quick reset.
-  A dongle that holds the vendor's values by the user's choice (nothing differs) is left alone.
+  and then it is brought to the settings. Nothing counts as drift. A dongle that keeps
+  restarting points to its cable, its port or its power, so from the `WARN_RESTARTS`-th restart
+  within `DRIFT_WINDOW` each restart also sends an `Event::Warning` with the count; the settings
+  are applied again every time, and the warning does not stop anything. That makes the
+  verification, not the poll, the one that finds a quick reset. A dongle that holds the vendor's
+  values by the user's choice (nothing differs) is left alone.
 - **Drift.** Any other difference found while the settings are the ones the dongle held at the
   last verification was not the user's doing: most likely another program. Each setting that
   differs is corrected and an `Event::Warning` says so. Every correction
