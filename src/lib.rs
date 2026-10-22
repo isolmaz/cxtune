@@ -8,7 +8,10 @@
 pub mod audio;
 pub mod config;
 pub mod dsp;
+pub mod engine;
 pub mod hid;
+pub mod lock;
+pub mod log;
 pub mod mode;
 pub mod patches;
 pub mod protocol;
@@ -16,6 +19,9 @@ pub mod settings;
 
 #[cfg(test)]
 mod fake;
+
+#[cfg(test)]
+mod testdir;
 
 use std::fmt;
 
@@ -35,12 +41,18 @@ pub enum Error {
         got: Vec<u8>,
     },
     Config(String),
+    /// The silent playback stream that a mode change needs could not be opened or kept.
+    Audio(String),
+    /// Another cxtune process holds the lock that guards the dongle.
+    Busy(String),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Device(m) => write!(f, "device error: {m}"),
+            Error::Audio(m) => write!(f, "audio error: {m}"),
+            Error::Busy(m) => write!(f, "busy: {m}"),
             Error::Protocol(m) => write!(f, "protocol error: {m}"),
             Error::Refused(m) => write!(f, "refused: {m}"),
             Error::Readback {

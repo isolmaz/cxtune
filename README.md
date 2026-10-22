@@ -44,7 +44,7 @@ The playback EQ preset is not offered: the vendor patch resets it on every pass,
 effect on this firmware.
 
 Because RAM is reset on every replug, `watch` re-applies the remembered settings whenever the
-dongle appears.
+dongle appears (see "Keeping the settings applied").
 
 ## Usage
 
@@ -57,7 +57,8 @@ cxtune mic-nr <on|off>          set microphone noise reduction and remember it
 cxtune mic-agc <on|off>         set microphone AGC (experimental) and remember it
 cxtune sidetone <on|off>        set sidetone (experimental) and remember it
 cxtune sidetone-level <1-4096>  set the sidetone gain register (experimental) and remember it
-cxtune watch                    keep the remembered settings applied across replugs
+cxtune watch                    keep the remembered settings applied across replugs and
+                                wake-ups (holds the dongle; other commands are refused)
 ```
 
 A noise reduction or AGC change made while a microphone stream is open is followed by a
@@ -65,7 +66,9 @@ reload request to the firmware, which applies it to the running stream at once; 
 next microphone stream applies it. If the firmware already has a reload pending, that one is
 waited for. If a stream opens or closes at the moment of the request, cxtune prints a warning
 (the setting is written and the reload was done, but the request may have overwritten the
-firmware's own update of its stream state); the warning does not stop `watch`. The reload also
+firmware's own update of its stream state, which is also reported when the stream bits of
+`$1154` do not match the capture and playback streams after the request); the warning does not
+stop `watch`. The reload also
 reloads the firmware's DAC filter, as it does at every stream open; a click in the headphones
 when a request is made while audio plays has not been measured.
 
@@ -85,17 +88,24 @@ sidetone = false
 sidetone_level = 947
 ```
 
-Keys that are absent leave that setting as the device has it.
+Keys that are absent leave that setting as the device has it. The file is written to a temporary
+file next to it and renamed over it, so it is never half-written.
 
 A config file with keys from an earlier version (`profile`, `idle`, `clamp`) is rejected with
 an error that names the file, before anything is written to the device; delete it or rewrite it
 with the keys above.
 
-Do not run cxtune at the same time as another tool that reads codec memory over HID (for
-example a second cxtune or the vendor software poking the same interface): the read protocol
-has no request tag, so concurrent readers can receive each other's responses. The checks are
-meant to turn that into a refusal rather than a wrong write, but untagged responses cannot
-guarantee it (a crossed response that happens to satisfy a single-bit check passes).
+Only one cxtune process controls the dongle at a time, because the read protocol has no
+request tag and concurrent readers can receive each other's responses. Every command holds the
+machine-wide named mutex `Global\cxtune-device` while it runs, and `watch` holds it for as long
+as it runs; a command that finds it held prints `busy: another cxtune process is controlling
+the dongle ...` and exits with status 1 before it reads the config or touches the device. The
+mutex is released when the holder exits, also when it is killed.
+
+The lock does not keep other programs that read codec memory over HID (for example vendor
+software poking the same interface) away. The checks are meant to turn crossed responses into
+a refusal rather than a wrong write, but untagged responses cannot guarantee it (a crossed
+response that happens to satisfy a single-bit check passes).
 
 ## Safety design
 
@@ -132,8 +142,9 @@ guarantee it (a crossed response that happens to satisfy a single-bit check pass
   accept only the bit subsets and range listed in the firmware notes, and read the byte again
   right before writing. A NEWC request that the ROM already has pending is waited for instead
   of repeated. After a NEWC request the ROM must clear it; if it leaves other bits of `$1154`
-  different from before, that is reported as a stream event (a warning), because it means a
-  stream opened or closed at that moment. `$1152`, `$0F4D` and `$040A` are never written.
+  different from before, or its stream bits do not match the capture and playback streams
+  (`$13DC`, `$13DD`), that is reported as a stream event (a warning), because it means a stream
+  opened or closed at that moment. `$1152`, `$0F4D` and `$040A` are never written.
 - A sidetone level change while sidetone is on goes through four guarded writes of equal
   ratio, and the level stays in `0x0001..0x1000`.
 
@@ -148,21 +159,64 @@ guarantee it (a crossed response that happens to satisfy a single-bit check pass
 - Patch RAM that does not match a known mode (for example from another tool) is refused and
   nothing is written; replugging the dongle restores the vendor patch.
 
-## Re-applying on replug
+## Keeping the settings applied (`watch` and the engine)
 
-`watch` polls HID enumeration once per second (no device I/O while polling). When the dongle
-appears it waits 2 s for the firmware to load its patch, then applies the saved settings: the
-microphone DSP settings first, then the mode, then the mic boost. The DSP settings come first
-so that a reload request is finished before cxtune opens its own playback stream for the mode
-change; a DSP setting that is refused does not keep the mode from being applied. While
-connected it re-verifies every 60 s, which also catches a USB reset that happened between two
-polls. Applying is idempotent: if the device already matches, nothing is written and no stream
-is opened. A readback mismatch stops `watch`; a stream event near a DSP reload request is
-printed as a warning and does not.
+`watch` runs the background engine (`cxtune::engine`, described in
+[docs/engine.md](docs/engine.md)) without a user interface and prints what it does. The
+engine is also what the tray application will use. It owns the dongle: one worker thread does
+all HID and audio-stream access, and it holds the device lock for as long as it runs.
 
-Polling was chosen over Windows device notifications (`CM_Register_Notification` /
-`WM_DEVICECHANGE`): it needs no window or callback threading, cannot miss an event because of a
-registration race, and the cost of enumerating HID devices once a second is negligible.
+- **Arrival.** HID enumeration is polled once per second (no device I/O). A dongle that
+  appears is left alone for 2 s so that its firmware can load the patch, then read and, if it
+  differs from the saved settings, brought to them: the microphone DSP settings first, then the
+  mode, then the mic boost. The DSP settings come first so that a reload request is finished
+  before cxtune opens its own playback stream for the mode change; a DSP setting that is
+  refused does not keep the mode from being applied. A dongle that disappears again within the
+  2 s is never touched, so a flapping cable causes no writes and no errors.
+- **Drift.** A connected dongle is read every 15 s and compared with the saved settings; only
+  a difference leads to writes. A dongle that shows the vendor's settings again has restarted
+  between two polls (a USB reset): it is handled like an arrival, with the 2 s wait, however
+  often that happens. Any other difference, such as another tool changing the patch RAM, is
+  corrected and reported as a warning. Because a correction of a microphone DSP setting reloads
+  the codec's DSP, a setting that something keeps changing is corrected three times within ten
+  minutes and then left alone, with an error that says so, until a setting is changed,
+  re-applied or the dongle is restarted or replugged.
+- **Sleep.** The computer waking from sleep or hibernation is noticed as a gap of more than
+  5 s in the engine's wall-clock rhythm. The dongle may have restarted, so it is left alone for
+  2 s and then verified.
+- **Failures.** A dongle that is connected but does not answer is retried with growing pauses
+  (2 s up to 30 s); a failed silent stream is retried (5 s up to 60 s); a refusal by a safety
+  check is retried three times (5 s, 15 s, 60 s) because a patch that is still loading looks
+  unrecognised; a write that does not stick twice (10 s, 60 s). A failure that persists is
+  reported once. After the last retry the engine waits for a new command, a re-apply or a
+  replug. A dongle that disappears while it is being used is a disconnect, not an error.
+- **Commands.** Setting commands change the saved settings at once and the dongle at most
+  150 ms later, with the latest values: a slider moved for a second causes a handful of
+  writes, not one per step. The settings file is rewritten once per burst. If it cannot be
+  written (another program holds it open), the state says the settings are not saved, the write
+  is tried again with growing pauses and once more when the engine stops.
+- **Failure of the engine.** A request to the dongle that never returns (hidapi has no time
+  limit and cannot cancel it) is reported after 10 s as an error that asks for a replug, and
+  stopping the engine does not wait for it (the stuck engine keeps the device lock, so a new one
+  cannot start until the request ends). A panic ends the engine with a last error state; the
+  user interface can ask whether the engine is still running.
+
+Applying is idempotent: if the device already matches, nothing is written and no stream is
+opened. A stream event near a DSP reload request is printed as a warning and does not stop
+anything.
+
+Polling and a wall-clock gap were chosen over Windows notifications
+(`RegisterDeviceNotification` / `CM_Register_Notification` for the dongle,
+`PowerRegisterSuspendResumeNotification` / `WM_POWERBROADCAST` for sleep): they need no window,
+message pump or callback threading, cannot miss an event through a registration race, and
+cannot be lost when a notification is dropped; enumerating HID devices once a second and
+comparing two clocks cost next to nothing. A missed or late detection costs at most one
+verification interval, because the periodic read finds the difference anyway.
+
+The engine writes a diagnostic log to `%LOCALAPPDATA%\cxtune\cxtune.log` (arrivals, passes,
+writes made, warnings, errors; no settings beyond the saved ones). At 256 KiB it is renamed to
+`cxtune.log.1`, replacing the older one. If another program holds either file open so that the
+rename is refused, the current file is emptied instead, so the two files stay within 512 KiB.
 
 ## Building
 
@@ -202,5 +256,6 @@ run-at-login). Options considered:
 
 **Recommendation: Slint with its Fluent style, plus `tray-icon` for the notification-area
 icon.** It gives a Windows 11 look with modest code and dependencies, and the existing core
-(`cxtune` library) plugs in unchanged; the `watch` loop would move to a background thread.
+(`cxtune` library) plugs in unchanged: the user interface sends `engine::Command`s through a
+`Handle` and shows the `Snapshot`s that the engine's event sink delivers.
 Check Slint's license terms (GPLv3, royalty-free, or commercial) before publishing.

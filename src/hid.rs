@@ -20,6 +20,11 @@ pub fn api() -> Result<HidApi> {
     HidApi::new().map_err(hid_err)
 }
 
+/// Enumerates the HID devices again; no device is opened.
+pub fn refresh(api: &mut HidApi) -> Result<()> {
+    api.refresh_devices().map_err(hid_err)
+}
+
 /// The dongle's HID collection with usage page 0x000C, if connected.
 pub fn find(api: &HidApi) -> Option<&DeviceInfo> {
     api.device_list()
