@@ -26,7 +26,9 @@ EEPROM; `img 0xxxxx` is an offset in the EEPROM image (same numbers as EEPROM of
 
 cxtune changes volatile state only. It sends HID memory requests with flags `0x00` (read CPU
 memory) and `0x40` (write CPU memory) and never `0x20` (EEPROM access), `0x80` (DSP memory) or `0x10`
-(address at or above 64 KiB). Every write passes one guarded function (see
+(address at or above 64 KiB). The planned `cxtune dump` (section 9) will add one read-only path,
+flag `0x20` without `0x40`, to read the EEPROM; the single write function keeps refusing every
+request that has `0x20` set, so `0x20|0x40` is never sent. Every write passes one guarded function (see
 [Safety design](../README.md#safety-design) and [Writable regions](firmware-notes.md#writable-regions)).
 Reasons:
 
@@ -306,7 +308,7 @@ PROVEN from the dump, from fwupd's structure definitions and from the ROM code t
 field. The vendor update image (the S-record file of the Cloud II updater) has no record below
 `0x02`; it covers 7774 of the 7979 bytes in `0x02..0x1F2C` (the gaps are `0xA2..0x16D` and
 `0x411`) and equals the dump wherever it covers. `0x00..0x01` were therefore written by the
-ROM (section 5.2).
+ROM (INFERRED; it relies on the size-probe evidence in section 5.2).
 
 | EEPROM | Content |
 |---|---|
@@ -546,7 +548,9 @@ descriptor hides (sidetone feature unit 11, default `$1151 = 0x81`).
 structures; the Linux `cx2070x` codec driver for register names and the NEWC procedure; the
 record order of the Cloud II update file for the write discipline. The strings "invalidating
 header" and "validating header" are also in the HP-branded Cloud II (rev `4103`)
-`DEVICEFIRMWAREUPGRADE-32.EXE`; the updater for rev `0010` was not examined here.
+`DEVICEFIRMWAREUPGRADE-32.EXE`. The S-record file used in sections 5.1 and 5.3 comes from the
+rev `0010` updater, whose `DEVICEFIRMWAREUPGRADE-32.EXE` contains both strings and is
+byte-identical to the HP one.
 
 ## 8. Open questions, ranked by where help is most valuable
 
@@ -557,8 +561,8 @@ header" and "validating header" are also in the HP-branded Cloud II (rev `4103`)
    offering a persistent (EEPROM) mode.
 2. **Sidetone gain unit.** The host-facing unit is a fact of the ROM code (PROVEN): its request
    table serves the feature unit 11 GET_CUR from `$1276` itself (`$EA84`) and MIN/MAX/RES from
-   `$0081`, `$0083` and `$0085`, so the host sees USB audio class 1/256 dB units, 0 to +16 dB
-   in 1/256 dB steps, with default `+3.70 dB` (`0x03B3`). Further evidence: zero page `$81..$88`
+   `$0081`, `$0083` and `$0085`, so a host to which feature unit 11 is exposed sees USB audio class 1/256 dB units, 0 to +16 dB
+   in 1/256 dB steps (this unit's descriptor does not declare feature unit 11), with default `+3.70 dB` (`0x03B3`). Further evidence: zero page `$81..$88`
    is the same four-word layout (minimum, maximum, resolution, default) as the speaker and
    microphone volume ranges; the Jabra patches set the defaults `0x0A00` (+10 dB) and `0x0600`
    (+6 dB); `$D173` treats a high byte of `0x80` as mute, which is the class's "silence" code.
@@ -606,7 +610,8 @@ measurements, and our own annotations (address maps, register names, tooling).
 
 **Compare your unit against ours, without exchanging dumps.** Read your own device and compare
 SHA-256 values with ours. A read-only `cxtune dump` command is planned; it does not exist yet.
-It is meant to read the ROM with flag `0x00` and the EEPROM with flag `0x20` as a read only.
+It will read the ROM with flag `0x00` and the EEPROM with flag `0x20` alone, a read; it will
+never send `0x20|0x40`, and the single write choke point keeps refusing `0x20`.
 Until it exists, `cxtune status` (reads only) is what we ask for. Reference values:
 
 | Item | Range read | Size | SHA-256 |
@@ -619,8 +624,8 @@ Until it exists, `cxtune status` (reads only) is what we ask for. Reference valu
 
 The ROM was read with ordinary CPU-space reads and four ranges were re-read and compared. The
 reference EEPROM hash was read during research with flag `0x20` (EEPROM read; `0x20` without
-`0x40` is a read, and an EEPROM write is `0x20|0x40`). cxtune itself never uses `0x20` and never
-sends an EEPROM write. A matching ROM hash plus a matching patch-stream hash means the same
+`0x40` is a read, and an EEPROM write is `0x20|0x40`). Today's cxtune never uses `0x20`; the
+planned `dump` will use it for reads only, and cxtune never sends an EEPROM write. A matching ROM hash plus a matching patch-stream hash means the same
 firmware as ours. The free areas, the size-probe bytes, `0x00..0x01`, the serial string and the
 config block (the ROM's save request rewrites it) may legitimately differ per unit, so a
 full-EEPROM mismatch alone does not mean different firmware; if only those differ, say so in the
