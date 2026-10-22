@@ -21,7 +21,7 @@ use crate::ui::{Hint, MainWindow, Model, Theme, Title, Tone};
 /// Gives the window time to draw after each change.
 const STEP: Duration = Duration::from_millis(600);
 const TABS: [&str; 5] = ["output", "microphone", "sidetone", "general", "about"];
-const MODES: [&str; 4] = ["default", "click-free", "balanced", "lowest-noise"];
+const MODES: [&str; 4] = ["default", "low-click", "balanced", "lowest-noise"];
 const PROBLEMS: [(Problem, &str); 12] = [
     (Problem::Communication, "communication"),
     (Problem::Audio, "audio"),

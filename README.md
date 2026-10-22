@@ -110,7 +110,7 @@ engine (Windows 11, Turkish and English). It follows the light or dark scheme of
 console window and closes to the notification area. A list of pages on the left leads to the
 four below, and a header shows the dongle, its state and the level meters.
 
-- **Output**: the four modes (Default, Click-free, Balanced, Lowest noise) as cards with Noise
+- **Output**: the four modes (Default, Low click, Balanced, Lowest noise) as cards with Noise
   floor, Click and Mute delay indicators that show only what was measured (and say so when
   something was not), the soft-start time of Lowest noise, the speaker volume and **Apply
   recommended** (balanced mode, microphone boost 6, noise reduction on, AGC and sidetone off).

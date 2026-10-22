@@ -52,7 +52,7 @@ pub fn indicators(mode: Mode, settle_ms: u16) -> ModeIndicators {
 }
 
 /// The level that switching sidetone on starts with when the user has not chosen one: far below
-/// the stock level, because the unit of the register is not known and sidetone can be loud.
+/// the stock level, because the loudness of sidetone was never measured and it can be loud.
 pub const SIDETONE_START: u16 = 200;
 
 /// The level to set before sidetone is switched on, if there is one. The vendor's level was
@@ -62,9 +62,9 @@ pub fn level_before_sidetone(level: u16, chosen: bool) -> Option<u16> {
     (!chosen && level == SIDETONE_DEFAULT).then_some(SIDETONE_START)
 }
 
-/// The sidetone slider spans this many positions on a logarithmic scale, so that the low
-/// levels, where sidetone should start, get as much room as the high ones.
-pub const LEVEL_POSITIONS: f32 = 1000.0;
+/// A key press moves the sidetone slider by this much: half a dB, as the USB audio control counts
+/// (256 to the dB).
+pub const LEVEL_STEP: u16 = 128;
 
 /// Every value a control shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,17 +153,12 @@ pub fn mode_at(index: i32) -> Option<Mode> {
         .and_then(|index| Mode::ALL.get(index).copied())
 }
 
-/// The sidetone register value at a slider position (0 to [`LEVEL_POSITIONS`]).
-pub fn level_at(position: f32) -> u16 {
-    let span = (SIDETONE_MAX as f32 / SIDETONE_MIN as f32).ln();
-    let level = SIDETONE_MIN as f32 * (position / LEVEL_POSITIONS * span).exp();
-    (level.round() as u16).clamp(SIDETONE_MIN, SIDETONE_MAX)
-}
-
-/// The slider position of a sidetone register value.
-pub fn level_position(level: u16) -> f32 {
-    let span = (SIDETONE_MAX as f32 / SIDETONE_MIN as f32).ln();
-    LEVEL_POSITIONS * (level as f32 / SIDETONE_MIN as f32).ln() / span
+/// The sidetone register value at a slider value. The slider is linear in the register, so it is
+/// linear in dB.
+pub fn level_at(value: f32) -> u16 {
+    value
+        .round()
+        .clamp(f32::from(SIDETONE_MIN), f32::from(SIDETONE_MAX)) as u16
 }
 
 #[cfg(test)]
@@ -289,17 +284,25 @@ mod tests {
     }
 
     #[test]
-    fn the_sidetone_slider_covers_the_whole_register_range_logarithmically() {
+    fn the_sidetone_slider_covers_the_whole_register_range_and_nothing_else() {
         assert_eq!(level_at(0.0), SIDETONE_MIN);
-        assert_eq!(level_at(LEVEL_POSITIONS), SIDETONE_MAX);
         assert_eq!(level_at(-50.0), SIDETONE_MIN);
-        assert_eq!(level_at(LEVEL_POSITIONS + 50.0), SIDETONE_MAX);
-        // equal steps on the slider are equal ratios of the level: half way is the geometric mean
-        assert_eq!(level_at(LEVEL_POSITIONS / 2.0), 64);
-        assert!(
-            level_at(250.0) < 10,
-            "the lowest quarter is the lowest levels"
-        );
+        assert_eq!(level_at(f32::from(SIDETONE_MAX) + 50.0), SIDETONE_MAX);
+        assert_eq!(level_at(1000.4), 1000);
+        assert_eq!(level_at(1000.6), 1001);
+    }
+
+    #[test]
+    fn equal_steps_on_the_sidetone_slider_are_equal_steps_in_the_register() {
+        let step = f32::from(LEVEL_STEP);
+        let start = f32::from(SIDETONE_MIN);
+        for k in 1..=31 {
+            let (before, after) = (
+                level_at(start + step * (k - 1) as f32),
+                level_at(start + step * k as f32),
+            );
+            assert_eq!(after - before, LEVEL_STEP, "step {k}");
+        }
     }
 
     #[test]
@@ -375,7 +378,7 @@ mod tests {
     #[test]
     fn every_register_value_survives_a_trip_through_the_slider() {
         for level in SIDETONE_MIN..=SIDETONE_MAX {
-            assert_eq!(level_at(level_position(level)), level, "{level}");
+            assert_eq!(level_at(f32::from(level)), level, "{level}");
         }
     }
 }

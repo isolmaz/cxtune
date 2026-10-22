@@ -164,8 +164,8 @@ msgid "Microphone boost"
 msgstr "Mikrofon yükseltme"
 
 msgctxt "ui"
-msgid "Gain compared with the vendor setting"
-msgstr "Üretici ayarına göre kazanç"
+msgid "Relative to vendor setting (step 4)"
+msgstr "Üretici ayarına (Kademe 4) göre"
 
 msgctxt "ui"
 msgid "Step 6 had the best signal-to-noise ratio in one take; step 7 added 6 dB of noise."
@@ -220,8 +220,8 @@ msgid "Vendor default: +3.7 dB"
 msgstr "Üretici varsayılanı: +3,7 dB"
 
 msgctxt "ui"
-msgid "A gain of 0 to +16 dB. It was never listened to, so its loudness is unknown."
-msgstr "Kazanç 0 ile +16 dB arasındadır. Hiç dinlenmedi; bu yüzden ne kadar yüksek olduğu bilinmiyor."
+msgid "0 to +16 dB as the USB audio control reports it. The loudness was never measured."
+msgstr "USB ses denetiminin bildirdiği gibi 0 ile +16 dB. Ses yüksekliği hiç ölçülmedi."
 
 msgctxt "ui"
 msgid "Do not also turn on \"Listen to this device\" for the microphone in Windows: it would echo."
@@ -452,8 +452,8 @@ msgid "Default"
 msgstr "Varsayılan"
 
 msgctxt "ui"
-msgid "Click-free"
-msgstr "Tıksız"
+msgid "Low click"
+msgstr "Az tıklı"
 
 msgctxt "ui"
 msgid "Balanced"

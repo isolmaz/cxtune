@@ -60,7 +60,7 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
   | Click | Tık | the pop when audio starts |
   | Mute delay | Açılış gecikmesi | how long the start of audio is muted |
   | Soft-start time | Yumuşak açılış süresi | the settle time of Lowest noise |
-  | Default, Click-free, Balanced, Lowest noise | Varsayılan, Tıksız, Dengeli, En düşük gürültü | the modes stock, quiet, balanced and minimum hiss |
+  | Default, Low click, Balanced, Lowest noise | Varsayılan, Az tıklı, Dengeli, En düşük gürültü | the modes stock, quiet, balanced and minimum hiss |
 
 ## Threads
 
@@ -94,8 +94,7 @@ with the last value always sent when the slider is released.
   README words it (constant, some, reduced), the click as recorded (none in stock mode, low in
   quiet mode, loud in minimum hiss) and the time that the start of audio is muted, as measured
   (none in stock and quiet mode, about 0.6 s in balanced mode, the soft-start time plus 100 ms in
-  minimum hiss). The start click of balanced mode was not measured and says "not measured". Quiet
-  mode is called Click-free and still shows a low click, because that is what was recorded.
+  minimum hiss). The start click of balanced mode was not measured and says "not measured".
 - **Microphone boost** 0-7 shows the gain compared with the vendor's step 4, 6 dB per step. The
   gain of step 0 itself is not documented, so no absolute gain is shown. Step 6 is marked
   recommended (best signal-to-noise ratio, in a single measurement, so only indicative); the "?"
@@ -104,12 +103,13 @@ with the last value always sent when the slider is released.
 - **Noise reduction** (measured: about 12 dB less steady noise) and **AGC** (experimental: no
   effect on steady noise could be measured, speech not tested).
 - **Sidetone** is experimental and its loudness was never listened to. The level is shown in dB:
-  the register is a gain in units of 1/256 dB (UAC), from 0 to +16 dB, and the vendor's untouched
-  value 947 is +3.7 dB. That scale comes from the ROM, not from listening, so nothing says that a
-  low value is quiet. Only the window divides the register by 256. Switching sidetone on while the
-  level is still the vendor's untouched 947 first sets 200. The level slider is logarithmic over
-  the register range 1-4096, so equal slider steps are not equal steps in dB. A line advises
-  against turning on the Windows setting "Listen to this device" at the same time (an echo).
+  the register is shown as 0 to +16 dB, which is how the USB audio control reports it (units of
+  1/256 dB), and the vendor's untouched value 947 is +3.7 dB. What the DSP makes of the register
+  and how loud sidetone is were not measured, so nothing says that a low value is quiet. Only the
+  window divides the register by 256. Switching sidetone on while the level is still the vendor's
+  untouched 947 first sets 200. The level slider is linear in the register, so linear in dB: it
+  spans 1-4096 and a key press moves it by 128, half a dB. A line advises against turning on the
+  Windows setting "Listen to this device" at the same time (an echo).
 - **Apply recommended** (next to the title of the Output page) sets balanced mode, microphone
   boost 6, noise reduction on, AGC off and sidetone off, and leaves the soft-start time and the
   sidetone level as they are. Balanced mode is
@@ -174,7 +174,7 @@ in `contract.slint` and the `MainWindow` and `Tray` components.
 | `mode` (in-out), `recommended-mode`, `indicators` | the mode (0 stock, 1 quiet, 2 balanced, 3 minimum hiss), the recommended one, and the `ModeIndicators` (`hiss`, `pop`, `delay`, `delay-ms`) of every mode by index |
 | `settle-ms` (in-out), `settle-min`, `settle-max`, `settle-step`, `delay-enabled` | the soft-start time |
 | `boost` (in-out), `boost-max`, `boost-db`, `boost-recommended`, `noise-reduction` (in-out), `agc` (in-out) | the microphone |
-| `sidetone` (in-out), `level-position` (in-out), `level-positions`, `level` | sidetone: the slider position and the register value it stands for (1/256 dB) |
+| `sidetone` (in-out), `level` (in-out), `level-min`, `level-max`, `level-step` | sidetone: the register value (shown as dB, 256 per dB) and the range and key step of its slider |
 | `speaker-present`, `speaker-volume` (in-out), `speaker-muted` (in-out), `microphone-present`, `microphone-volume` (in-out), `microphone-muted` (in-out) | the Windows volume |
 | `autostart` (in-out), `autostart-failed`, `language` (in-out; 0 Turkish, 1 English) | general |
 

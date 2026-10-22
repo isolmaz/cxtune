@@ -96,7 +96,7 @@ export global Theme {
 
 // The tabs, by index: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about (a page of general).
 //
-// The modes, by index: 0 stock, 1 quiet start, 2 balanced, 3 minimum hiss.
+// The modes, by index: 0 stock, 1 quiet, 2 balanced, 3 minimum hiss.
 //
 // The volumes, by side: 0 the speakers, 1 the microphone.
 export global Model {
@@ -143,10 +143,11 @@ export global Model {
 
     // sidetone
     in-out property <bool> sidetone;
-    in-out property <float> level-position: 500;
-    in property <float> level-positions: 1000;
-    // the register value that the position stands for (1/256 dB)
-    in property <int> level;
+    // the gain register (1/256 dB) with the range and the key step of its slider
+    in-out property <float> level: 947;
+    in property <float> level-min: 1;
+    in property <float> level-max: 4096;
+    in property <float> level-step: 128;
 
     // the volume of the dongle in Windows
     in property <bool> speaker-present;

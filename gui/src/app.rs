@@ -108,7 +108,9 @@ pub fn install(
     model.set_settle_max(f32::from(controls::SETTLE_MAX_MS));
     model.set_settle_step(f32::from(cxtune::mode::SETTLE_STEP_MS));
     model.set_boost_max(f32::from(controls::BOOST_MAX));
-    model.set_level_positions(controls::LEVEL_POSITIONS);
+    model.set_level_min(f32::from(cxtune::patches::SIDETONE_MIN));
+    model.set_level_max(f32::from(cxtune::patches::SIDETONE_MAX));
+    model.set_level_step(f32::from(controls::LEVEL_STEP));
     model.set_recommended_mode(controls::mode_index(controls::RECOMMENDED_MODE));
     model.set_autostart(autostart::is_enabled().unwrap_or(false));
 
@@ -249,8 +251,8 @@ impl App {
                         with_app(|app| app.on_event(generation, event));
                     });
                 });
-                // Once the event loop has ended Slint 1.18.1 still accepts the call, never runs it
-                // and drops it, with the engine in it, only when the main thread ends.
+                // Once the event loop has ended Slint 1.18.1 still accepts the call and never runs
+                // it; the engine in it then ends with the process.
                 let _ = slint::invoke_from_event_loop(move || {
                     with_app(|app| app.on_started(generation, started));
                 });
@@ -355,9 +357,8 @@ impl App {
         }
         if !touched.level {
             controls.level = shown.level;
-            model.set_level_position(controls::level_position(shown.level));
         }
-        model.set_level(i32::from(controls.level));
+        model.set_level(f32::from(controls.level));
 
         let running = self.engine.as_ref().is_some_and(Engine::is_running);
         let usable = running && status.controls;
@@ -542,8 +543,7 @@ impl App {
             self.controls.level = level;
             if let Some(window) = self.window.upgrade() {
                 let model = window.global::<Model>();
-                model.set_level(i32::from(level));
-                model.set_level_position(controls::level_position(level));
+                model.set_level(f32::from(level));
             }
             self.send(Command::SetSidetoneLevel(level));
         }
@@ -552,15 +552,15 @@ impl App {
         self.send(Command::SetSidetone(on));
     }
 
-    fn level_changed(&mut self, position: f32) {
-        let level = controls::level_at(position);
+    fn level_changed(&mut self, value: f32) {
+        let level = controls::level_at(value);
         if level == self.controls.level {
             return;
         }
         self.touched.level = true;
         self.controls.level = level;
         if let Some(window) = self.window.upgrade() {
-            window.global::<Model>().set_level(i32::from(level));
+            window.global::<Model>().set_level(f32::from(level));
         }
         self.send_paced(Slot::Level, Command::SetSidetoneLevel(level));
     }

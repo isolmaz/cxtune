@@ -175,7 +175,7 @@ export component MicrophonePage inherits Page {
         Row {
             icon: "\u{E9E9}";
             title: @tr("ui" => "Microphone boost");
-            caption: @tr("ui" => "Gain compared with the vendor setting");
+            caption: @tr("ui" => "Relative to vendor setting (step 4)");
             help: @tr("ui" => "Step 6 had the best signal-to-noise ratio in one take; step 7 added 6 dB of noise.");
             recommended: Model.boost-recommended;
 
@@ -274,15 +274,15 @@ export component SidetonePage inherits Page {
             icon: "\u{E767}";
             title: @tr("ui" => "Sidetone level");
             caption: @tr("ui" => "Vendor default: +3.7 dB");
-            help: @tr("ui" => "A gain of 0 to +16 dB. It was never listened to, so its loudness is unknown.");
+            help: @tr("ui" => "0 to +16 dB as the USB audio control reports it. The loudness was never measured.");
             experimental: true;
 
             SliderControl {
                 Slider {
-                    minimum: 0;
-                    maximum: Model.level-positions;
-                    step: Model.level-positions / 100;
-                    value <=> Model.level-position;
+                    minimum: Model.level-min;
+                    maximum: Model.level-max;
+                    step: Model.level-step;
+                    value <=> Model.level;
                     enabled: Model.controls-enabled;
                     accessible-label: @tr("ui" => "Sidetone level");
                     changed(value) => {
@@ -294,7 +294,7 @@ export component SidetonePage inherits Page {
                 }
 
                 ValueText {
-                    text: Texts.level-db(Model.level);
+                    text: Texts.level-db(Math.round(Model.level));
                 }
             }
         }
