@@ -18,6 +18,12 @@ pub const DAC_B: u16 = DAC_B_ROUTINE + 6;
 pub const WINDOW: u16 = 0x1EFC;
 pub const WINDOW_LEN: usize = 43;
 pub const MIC_CONTROL: u16 = 0x1017;
+/// DAC channel enables; bit 0 is set while a playback stream is running.
+pub const DAC_ENABLE: u16 = 0x0F18;
+/// Headphone driver power state; 0x00 is fully active.
+pub const HP_DRIVER: u16 = 0x0F1A;
+/// Second output driver: 0x00 while a stream plays, 0x33 at idle.
+pub const HP_DRIVER2: u16 = 0x0F1B;
 /// Analog power-up reference register; bit 1 is the bias reference.
 pub const REFS: u16 = 0x0F3E;
 pub const REFS_ON: u8 = 0x02;
@@ -26,6 +32,13 @@ pub const SETTLE_ADDR: u16 = 0x1F15;
 pub const SETTLE_DEFAULT: u8 = 0x3C;
 pub const SETTLE_MIN: u8 = 0x02;
 pub const SETTLE_MAX: u8 = 0xC8;
+/// The vendor hook-29 body, `PLA PLA RTS`: both of our routines leave through it.
+const GADGET_ADDR: u16 = 0x1EF9;
+const GADGET: [u8; 3] = [0x68, 0x68, 0x60];
+/// Firmware version `15 00 00 00` and chip id `03` at $1001..$1005, the ROM the routines were
+/// written against.
+pub const ROM_ID_ADDR: u16 = 0x1001;
+pub const ROM_ID: [u8; 5] = [0x15, 0x00, 0x00, 0x00, 0x03];
 
 pub const JMP: u8 = 0x4C;
 pub const RTS: u8 = 0x60;
@@ -140,6 +153,8 @@ enum Guard {
     Bytes { addr: u16, bytes: &'static [u8] },
     /// Every bit of `mask` must be set in the byte at `addr`.
     BitsSet { addr: u16, mask: u8 },
+    /// The byte at `addr` must be in `lo..=hi`.
+    ByteIn { addr: u16, lo: u8, hi: u8 },
 }
 
 #[derive(Clone, Debug)]
@@ -178,8 +193,9 @@ impl Patch {
         }
     }
 
-    /// True for writes that must be made while a playback stream is open: they change the hook
-    /// or the routine it runs, and a stream keeps the driver from changing state meanwhile.
+    /// True for writes that must be made while a playback stream is running: they change the
+    /// hook or the routine it runs, and a stream keeps the driver from changing state
+    /// meanwhile. Each carries a guard that playback has reached the codec.
     pub fn needs_stream(&self) -> bool {
         self.needs_stream
     }
@@ -215,12 +231,30 @@ fn operands_tail(window_operands: bool) -> &'static [u8; 3] {
     }
 }
 
-/// Guards that hold while the window is `window` (any settle time for [`Window::MinHiss`]).
+/// A playback stream has reached the codec: the DAC is enabled and the second driver is up,
+/// which is the one register that tells playback from idle in every mode.
+fn playback_active() -> [Guard; 2] {
+    [
+        Guard::BitsSet {
+            addr: DAC_ENABLE,
+            mask: 0x01,
+        },
+        bytes_at(HP_DRIVER2, &[0x00]),
+    ]
+}
+
+/// Guards that hold while the window is `window` (any allowed settle time for
+/// [`Window::MinHiss`]).
 fn window_guards(window: Window) -> Vec<Guard> {
     let image = window.image();
     match window {
         Window::MinHiss => vec![
             bytes_at(WINDOW, &image[..SETTLE_INDEX]),
+            Guard::ByteIn {
+                addr: SETTLE_ADDR,
+                lo: SETTLE_MIN,
+                hi: SETTLE_MAX,
+            },
             bytes_at(SETTLE_ADDR + 1, &image[SETTLE_INDEX + 1..]),
         ],
         _ => vec![bytes_at(WINDOW, image)],
@@ -264,13 +298,16 @@ pub fn hook_rts(window_operands: bool) -> Patch {
             before: &[JMP],
             after: &[RTS],
         },
-        guards: vec![
+        guards: [
             bytes_at(HOOK_OPERANDS, operands_tail(window_operands)),
             Guard::BitsSet {
                 addr: REFS,
                 mask: REFS_ON,
             },
-        ],
+        ]
+        .into_iter()
+        .chain(playback_active())
+        .collect(),
         needs_stream: true,
     }
 }
@@ -282,6 +319,10 @@ pub fn hook_jmp(window: Window) -> Patch {
         operands_tail(window != Window::Vendor),
     )];
     guards.extend(window_guards(window));
+    if window != Window::Vendor {
+        guards.push(bytes_at(GADGET_ADDR, &GADGET));
+    }
+    guards.extend(playback_active());
     Patch {
         name: format!("hook30 RTS->JMP ({})", window.name()),
         addr: HOOK,
@@ -305,7 +346,10 @@ pub fn operands(window_operands: bool) -> Patch {
         name: format!("hook30 operands -> {to} routine"),
         addr: HOOK_OPERANDS,
         change: Change::Swap { before, after },
-        guards: vec![hook_is_rts()],
+        guards: [hook_is_rts()]
+            .into_iter()
+            .chain(playback_active())
+            .collect(),
         needs_stream: true,
     }
 }
@@ -326,7 +370,10 @@ pub fn window_part(part: Part, from: Window, to: Window) -> Patch {
             before: part.of(from.image()),
             after: part.of(to.image()),
         },
-        guards: vec![hook_is_rts()],
+        guards: [hook_is_rts()]
+            .into_iter()
+            .chain(playback_active())
+            .collect(),
         needs_stream: true,
     }
 }
@@ -382,8 +429,8 @@ pub enum Outcome {
 /// The only function in the app that writes to the device.
 ///
 /// Reads the target bytes; returns `AlreadySet` if they already hold the new value;
-/// refuses unless they hold an accepted before-value and every guard matches; writes;
-/// reads back and fails if the device does not hold the new bytes.
+/// refuses unless they hold an accepted before-value, the ROM identity matches and every guard
+/// holds; writes; reads back and fails if the device does not hold the new bytes.
 pub fn apply_patch<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<Outcome> {
     let len = p.after().len();
     let in_region = WRITABLE
@@ -408,7 +455,8 @@ pub fn apply_patch<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<Outcom
             hex(&current)
         )));
     }
-    for g in &p.guards {
+    let rom = bytes_at(ROM_ID_ADDR, &ROM_ID);
+    for g in std::iter::once(&rom).chain(&p.guards) {
         match *g {
             Guard::Bytes { addr, bytes } => {
                 let got = read_mem(t, addr, bytes.len())?;
@@ -426,6 +474,15 @@ pub fn apply_patch<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<Outcom
                 if got & mask != mask {
                     return Err(Error::Refused(format!(
                         "'{}': ${addr:04X} holds {got:#04x}, bits {mask:#04x} must be set",
+                        p.name
+                    )));
+                }
+            }
+            Guard::ByteIn { addr, lo, hi } => {
+                let got = read_mem(t, addr, 1)?[0];
+                if !(lo..=hi).contains(&got) {
+                    return Err(Error::Refused(format!(
+                        "'{}': ${addr:04X} holds {got:#04x}, expected {lo:#04x}..={hi:#04x}",
                         p.name
                     )));
                 }
@@ -653,7 +710,9 @@ mod tests {
 
     #[test]
     fn refuses_routine_changes_while_the_hook_is_live() {
+        // with playback shown, so that only the hook guard can refuse
         let balanced = FakeDevice::in_mode(Mode::Balanced);
+        let _balanced_stream = balanced.open_active_stream().unwrap();
         assert_refused(
             &balanced,
             &window_part(Part::First, Window::Balanced, Window::MinHiss),
@@ -664,6 +723,7 @@ mod tests {
         );
         assert_refused(&balanced, &operands(false));
         let stock = FakeDevice::in_mode(Mode::Stock);
+        let _stock_stream = stock.open_active_stream().unwrap();
         assert_refused(
             &stock,
             &window_part(Part::First, Window::Vendor, Window::Balanced),
@@ -684,6 +744,7 @@ mod tests {
                 dev.poke(HOOK_OPERANDS, operands);
                 dev.poke(Part::First.addr(), Part::First.of(w.image()));
                 dev.poke(Part::Second.addr(), Part::Second.of(other.image()));
+                let _stream = dev.open_active_stream().unwrap();
                 assert_refused(&dev, &hook_jmp(w));
 
                 dev.poke(Part::First.addr(), Part::First.of(other.image()));
@@ -696,9 +757,11 @@ mod tests {
     fn refuses_to_go_live_with_the_wrong_operands() {
         let dev = FakeDevice::in_mode(Mode::Quiet);
         dev.poke(0x1EFC, &bytes(BALANCED_HEX));
+        let _stream = dev.open_active_stream().unwrap();
         assert_refused(&dev, &hook_jmp(Window::Balanced));
         let dev = FakeDevice::in_mode(Mode::Quiet);
         dev.poke(HOOK_OPERANDS, &WINDOW_OPERANDS);
+        let _stream = dev.open_active_stream().unwrap();
         assert_refused(&dev, &hook_jmp(Window::Vendor));
     }
 
@@ -709,7 +772,7 @@ mod tests {
         dev.poke(WINDOW, &bytes(MIN_HISS_HEX));
         dev.poke(SETTLE_ADDR, &[0x20]);
         dev.settle();
-        let _stream = dev.open_stream().unwrap();
+        let _stream = dev.open_active_stream().unwrap();
         assert_eq!(
             apply(&dev, &hook_jmp(Window::MinHiss)).unwrap(),
             Outcome::Written
@@ -725,18 +788,147 @@ mod tests {
         assert_refused(&dev, &hook_rts(true));
 
         // the same switch is accepted once a stream has brought the references up
-        let _stream = dev.open_stream().unwrap();
+        let _stream = dev.open_active_stream().unwrap();
+        assert_eq!(dev.byte(REFS) & REFS_ON, REFS_ON);
         assert_eq!(apply(&dev, &hook_rts(true)).unwrap(), Outcome::Written);
         assert_eq!(dev.byte(HOOK), RTS);
+
+        // playback shown but the references off: only the references guard refuses
+        let dev = FakeDevice::in_mode(Mode::Balanced);
+        let _stream = dev.open_active_stream().unwrap();
+        dev.poke(REFS, &[0x00]);
+        assert_refused(&dev, &hook_rts(true));
     }
 
     #[test]
     fn refuses_to_turn_the_hook_off_with_the_wrong_operands() {
         let dev = FakeDevice::in_mode(Mode::Stock);
+        let _stock_stream = dev.open_active_stream().unwrap();
         assert_refused(&dev, &hook_rts(true));
         let dev = FakeDevice::in_mode(Mode::Balanced);
-        let _stream = dev.open_stream().unwrap();
+        let _stream = dev.open_active_stream().unwrap();
         assert_refused(&dev, &hook_rts(false));
+    }
+
+    /// Cases where each stream patch would be accepted but for the stream.
+    fn stream_cases() -> Vec<(FakeDevice, Patch)> {
+        vec![
+            (FakeDevice::in_mode(Mode::Stock), hook_rts(false)),
+            (FakeDevice::in_mode(Mode::Quiet), operands(true)),
+            (
+                FakeDevice::in_mode(Mode::Quiet),
+                window_part(Part::First, Window::Vendor, Window::Balanced),
+            ),
+            (
+                FakeDevice::in_mode(Mode::Quiet),
+                window_part(Part::Second, Window::Vendor, Window::Balanced),
+            ),
+            (FakeDevice::in_mode(Mode::Quiet), hook_jmp(Window::Vendor)),
+            (quiet_with(BALANCED_HEX), hook_jmp(Window::Balanced)),
+            (quiet_with(MIN_HISS_HEX), hook_jmp(Window::MinHiss)),
+        ]
+    }
+
+    /// Hook RTS, operands and window as if a routine were installed whole.
+    fn quiet_with(window: &str) -> FakeDevice {
+        let dev = FakeDevice::in_mode(Mode::Quiet);
+        dev.poke(HOOK_OPERANDS, &WINDOW_OPERANDS);
+        dev.poke(WINDOW, &bytes(window));
+        dev
+    }
+
+    #[test]
+    fn stream_patches_are_refused_until_the_codec_shows_playback() {
+        for (dev, p) in stream_cases() {
+            assert!(p.needs_stream(), "{}", p.name());
+            assert_refused(&dev, &p);
+        }
+        for (dev, p) in stream_cases() {
+            let _stream = dev.open_stream().unwrap();
+            assert!(!dev.codec_sees_stream());
+            assert_refused(&dev, &p);
+        }
+        for (dev, p) in stream_cases() {
+            let _stream = dev.open_active_stream().unwrap();
+            assert_eq!(apply(&dev, &p).unwrap(), Outcome::Written, "{}", p.name());
+        }
+    }
+
+    #[test]
+    fn stream_patches_need_both_playback_registers() {
+        // $0F18 bit 0 is the DAC; $0F1B is the one register that differs from idle in stock
+        for (addr, idle) in [(DAC_ENABLE, 0x02), (HP_DRIVER2, 0x33)] {
+            for (dev, p) in stream_cases() {
+                let _stream = dev.open_active_stream().unwrap();
+                dev.poke(addr, &[idle]);
+                assert_refused(&dev, &p);
+            }
+        }
+    }
+
+    #[test]
+    fn nothing_is_written_on_an_unknown_rom() {
+        for i in 0..ROM_ID.len() {
+            let addr = ROM_ID_ADDR + i as u16;
+            for (mode, p) in [
+                (Mode::Stock, dac_hold(0, false)),
+                (Mode::Stock, mic_boost(6).unwrap()),
+                (Mode::MinHiss, settle_time(0x20).unwrap()),
+            ] {
+                let dev = FakeDevice::in_mode(mode);
+                dev.poke(addr, &[dev.byte(addr) ^ 0x01]);
+                assert_refused(&dev, &p);
+            }
+        }
+    }
+
+    #[test]
+    fn window_routines_go_live_only_with_the_gadget_in_place() {
+        for (w, hex) in [
+            (Window::Balanced, BALANCED_HEX),
+            (Window::MinHiss, MIN_HISS_HEX),
+        ] {
+            for offset in 0..GADGET.len() as u16 {
+                let dev = quiet_with(hex);
+                let addr = GADGET_ADDR + offset;
+                dev.poke(addr, &[dev.byte(addr) ^ 0xFF]);
+                let _stream = dev.open_active_stream().unwrap();
+                assert_refused(&dev, &hook_jmp(w));
+            }
+        }
+        // the vendor routine does not leave through the gadget
+        let dev = FakeDevice::in_mode(Mode::Quiet);
+        dev.poke(GADGET_ADDR, &[0x00]);
+        let _stream = dev.open_active_stream().unwrap();
+        assert_eq!(
+            apply(&dev, &hook_jmp(Window::Vendor)).unwrap(),
+            Outcome::Written
+        );
+    }
+
+    #[test]
+    fn min_hiss_goes_live_only_with_a_settle_time_in_range() {
+        for (settle, live) in [
+            (0x00, false),
+            (0x01, false),
+            (SETTLE_MIN, true),
+            (SETTLE_MAX, true),
+            (SETTLE_MAX + 1, false),
+            (0xFF, false),
+        ] {
+            let dev = quiet_with(MIN_HISS_HEX);
+            dev.poke(SETTLE_ADDR, &[settle]);
+            let _stream = dev.open_active_stream().unwrap();
+            if live {
+                assert_eq!(
+                    apply(&dev, &hook_jmp(Window::MinHiss)).unwrap(),
+                    Outcome::Written,
+                    "{settle:#04x}"
+                );
+            } else {
+                assert_refused(&dev, &hook_jmp(Window::MinHiss));
+            }
+        }
     }
 
     #[test]

@@ -33,12 +33,13 @@ usage page `0x000C` (interface 3).
 |---|---|---|
 | `$0F18` | DAC channel enables, bit 0 left, bit 1 right. `0x03` while a playback stream runs, `0x00` at idle (unless the DAC-hold immediates force it on). | proven |
 | `$0F1A` | Headphone driver power state. `0x00` fully active, `0x33` parked (ROM idle), `0x77` clamped. The values and their order of use below are observed. | proven |
-| `$0F1B` | Second output driver. `0x00` while playing, `0x33` at idle. | proven |
+| `$0F1B` | Second output driver. `0x00` while a stream plays, `0x33` at idle, in every mode. In stock mode it is the only playback register that differs between idle and playing (the vendor patch forces `$0F18` and `$0F1A`, and the references stay on). "Playback active" below means `$0F18` bit 0 set and `$0F1B == 0x00`. | proven |
 | `$0F15`, `$0F16` | DAC left/right gain; bit 7 is the DAC mute. Set at idle, cleared about 36 ms after the driver reaches `0x00`. | proven |
 | `$0F3E` | Analog power-up reference. Bit 1 is the bias reference: `0x02` while active, cleared by balanced mode at idle. | proven |
 | `$0F40` bit 1, `$0F4A` bit 4, `$0F4E` bit 7 | Further steps of the analog power-up sequence (`$0F4E` bit 7 is step 0, `$0F4A` bit 4 and `$0F3E` bit 1 step 1, `$0F40` bit 1 step 2). Read as set while active. | inferred |
 | `$0F2C` | Codec power-down bits. Seen as `0x40` (stock) and `0x60` (quiet idle). Shown by `status`, never written. | proven (values), inferred (name) |
 | `$0F71` | Stream routing enables, bits 0/1 checked by the ROM driver update. | inferred |
+| `$1001..$1005` | Firmware version `15 00 00 00` and chip id `03`. | proven |
 | `$1017` | MIC_CONTROL. Bits 2:0 are the analog mic boost, 6 dB steps; vendor value `0x3C` (boost 4). cxtune writes `0x38..0x3F`. | proven |
 | `$1013`, `$1014` | Volume-mute flags and output control, consulted by the ROM driver update (`$1014` bit 0 selects the 0x00/0x33 driver choice). | inferred |
 | `$16CF`, `$17D0` | The `ORA #imm` immediates in the DAC-hold routines at `$16C9` and `$17CA`. `0x03` forces `$0F18` bits 0/1 on at every pass; `0x00` leaves them to the ROM. | proven |
@@ -88,6 +89,17 @@ ROM sequences that the routines call or imitate (inferred from the disassembly):
 
 cxtune writes only to: `$14B1..$14B3` (hook), `$16CF`, `$17D0` (DAC holds), `$1EFC..$1F26`
 (window) and `$1017` (mic). Anything else is refused at the single write function.
+
+Guards checked there, right before each write, besides the before-bytes of the patch:
+
+- every write: the ROM identity at `$1001..$1005` (`15 00 00 00 03`);
+- every write that changes the hook or its routine (they are made with a stream open):
+  playback active (`$0F18` bit 0 and `$0F1B == 0x00`);
+- hook to RTS: the operands match the installed routine, and `$0F3E` bit 1 is set;
+- operands and window parts: the hook is RTS;
+- hook to JMP: the operands and the whole routine are in place; for a routine in the window,
+  the `PLA PLA RTS` gadget at `$1EF9` (both routines leave through it); for min-hiss, the
+  settle immediate is in `0x02..0xC8`.
 
 ## The window images
 
@@ -181,23 +193,23 @@ references on at all times (proven). Constant hiss, no start pop.
 
 ## Measured on the device
 
-Method: the playback registers are polled over HID (one cycle of four reads takes about 36 ms,
-which is the time resolution below) while a silent stream is opened and closed on the dongle.
-The stream is a WDM-KS stream (so that it really ends at the close, see the audio engine
-section), kept open for 5 s from an idle start. Times are relative to the first change.
-`examples/trace.rs` is the poller. Columns are `$0F18 / $0F1A / $0F1B / $0F3E`, "mute" is
-`$0F15`/`$0F16` bit 7.
+Method: with each mode installed by `cxtune apply` and the device idle, `examples/trace.rs`
+polls the playback registers over HID (one cycle of four reads takes about 36 ms, which is the
+time resolution below) while it opens an exclusive-mode silent stream at 2 s and closes it at
+6 s. Times are relative to the first poll that shows the stream. Columns are
+`$0F18 / $0F1A / $0F1B / $0F3E`; "muted" is `$0F15`/`$0F16` bit 7.
 
-| Mode | Idle | Start | Stop (5.1-5.2 s after the start) |
+| Mode | Idle | Start | Stop (first poll after the close) |
 |---|---|---|---|
 | stock | `03 / 00 / 33 / 02`, not muted | `$0F1B` 33 -> 00 only | `$0F1B` back to 33 |
-| quiet | `00 / 33 / 33 / 02`, muted | `$0F1A` 00 and `$0F18` 03 together, DAC unmuted in the next cycle | `$0F18` 00, `$0F1A` 33, muted |
-| balanced | `00 / 77 / 33 / 00`, muted | `$0F18` 03, `$0F1A` 33, `$0F3E` 02 together; `$0F1A` 00 and unmute at +626 ms | `$0F1A` 33, `$0F3E` 00, `$0F18` 00, muted; `$0F1A` 77 at +811 ms |
-| min-hiss | `00 / 77 / 33 / 02`, muted | `$0F18` 03, `$0F1A` 33 together; `$0F1A` 00 at +627 ms; unmute at +735 ms | `$0F1A` 77, `$0F18` 00, muted |
+| quiet | `00 / 33 / 33 / 02`, muted | `03 / 00 / 00 / 02` and unmuted at once | `00 / 33 / 33 / 02`, muted |
+| balanced | `00 / 77 / 33 / 00`, muted | `03 / 33 / 33 / 02` at once; `$0F1A` and `$0F1B` 00 at +589 ms; unmuted 37 ms later | `00 / 33 / 33 / 00`, muted; `$0F1A` 77 at +812 ms |
+| min-hiss | `00 / 77 / 33 / 02`, muted | `03 / 33 / 33 / 02` at once; `$0F1A` and `$0F1B` 00 at +588 ms; unmuted 148 ms later | `00 / 77 / 33 / 02`, muted |
 
-- Min-hiss with the settle time set to `0x1E` (300 ms): `$0F1A` 33 -> 00 after 295 ms. The
-  defaults (`0x3C`, 600 ms) measured 627 ms; T2 (`0x0A`, 100 ms) measured 108 ms.
-- Balanced stop: the 800 ms timer of the power-down measured 811 ms.
+- Min-hiss with the settle time set to `0x1E` (300 ms): `$0F1A` 33 -> 00 after 294 ms and the
+  unmute 150 ms later. With the default `0x3C` (600 ms) the same step took 588 ms. T2 (`0x0A`,
+  100 ms) is the other part of the unmute delay; the rest is the poll resolution.
+- Balanced stop: the 800 ms timer of the power-down measured 812 ms.
 - The mode tuples, the raw bytes (`$14B1..$14B4`, `$16C9`, `$17CA`, the 43-byte window,
   `$1017`) and the registers above were read back after installing each mode.
 - Start and stop transients in the microphone recording (previous research, 20 ms peak of the
@@ -229,6 +241,8 @@ A mode is the tuple (DAC holds, hook opcode, hook operands, window part 1, windo
 leaves behind, to any mode:
 
 1. A minimum-hiss settle time other than the default is first put back to `0x3C` (in place).
+   A tuned settle time is recognised only in a whole min-hiss routine (both window parts), so
+   this step is always possible.
 2. If the hook is live and anything it runs will change, it is turned to RTS first.
 3. Window parts and operands change only while the hook is RTS. Installing a routine writes
    its parts, then the operands. Removing one writes the operands, then the parts.
@@ -236,21 +250,42 @@ leaves behind, to any mode:
    operands point at it.
 5. DAC holds are released before the hook changes and held again after it.
 
-Unrecognised bytes anywhere (hook, window, DAC routines) are refused before the first write.
+Unrecognised bytes anywhere (ROM identity, hook, window, DAC routines) are refused before the
+first write, and before a stream is opened.
+
+Before the first write of a change that needs the stream, the executor waits until the codec
+shows it: `$0F18` bit 0, `$0F1A == 0x00`, `$0F1B == 0x00` and `$0F3E` bit 1. The stream is
+only running on the host side when Windows reports it; the codec follows a moment later, and
+in stock mode `$0F1B` is the one register that tells. Each write that needs the stream is also
+refused unless the stream is still running and the codec still shows playback, so a stream that
+dies partway stops the change before the next such write (DAC-hold writes in between need
+nothing and are made).
 
 ## The Windows audio engine and the output pin
 
-cxtune opens its silent stream in WASAPI shared mode. After the last shared-mode client closes,
-Windows often keeps the endpoint's USB alternate setting active, so the codec keeps seeing a
-playback stream (`$0F18 = 0x03`, `$0F1A = 0x00`) and the idle hiss reduction does not take
-effect. Observed on this machine (Windows 11 build 26200):
+The codec follows the USB stream of the dongle's playback endpoint: while Windows keeps it
+running the codec shows playback (`$0F18 = 0x03`, `$0F1A = 0x00`, `$0F1B = 0x00`), and the idle
+state, with its lower hiss, starts when Windows ends it. Observed on this machine (Windows 11
+build 26200):
 
-- It happens in about half of the trials, and a held pin was unchanged after more than
-  7 minutes. A stream opened from Python (PortAudio WASAPI shared mode) behaves the same, so
-  it is not specific to cxtune's stream.
-- Closing a WDM-KS stream releases the pin every time; an exclusive-mode stream mostly does.
-- A second short shared-mode stream released a held pin in 1 of 4 trials, so it is not a
-  reliable remedy.
+- **Exclusive mode.** The USB stream ends when an exclusive-mode stream closes. `$0F18` was
+  `0x00` at the first poll after the close in 12 of 12 trials (79-112 ms after the close began,
+  which includes stopping the stream and one poll), and 14 mode changes in a row, each with
+  its own stream, left the output idle every time.
+- **Shared mode.** After a shared-mode stream closes, Windows often keeps the USB stream
+  running: in about half of the trials the output stayed active, in one trial for more than
+  7 minutes. A shared stream from Python (PortAudio WASAPI) does the same, so it is not
+  specific to cxtune's stream. A WDM-KS stream (PortAudio) released it every time; a second
+  short shared stream released a held pin in 1 of 4 trials.
+- **Exclusive mode cuts other programs off.** Opening an exclusive stream while a shared-mode
+  client had a session on the endpoint (playing silence, or merely open) stopped that client
+  for good: its callbacks ended, and the idle one could not be started afterwards.
+
+So `audio::open_silence` opens an exclusive 16-bit stereo stream (48, 44.1 or 96 kHz) only when
+no program other than the system sounds has a session on the endpoint, active or not, and a
+shared-mode stream otherwise (also when the endpoint offers no such exclusive format). With a
+program's session open the output is in use anyway, and a shared stream next to it left both an
+active and an idle Python client running. The buffer is filled with zeros and flagged silent.
 
 Writes do not depend on the pin: the planner runs from either state. `status` shows
 `$0F18`/`$0F1A`, which tells a held pin from a real idle.
@@ -262,8 +297,8 @@ Writes do not depend on the pin: the planner runs from either state. `status` sh
   non-balanced routine in place) at that moment leaves them off until a replug. The hook is
   therefore never turned off unless `$0F3E` bit 1 is set (checked in the write guard), and
   every change that needs the hook off runs with a stream open, which makes balanced mode
-  raise the references first (the plan waits for `$0F18` bit 0, `$0F1A = 0x00` and `$0F3E`
-  bit 1 before the first write).
+  raise the references first (the plan waits for the codec to show the stream, with `$0F3E`
+  bit 1 set, before the first write).
 - **A driver transition while the hook is off.** With the hook at RTS at idle the ROM parks the
   driver at `0x33`, and the next routine then clamps it at `0x77`: two bias steps. With a
   silent stream open the driver is at `0x00` throughout, so the swap causes none.

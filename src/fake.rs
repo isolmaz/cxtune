@@ -4,18 +4,22 @@
 //! written from the documented firmware bytes, independently of the patch code, so a typo there
 //! makes tests fail.
 //!
+//! A stream is seen by the codec only after a few reads, as on the real device, where the
+//! endpoint takes a moment to start the USB stream after Windows says it runs.
+//!
 //! Every write is checked as it arrives, and a violation panics, so a planner or guard bug fails
 //! the test that triggers it:
 //! - only the allowed regions are written;
-//! - the hook, its operands and the routine are written only while a silent stream has the
-//!   device fully active, and the routine and operands only while the hook is RTS;
+//! - the hook, its operands and the routine are written only while the codec sees a silent
+//!   stream and the device is fully active, and the routine and operands only while the hook
+//!   is RTS;
 //! - the hook never leaves a live state to RTS while the analog references are off;
 //! - a live hook always runs a whole known routine.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::mode::Mode;
+use crate::mode::{Mode, Stream};
 use crate::protocol::{OutReport, Transport};
 use crate::{Error, Result};
 
@@ -45,6 +49,9 @@ const DRIVER: usize = 0x0F1A;
 const DRIVER2: usize = 0x0F1B;
 const REFS: usize = 0x0F3E;
 
+/// Reads between a stream opening and the codec showing it.
+const STREAM_DELAY_READS: usize = 10;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Running {
     /// The vendor routine: driver forced on.
@@ -61,7 +68,16 @@ struct Inner {
     ignore_writes: bool,
     fail_after_writes: Option<usize>,
     no_endpoint: bool,
+    /// The stream is running on the host side.
     stream_open: bool,
+    /// The codec shows the stream: it follows `stream_open` after `stream_delay` reads.
+    stream_seen: bool,
+    stream_delay: usize,
+    reads_until_seen: usize,
+    /// The stream stops after this many writes.
+    stop_stream_after_writes: Option<usize>,
+    /// Writes that arrived while a stream was open but not yet shown by the codec.
+    early_writes: usize,
     streams_opened: usize,
     pending: Option<Vec<u8>>,
 }
@@ -76,14 +92,29 @@ pub struct FakeStream(FakeDevice);
 impl Drop for FakeStream {
     fn drop(&mut self) {
         let mut d = self.0.0.borrow_mut();
-        d.stream_open = false;
+        d.stop_stream();
         if !std::thread::panicking() {
             d.settle();
         }
     }
 }
 
+impl Stream for FakeStream {
+    fn check(&self) -> Result<()> {
+        if self.0.0.borrow().stream_open {
+            Ok(())
+        } else {
+            Err(Error::Device("the silent stream stopped".into()))
+        }
+    }
+}
+
 impl Inner {
+    fn stop_stream(&mut self) {
+        self.stream_open = false;
+        self.stream_seen = false;
+    }
+
     fn running(&self) -> Running {
         let [op, lo, hi, next] = self.mem[HOOK..HOOK + 4] else {
             unreachable!()
@@ -116,7 +147,7 @@ impl Inner {
     /// hook and stream state.
     fn settle(&mut self) {
         let running = self.running();
-        if self.stream_open {
+        if self.stream_seen {
             self.mem[ENABLE] |= 0x03;
             self.mem[DRIVER] = 0x00;
             self.mem[DRIVER2] = 0x00;
@@ -140,7 +171,7 @@ impl Inner {
     }
 
     fn active(&self) -> bool {
-        self.stream_open
+        self.stream_seen
             && self.mem[ENABLE] & 1 != 0
             && self.mem[DRIVER] == 0x00
             && self.mem[REFS] & 0x02 != 0
@@ -163,7 +194,7 @@ impl Inner {
         if (touches_hook || touches_window) && !settle_only {
             assert!(
                 self.active(),
-                "write to ${addr:04X} without an active silent stream"
+                "write to ${addr:04X} while the codec does not show an active silent stream"
             );
         }
         if ((addr > HOOK && touches_hook) || touches_window) && !settle_only {
@@ -209,6 +240,8 @@ impl FakeDevice {
         put(DAC_A, &[hold]);
         put(DAC_B, &[hold]);
         put(WINDOW, &bytes(window));
+        put(0x1EF9, &[0x68, 0x68, 0x60]);
+        put(0x1001, &[0x15, 0x00, 0x00, 0x00, 0x03]);
         put(MIC, &[0x3C]);
         put(REFS, &[0x02]);
         let dev = Self(Rc::new(RefCell::new(Inner {
@@ -218,6 +251,11 @@ impl FakeDevice {
             fail_after_writes: None,
             no_endpoint: false,
             stream_open: false,
+            stream_seen: false,
+            stream_delay: STREAM_DELAY_READS,
+            reads_until_seen: 0,
+            stop_stream_after_writes: None,
+            early_writes: 0,
             streams_opened: 0,
             pending: None,
         })));
@@ -281,12 +319,45 @@ impl FakeDevice {
         self.0.borrow().stream_open
     }
 
+    /// Writes made after a stream was opened but before the codec showed it.
+    pub fn early_writes(&self) -> usize {
+        self.0.borrow().early_writes
+    }
+
+    /// Opens a stream that the codec already shows.
+    pub fn open_active_stream(&self) -> Result<FakeStream> {
+        let stream = self.open_stream()?;
+        let mut d = self.0.borrow_mut();
+        d.stream_seen = true;
+        d.settle();
+        Ok(stream)
+    }
+
+    /// True once the codec shows the stream.
+    pub fn codec_sees_stream(&self) -> bool {
+        self.0.borrow().stream_seen
+    }
+
+    /// The codec never shows a stream that is opened, as if the endpoint were not the one
+    /// behind the dongle's output.
+    pub fn never_show_streams(&self) {
+        self.0.borrow_mut().stream_delay = usize::MAX;
+    }
+
+    /// The running stream stops after `n` more writes, as if the audio thread had failed.
+    pub fn stop_stream_after_writes(&self, n: usize) {
+        let mut d = self.0.borrow_mut();
+        d.stop_stream_after_writes = Some(d.writes.len() + n);
+    }
+
     pub fn open_stream(&self) -> Result<FakeStream> {
         let mut d = self.0.borrow_mut();
         if d.no_endpoint {
             return Err(Error::Device("no playback endpoint".into()));
         }
         d.stream_open = true;
+        d.stream_seen = false;
+        d.reads_until_seen = d.stream_delay;
         d.streams_opened += 1;
         d.settle();
         Ok(FakeStream(self.clone()))
@@ -312,11 +383,18 @@ impl Transport for FakeDevice {
                 }
                 let data = b[5..5 + len].to_vec();
                 d.check_write(addr, &data);
+                if d.stream_open && !d.stream_seen {
+                    d.early_writes += 1;
+                }
                 if !d.ignore_writes {
                     d.mem[addr..addr + len].copy_from_slice(&data);
                     d.settle();
                 }
                 d.writes.push((addr as u16, data));
+                if d.stop_stream_after_writes == Some(d.writes.len()) {
+                    d.stop_stream();
+                    d.settle();
+                }
             }
             flags => panic!("forbidden flags {flags:#04x}"),
         }
@@ -325,9 +403,17 @@ impl Transport for FakeDevice {
 
     fn receive(&mut self) -> Result<Vec<u8>> {
         let mut r = vec![0u8; 33];
-        if let Some(data) = self.0.borrow_mut().pending.take() {
+        let mut d = self.0.borrow_mut();
+        if let Some(data) = d.pending.take() {
             r[0] = 0x05;
             r[1..1 + data.len()].copy_from_slice(&data);
+            if d.stream_open && !d.stream_seen {
+                d.reads_until_seen = d.reads_until_seen.saturating_sub(1);
+                if d.reads_until_seen == 0 {
+                    d.stream_seen = true;
+                    d.settle();
+                }
+            }
         }
         Ok(r)
     }

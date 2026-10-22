@@ -5,17 +5,19 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use crate::patches::{
-    self, DAC_HOLD_OFF, DAC_HOLD_ON, DAC_PREFIX, DAC_SUFFIX, JMP, MIC_MAX, MIC_MIN, Outcome, Part,
-    Patch, RTS, SETTLE_DEFAULT, SETTLE_INDEX, SETTLE_MAX, SETTLE_MIN, VENDOR_OPERANDS,
-    WINDOW_OPERANDS, Window, apply_patch,
+    self, DAC_ENABLE, DAC_HOLD_OFF, DAC_HOLD_ON, DAC_PREFIX, DAC_SUFFIX, HP_DRIVER, JMP, MIC_MAX,
+    MIC_MIN, Outcome, Part, Patch, ROM_ID, ROM_ID_ADDR, RTS, SETTLE_DEFAULT, SETTLE_INDEX,
+    SETTLE_MAX, SETTLE_MIN, VENDOR_OPERANDS, WINDOW_OPERANDS, Window, apply_patch,
 };
 use crate::protocol::{Transport, read_mem};
 use crate::{Error, Result, hex};
 
-/// $0F18: DAC channel enables; bit 0 is set while a playback stream is running.
-pub const DAC_ENABLE: u16 = 0x0F18;
-/// $0F1A: headphone driver power state; 0x00 is fully active.
-pub const HP_DRIVER: u16 = 0x0F1A;
+/// A running playback stream of digital silence on the dongle's output. Dropping it ends the
+/// stream.
+pub trait Stream {
+    /// Fails if the stream has stopped since it was opened.
+    fn check(&self) -> Result<()>;
+}
 
 /// How long a freshly opened playback stream may take to bring the driver fully up.
 pub const READY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -85,6 +87,8 @@ struct Layout {
 /// Raw bytes of every location the app knows about.
 #[derive(Clone, Debug)]
 pub struct State {
+    /// $1001..$1005: firmware version and chip id.
+    pub rom: [u8; ROM_ID.len()],
     /// $14B1..$14B4: hook30 opcode and operands, then the next hook's opcode.
     pub hook: [u8; 4],
     /// $16C9..$16D2 and $17CA..$17D3: the DAC-hold routines.
@@ -107,6 +111,7 @@ pub struct State {
 
 pub fn read_state<T: Transport + ?Sized>(t: &mut T) -> Result<State> {
     let mut r = |addr: u16, len: usize| read_mem(t, addr, len);
+    let rom = r(ROM_ID_ADDR, ROM_ID.len())?;
     let hook = r(patches::HOOK, 4)?;
     let dac_a = r(patches::DAC_A_ROUTINE, 10)?;
     let dac_b = r(patches::DAC_B_ROUTINE, 10)?;
@@ -117,6 +122,7 @@ pub fn read_state<T: Transport + ?Sized>(t: &mut T) -> Result<State> {
     let reg_0f2c = r(0x0F2C, 1)?;
     let refs = r(patches::REFS, 1)?;
     Ok(State {
+        rom: rom.try_into().unwrap(),
         hook: hook.try_into().unwrap(),
         dac_routines: [dac_a.try_into().unwrap(), dac_b.try_into().unwrap()],
         window: window.try_into().unwrap(),
@@ -142,7 +148,10 @@ fn part_matches(window: Window, part: Part, got: &[u8]) -> bool {
 
 impl State {
     /// What each part of the window holds, or `None` if either matches no known routine.
-    /// The minimum-hiss routine matches with any settle time in the allowed range.
+    /// The minimum-hiss routine matches with any settle time in the allowed range, but a
+    /// tuned one only as a whole routine: next to another routine's second part it is not a
+    /// state the planner can leave, since putting the default back is guarded on the whole
+    /// routine.
     pub fn parts(&self) -> Option<[Window; 2]> {
         let find = |part: Part| {
             let got = &self.window[part.offset()..part.offset() + part.size()];
@@ -150,7 +159,9 @@ impl State {
                 .into_iter()
                 .find(|&w| part_matches(w, part, got))
         };
-        Some([find(Part::First)?, find(Part::Second)?])
+        let parts = [find(Part::First)?, find(Part::Second)?];
+        let tuned = parts[0] == Window::MinHiss && self.window[SETTLE_INDEX] != SETTLE_DEFAULT;
+        (!tuned || parts[1] == Window::MinHiss).then_some(parts)
     }
 
     /// The minimum-hiss settle time in 10 ms units, if that routine is in the window.
@@ -190,6 +201,13 @@ impl State {
     }
 
     fn layout(&self) -> Result<Layout> {
+        if self.rom != ROM_ID {
+            return Err(Error::Refused(format!(
+                "unknown firmware at ${ROM_ID_ADDR:04X}: {}, expected {}",
+                hex(&self.rom),
+                hex(&ROM_ID)
+            )));
+        }
         let (jmp, window_operands) = self.hook_config().ok_or_else(|| {
             Error::Refused(format!(
                 "unrecognised hook bytes at $14B1: {}",
@@ -302,31 +320,39 @@ pub fn plan(state: &State, target: Mode) -> Result<Vec<Patch>> {
 /// Changes to the hook or the routine it runs are made while the stream that `open_stream`
 /// opens is running: it must play digital silence on the dongle's output. The stream keeps
 /// the headphone driver from changing state while the hook is briefly off, and brings the
-/// analog references up before balanced mode is left.
-pub fn apply_mode<T: Transport + ?Sized, S>(
+/// analog references up before balanced mode is left. Nothing is written until the codec
+/// shows the stream, and a write is refused once the stream has stopped or the codec no
+/// longer shows playback.
+pub fn apply_mode<T: Transport + ?Sized, S: Stream>(
     t: &mut T,
     target: Mode,
     open_stream: impl FnOnce() -> Result<S>,
 ) -> Result<usize> {
-    run(t, target, open_stream, READY_TIMEOUT)
+    run(t, target, open_stream, READY_TIMEOUT, READY_POLL)
 }
 
-fn run<T: Transport + ?Sized, S>(
+fn run<T: Transport + ?Sized, S: Stream>(
     t: &mut T,
     target: Mode,
     open_stream: impl FnOnce() -> Result<S>,
     ready_timeout: Duration,
+    ready_poll: Duration,
 ) -> Result<usize> {
     let steps = plan(&read_state(t)?, target)?;
-    let _stream = if steps.iter().any(Patch::needs_stream) {
+    let stream = if steps.iter().any(Patch::needs_stream) {
         let stream = open_stream()?;
-        wait_ready(t, ready_timeout)?;
+        wait_ready(t, &stream, ready_timeout, ready_poll)?;
         Some(stream)
     } else {
         None
     };
     let mut written = 0;
     for p in &steps {
+        if let Some(stream) = &stream
+            && p.needs_stream()
+        {
+            stream.check()?;
+        }
         if apply_patch(t, p)? == Outcome::Written {
             written += 1;
         }
@@ -334,26 +360,36 @@ fn run<T: Transport + ?Sized, S>(
     Ok(written)
 }
 
-/// Waits until playback is running with the driver fully on and the analog references up.
-fn wait_ready<T: Transport + ?Sized>(t: &mut T, timeout: Duration) -> Result<()> {
+/// Waits until the codec shows the stream: the DAC enabled, both drivers fully on and the
+/// analog references up. In stock mode the vendor patch forces everything but `$0F1B`, so
+/// that one tells playback from idle.
+fn wait_ready<T: Transport + ?Sized, S: Stream>(
+    t: &mut T,
+    stream: &S,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<()> {
     let deadline = Instant::now() + timeout;
     loop {
+        stream.check()?;
         let enable = read_mem(t, DAC_ENABLE, 1)?[0];
-        let driver = read_mem(t, HP_DRIVER, 1)?[0];
+        let drivers = read_mem(t, HP_DRIVER, 2)?;
         let refs = read_mem(t, patches::REFS, 1)?[0];
-        if enable & 1 != 0 && driver == 0x00 && refs & patches::REFS_ON != 0 {
+        if enable & 1 != 0 && drivers == [0x00, 0x00] && refs & patches::REFS_ON != 0 {
             return Ok(());
         }
         if Instant::now() >= deadline {
             return Err(Error::Device(format!(
-                "the dongle did not reach the active playback state within {} s \
-                 ($0F18={enable:#04x} $0F1A={driver:#04x} $0F3E={refs:#04x}); nothing was written. \
-                 Check that no other program holds the output exclusively; if the references \
+                "the dongle did not show the silent stream within {} s ($0F18={enable:#04x} \
+                 $0F1A={:#04x} $0F1B={:#04x} $0F3E={refs:#04x}); nothing was written. \
+                 Check that no other program holds the output; if the references \
                  ($0F3E bit 1) stay off, replug the dongle",
-                timeout.as_secs()
+                timeout.as_secs(),
+                drivers[0],
+                drivers[1]
             )));
         }
-        sleep(READY_POLL);
+        sleep(poll);
     }
 }
 
@@ -393,8 +429,16 @@ mod tests {
     use super::*;
     use crate::fake::{BALANCED_HEX, FakeDevice, MIN_HISS_HEX, VENDOR_HEX, bytes};
 
+    const FAST_POLL: Duration = Duration::from_millis(1);
+
     fn apply(dev: &FakeDevice, target: Mode) -> Result<usize> {
-        apply_mode(&mut dev.clone(), target, || dev.open_stream())
+        run(
+            &mut dev.clone(),
+            target,
+            || dev.open_stream(),
+            READY_TIMEOUT,
+            FAST_POLL,
+        )
     }
 
     fn state(dev: &FakeDevice) -> State {
@@ -445,6 +489,7 @@ mod tests {
                 );
                 assert_eq!(state(&dev).mode(), Some(to));
                 assert!(!dev.stream_is_open());
+                assert_eq!(dev.early_writes(), 0, "{from:?} -> {to:?}");
                 // one stream covers the whole change, and none is opened for no change
                 assert_eq!(
                     dev.streams_opened(),
@@ -627,7 +672,13 @@ mod tests {
 
     #[test]
     fn unrecognised_states_are_refused_without_writes_or_a_stream() {
-        let regions: [(u16, usize); 4] = [(0x14B1, 4), (0x1EFC, 43), (0x16C9, 10), (0x17CA, 10)];
+        let regions: [(u16, usize); 5] = [
+            (0x1001, 5),
+            (0x14B1, 4),
+            (0x1EFC, 43),
+            (0x16C9, 10),
+            (0x17CA, 10),
+        ];
         for from in Mode::ALL {
             for (addr, len) in regions {
                 for a in addr..addr + len as u16 {
@@ -715,6 +766,7 @@ mod tests {
                 to,
                 || dev.open_stream(),
                 Duration::from_millis(120),
+                FAST_POLL,
             )
             .unwrap_err();
             assert!(matches!(err, Error::Device(_)), "{to:?}: {err}");
@@ -731,12 +783,117 @@ mod tests {
             Mode::Quiet,
             || dev.open_stream(),
             Duration::from_millis(60),
+            FAST_POLL,
         )
         .unwrap_err();
         let Error::Device(message) = err else {
             panic!("{err}")
         };
         assert!(message.contains("$0F3E=0x00"), "{message}");
+    }
+
+    #[test]
+    fn the_wait_ends_only_when_the_codec_shows_the_stream() {
+        // stock forces the DACs, the driver and the references on, so only $0F1B differs
+        let dev = FakeDevice::in_mode(Mode::Stock);
+        let stream = dev.open_stream().unwrap();
+        assert!(!dev.codec_sees_stream());
+        wait_ready(&mut dev.clone(), &stream, READY_TIMEOUT, FAST_POLL).unwrap();
+        assert!(dev.codec_sees_stream());
+    }
+
+    #[test]
+    fn nothing_is_written_when_the_codec_never_shows_the_stream() {
+        for from in Mode::ALL {
+            let dev = FakeDevice::in_mode(from);
+            dev.never_show_streams();
+            let err = run(
+                &mut dev.clone(),
+                Mode::Balanced,
+                || dev.open_stream(),
+                Duration::from_millis(40),
+                FAST_POLL,
+            );
+            if from == Mode::Balanced {
+                assert_eq!(err.unwrap(), 0);
+                continue;
+            }
+            let Err(Error::Device(message)) = err else {
+                panic!("{from:?}: {err:?}")
+            };
+            assert!(message.contains("$0F1B="), "{from:?}: {message}");
+            assert!(dev.writes().is_empty(), "{from:?}");
+            assert!(!dev.stream_is_open());
+        }
+    }
+
+    #[test]
+    fn a_stream_that_stops_ends_the_change_before_the_next_stream_write() {
+        for from in Mode::ALL {
+            for to in Mode::ALL {
+                let steps = plan(&state(&FakeDevice::in_mode(from)), to).unwrap();
+                for done in 1..steps.len() {
+                    let label = format!("{from:?} -> {to:?}, stream stops after {done}");
+                    let dev = FakeDevice::in_mode(from);
+                    dev.stop_stream_after_writes(done);
+                    let result = apply(&dev, to);
+                    if let Some(skipped) = steps[done..].iter().position(Patch::needs_stream) {
+                        let err = result.expect_err(&label);
+                        assert!(
+                            err.to_string().contains("silent stream stopped"),
+                            "{label}: {err}"
+                        );
+                        // DAC holds before the next stream patch need no stream
+                        assert_eq!(dev.writes().len(), done + skipped, "{label}");
+                    } else {
+                        // only DAC holds are left
+                        result.unwrap_or_else(|e| panic!("{label}: {e}"));
+                    }
+                    apply(&dev, to).unwrap_or_else(|e| panic!("{label}: {e}"));
+                    assert_eq!(dev.mem(), FakeDevice::in_mode(to).mem(), "{label}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_stream_that_is_already_dead_ends_the_wait() {
+        struct Dead;
+        impl Stream for Dead {
+            fn check(&self) -> Result<()> {
+                Err(Error::Device("dead stream".into()))
+            }
+        }
+        let dev = FakeDevice::in_mode(Mode::Stock);
+        let err = run(
+            &mut dev.clone(),
+            Mode::Balanced,
+            || Ok(Dead),
+            Duration::from_millis(300),
+            FAST_POLL,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("dead stream"), "{err}");
+        assert!(dev.writes().is_empty());
+    }
+
+    #[test]
+    fn a_tuned_settle_time_next_to_another_routine_is_not_a_state() {
+        let dev = FakeDevice::in_mode(Mode::MinHiss);
+        dev.poke(0x14B1, &[0x60]);
+        dev.poke(0x1F1C, &bytes(VENDOR_HEX)[32..]);
+        dev.settle();
+        // the default settle time leaves a state the planner can move on from
+        assert_eq!(state(&dev).parts(), Some([Window::MinHiss, Window::Vendor]));
+        assert!(plan(&state(&dev), Mode::Quiet).is_ok());
+
+        dev.poke(0x1F15, &[0x1E]);
+        assert_eq!(state(&dev).parts(), None);
+        for to in Mode::ALL {
+            assert!(matches!(apply(&dev, to), Err(Error::Refused(_))), "{to:?}");
+        }
+        assert!(dev.writes().is_empty());
+        assert_eq!(dev.streams_opened(), 0);
     }
 
     #[test]

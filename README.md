@@ -67,7 +67,8 @@ make this fail closed (a refusal), not write wrong data.
   memory that must match. Patches have private fields, so no other code can make one.
 - `patches::apply_patch` is the only function that sends a write. It reads the target and the
   guards, refuses on any mismatch, writes, reads back, and fails loudly on a readback mismatch.
-  It also refuses any address outside the known writable patch-RAM regions.
+  It also refuses any address outside the known writable patch-RAM regions, and any device whose
+  firmware version and chip id (`$1001..$1005`) are not the ones the routines were written for.
 - A write report can only be built from a patch, and only with flag `0x40` (CPU memory). The
   EEPROM (`0x20`), DSP (`0x80`) and high-address (`0x10`) flags are never used.
 - Mode changes are planned in full before the first write, from any recognised state: the four
@@ -75,21 +76,30 @@ make this fail closed (a refusal), not write wrong data.
   refused without writing anything.
 - The hook at `$14B1` is turned to RTS before the routine or its operands change and to JMP
   last, and it is only turned on when the whole routine is in place.
+- A routine is only switched on when the `PLA PLA RTS` gadget it leaves through (`$1EF9`) is in
+  place and, for min-hiss, the settle time is in its allowed range.
 - Changes to the hook or its routine are made while a playback stream of digital silence is
-  open on the dongle (WASAPI shared mode, `src/audio.rs`). The stream holds the headphone driver
-  fully on, so the moment the hook is off causes no driver transition, and it brings the analog
-  references up before balanced mode is left. Balanced mode turns them off at idle and the ROM
-  never turns them back on, so turning the hook off while they are off is refused (a replug
-  restores them).
+  open on the dongle (`src/audio.rs`). The stream holds the headphone driver fully on, so the
+  moment the hook is off causes no driver transition, and it brings the analog references up
+  before balanced mode is left. Nothing is written until the codec shows the stream, and each
+  of these writes is refused unless the codec still shows playback (`$0F18` bit 0 set and
+  `$0F1B = 0x00`), so a stream that stops partway ends the change before the next write.
+  Balanced mode turns the references off at idle and the ROM never turns them back on, so
+  turning the hook off while they are off is refused (a replug restores them).
+- The stream is a WASAPI exclusive-mode stream when no program has an audio session on the
+  dongle's output, because closing it releases the output at once. Otherwise, or when exclusive
+  mode is not available, it is a shared-mode stream: taking the output exclusively would stop
+  the other programs' sessions for good.
 - `$1151`, `$0F4D` and the sidetone bytes are not exposed.
 
 ## Known limitations
 
-- Windows sometimes keeps the dongle's output stream active after the last shared-mode stream
-  closes, including the silent one cxtune opens for a mode change. While it does, the codec
-  still sees playback (`status` shows `$0F18 = 0x03`, `$0F1A = 0x00`) and the idle hiss
-  reduction has not started yet. Closing a WDM-KS stream releases it. See the audio engine
-  section of [docs/firmware-notes.md](docs/firmware-notes.md).
+- When the silent stream has to be a shared-mode stream (another program has a session on the
+  output, or exclusive mode is off for the device), Windows sometimes keeps the dongle's output
+  active after it closes. While it does, the codec still sees playback (`status` shows
+  `$0F18 = 0x03`, `$0F1A = 0x00`) and the idle hiss reduction has not started yet. Closing an
+  exclusive-mode stream releases it. See the audio engine section of
+  [docs/firmware-notes.md](docs/firmware-notes.md).
 - Patch RAM that does not match a known mode (for example from another tool) is refused and
   nothing is written; replugging the dongle restores the vendor patch.
 
@@ -122,8 +132,8 @@ state and the analog references, and panics on any write that breaks the rules a
 planner or guard bug fails the test that triggers it.
 
 With the dongle connected, `cargo run --release --example trace -- <open_s> <close_s> <total_s>`
-opens and closes a silent stream and prints every change of the playback registers with a
-timestamp. It only reads.
+opens and closes a silent stream (and says whether it is exclusive or shared) and prints every
+change of the playback registers with a timestamp. It only reads.
 
 ## GUI recommendation
 
