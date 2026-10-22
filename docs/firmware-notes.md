@@ -166,7 +166,8 @@ The byte sequences are proven; the annotations are inferred from the ROM disasse
   every test above uses a single-bit mask (proven by a failed earlier version, exact semantics
   not determined).
 - Idle: `$0F1A = 0x77`, `$0F1B = 0x33`, references untouched. Start: `0x77 -> 0x33`, `0x00` after T1.
-- Cost: loud start pop (recorded), audio muted for the settle time.
+- Cost: loud start pop (recorded); audio is muted for T1 plus T2 (735 ms measured with the
+  defaults).
 
 ### Quiet
 

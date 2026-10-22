@@ -22,7 +22,7 @@ stream starts:
 | `stock` | Vendor behaviour: driver always on. Constant hiss. | No pops. | None. |
 | `quiet` | ROM default idle power-down: driver parked at `0x33`. Some hiss. | Low pop. | None. |
 | `balanced` | Driver clamped at `0x77`, analog references off. | Follows the ROM power-up order. | The first 600 ms of audio are muted after idle; opening the microphone from full idle gives 1.26 s of silence and a click. |
-| `min-hiss` | Driver clamped at `0x77`. | Loud pop. | Audio is muted for the settle time (default 600 ms); `tune` changes it. |
+| `min-hiss` | Driver clamped at `0x77`. | Loud pop. | Audio is muted for the settle time (default 600 ms) plus 100 ms; `tune` changes the settle time. |
 
 The exact bytes, registers and measurements behind each mode are in
 [docs/firmware-notes.md](docs/firmware-notes.md).
