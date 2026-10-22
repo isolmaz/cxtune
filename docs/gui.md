@@ -18,22 +18,31 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
 
 ## Window, icon and process
 
-- **Tabs.** Output (mode, indicators, start delay, headphone volume, "Apply recommended"),
-  Microphone (boost, noise reduction, AGC, microphone volume), Sidetone, General (start with
-  Windows, language, log folder) and About. The window has a fixed size of 480 x 348 logical
-  pixels and no scrolling. A "?" next to a label explains it in a box while the mouse is over it.
-- **Icon.** The icon (`gui/assets/app.ico`, `tray.png` and `window.png`, a blue disc with three
-  white bars) is the project's own work, drawn from plain shapes. Nothing in it is taken from an
-  icon set or another program.
+- **Layout.** The window has a fixed size of 720 x 480 logical pixels and no scrolling. The
+  header holds a photo of the dongle (`gui/assets/dongle.png`), its name, a pill with the state of
+  the dongle and the OUT and MIC level meters. A column of pages on the left (Output, Microphone,
+  Sidetone, General, each with a glyph of Segoe Fluent Icons) leads to the page on the right, made
+  of Windows 11 style cards. About is a page of General: a row of its card opens it and the
+  breadcrumb at its top leads back. A "?" next to the title of a row explains the row in a box
+  while the mouse is over it. Left and Right move between the mode cards from the keyboard, Up and
+  Down between the pages, and Space or Enter chooses.
+- **Meters.** The OUT and MIC meters take a peak level in dBFS (`out-db`, `mic-db`) and a flag
+  (`meters-active`). While the flag is false they stay neutral (every segment off); nothing in the
+  application delivers levels yet.
+- **Colours.** The window follows the light or dark scheme and the accent colour of Windows.
+- **Icon.** The icon (`gui/assets/app.ico`, `tray.png` and `window.png`, a blue rounded square
+  with a white headphone) is the project's own work, drawn from plain shapes. Nothing in it is
+  taken from an icon set or another program.
 - **Status.** The band at the bottom shows two lines: what is wrong (or how the dongle stands) and
   what to do about it, a coloured dot, an "Open log" link when the log holds technical details,
-  and the Re-apply button. Nothing else is repeated elsewhere.
+  and the Re-apply button. The pill in the header is a short form of the first line.
 - **Closing** the window hides it; the application keeps running in the notification area.
   The icon's menu has Show, the four modes (the chosen one marked with a filled circle; the
   Windows menu of Slint 1.18.1 has no check marks), Re-apply, About and Quit. A click on the
   icon shows the window. The tooltip is the same first status line as the window's. Quit stops
   the engine (a mode change in progress finishes first, which takes seconds) and ends the
-  process.
+  process. A launch that arrives while the engine is being stopped does not bring the window
+  back.
 - **One instance.** The first process holds the named lock `Local\cxtune-gui` and a named
   event. A second launch signals the event and exits; the first shows and raises its window.
 - **Start with Windows** writes `"<path of the exe>" --minimized` to the value `cxtune` under
@@ -43,7 +52,15 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
   Turkish (`tr-*`) and English otherwise; the choice is saved in `%APPDATA%\cxtune\gui.toml`.
   The texts are in the interface files; the Turkish catalogue is
   `gui/lang/tr/LC_MESSAGES/cxtune-gui.po` and a test checks that every text has a translation,
-  that none is left over and that the placeholders match.
+  that none is left over and that the placeholders match. The same words are used everywhere:
+
+  | English | Turkish | Meaning |
+  |---|---|---|
+  | Noise floor (Noise) | Gürültü tabanı (Gürültü) | the hiss of the headphone driver at idle |
+  | Click | Tık | the pop when audio starts |
+  | Mute delay | Açılış gecikmesi | how long the start of audio is muted |
+  | Soft-start time | Yumuşak açılış süresi | the settle time of Lowest noise |
+  | Default, Click-free, Balanced, Lowest noise | Varsayılan, Tıksız, Dengeli, En düşük gürültü | the modes stock, quiet, balanced and minimum hiss |
 
 ## Threads
 
@@ -69,35 +86,43 @@ then the vendor's value, so a control always shows what is true. A control that 
 used keeps the user's value. Sliders send a command at once and then at most one per 100 ms,
 with the last value always sent when the slider is released.
 
-- **Mode and start delay.** The delay slider is enabled only in minimum hiss mode, with the range
-  of the core (20-2000 ms in steps of 10).
-- **Mode indicators** (Hiss, Pop, Delay) show only what the documentation records
-  ([firmware-notes.md](firmware-notes.md), README): hiss as the README words it (constant, some,
-  reduced), the pop as recorded (none in stock mode, low in quiet mode, loud in minimum hiss) and
-  the time that the start of audio is muted, as measured (none in stock and quiet mode, about
-  0.6 s in balanced mode, the start delay plus 100 ms in minimum hiss). The start pop of
-  balanced mode was not measured and says so.
+- **Mode and soft-start time.** The four modes are cards; the chosen one has a border and a
+  check mark and the recommended one a badge. The soft-start time slider is enabled only in
+  Lowest noise, with the range of the core (20-2000 ms in steps of 10).
+- **Mode indicators** (Noise floor, Click, Mute delay) on every card show only what the
+  documentation records ([firmware-notes.md](firmware-notes.md), README): the noise floor as the
+  README words it (constant, some, reduced), the click as recorded (none in stock mode, low in
+  quiet mode, loud in minimum hiss) and the time that the start of audio is muted, as measured
+  (none in stock and quiet mode, about 0.6 s in balanced mode, the soft-start time plus 100 ms in
+  minimum hiss). The start click of balanced mode was not measured and says "not measured". Quiet
+  mode is called Click-free and still shows a low click, because that is what was recorded.
 - **Microphone boost** 0-7 shows the gain compared with the vendor's step 4, 6 dB per step. The
   gain of step 0 itself is not documented, so no absolute gain is shown. Step 6 is marked
-  recommended (best signal-to-noise ratio, in a single measurement, so only indicative); a hint
-  says that the step from 6 to 7 raised the noise by 6 dB.
+  recommended (best signal-to-noise ratio, in a single measurement, so only indicative); the "?"
+  says that the step from 6 to 7 raised the noise by 6 dB. In balanced mode a note says that
+  opening the microphone from idle gives 1.26 s of silence and a click.
 - **Noise reduction** (measured: about 12 dB less steady noise) and **AGC** (experimental: no
   effect on steady noise could be measured, speech not tested).
-- **Sidetone** is experimental and its loudness was never measured. Switching it on while the
+- **Sidetone** is experimental and its loudness was never listened to. The level is shown in dB:
+  the register is a gain in units of 1/256 dB (UAC), from 0 to +16 dB, and the vendor's untouched
+  value 947 is +3.7 dB. That scale comes from the ROM, not from listening, so nothing says that a
+  low value is quiet. Only the window divides the register by 256. Switching sidetone on while the
   level is still the vendor's untouched 947 first sets 200. The level slider is logarithmic over
-  the register range 1-4096. A line advises against turning on the Windows setting "Listen to
-  this device" at the same time (an echo).
-- **Apply recommended** sets balanced mode, microphone boost 6, noise reduction on, AGC off and
-  sidetone off, and leaves the start delay and the sidetone level as they are. Balanced mode is
+  the register range 1-4096, so equal slider steps are not equal steps in dB. A line advises
+  against turning on the Windows setting "Listen to this device" at the same time (an echo).
+- **Apply recommended** (next to the title of the Output page) sets balanced mode, microphone
+  boost 6, noise reduction on, AGC off and sidetone off, and leaves the soft-start time and the
+  sidetone level as they are. Balanced mode is
   the recommendation because it reduces the idle hiss at the price of 0.6 s of muted audio after
   idle, without the loud start pop that was recorded for minimum hiss (the pop of balanced mode
   itself was not measured); stock and quiet mode keep the idle hiss.
-- **Volume** (headphones and microphone, with a mute switch each) is the volume of the Windows
-  audio endpoints of the dongle, found by the USB vendor and product id like the silent stream's
-  endpoint (`cxtune::volume`, `IAudioEndpointVolume`). No HID report is involved. While the window
-  is shown the volume thread reads both endpoints twice a second, so the sliders follow the
-  buttons on the dongle and the Windows mixer; for 1.2 s after the user moves a slider what was
-  read is ignored. Without a dongle the sliders are disabled.
+- **Volume** (speakers on the Output page, microphone on the Microphone page; the glyph in front
+  of the row mutes) is the volume of the Windows audio endpoints of the dongle, found by the USB
+  vendor and product id like the silent stream's endpoint (`cxtune::volume`,
+  `IAudioEndpointVolume`). No HID report is involved. While the window is shown the volume thread
+  reads both endpoints twice a second, so the sliders follow the buttons on the dongle and the
+  Windows mixer; for 1.2 s after the user moves a slider what was read is ignored. Without a
+  dongle the sliders are disabled.
 
 ## Status
 
@@ -131,10 +156,10 @@ Everything that is drawn is in `gui/ui/`, and nothing there decides anything: th
 |---|---|
 | `contract.slint` | the enums and the `Model` global: what Rust sets and what the window reports |
 | `texts.slint` | the translated text of every enum value |
-| `theme.slint`, `components.slint`, `tabs.slint` | the look: colours, grid, widgets, the five tabs |
-| `app.slint` | the status band, `MainWindow` and the `Tray` component |
+| `theme.slint`, `components.slint`, `pages.slint` | the look: colours, grid, widgets, the five pages |
+| `app.slint` | the header, the navigation, the status band, `MainWindow` and the `Tray` component |
 
-A different look is a different set of `theme`, `components`, `tabs`, `texts` and `app` files
+A different look is a different set of `theme`, `components`, `pages`, `texts` and `app` files
 that binds the same contract; `build.rs` compiles `ui/app.slint`, which must export everything
 in `contract.slint` and the `MainWindow` and `Tray` components.
 
@@ -143,12 +168,13 @@ in `contract.slint` and the `MainWindow` and `Tray` components.
 | Property | Meaning |
 |---|---|
 | `title`, `hint`, `tone`, `details`, `reapply-enabled`, `version` | the status lines (enums `Title`, `Hint`, `Tone`), whether the log has details, whether Re-apply has something to do |
-| `tab` (in-out) | the shown tab: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about |
+| `tab` (in-out) | the shown page: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about |
+| `meters-active`, `out-db`, `mic-db` | the header meters: whether there are levels, and the peak levels of the output and the microphone in dBFS (-60 to 0) |
 | `controls-enabled` | whether the controls that change the dongle can be used |
-| `mode` (in-out), `mode-recommended`, `hiss`, `pop`, `delay`, `delay-ms` | the mode (0 stock, 1 quiet start, 2 balanced, 3 minimum hiss) and its indicators |
-| `settle-ms` (in-out), `settle-min`, `settle-max`, `settle-step`, `delay-enabled` | the start delay |
+| `mode` (in-out), `recommended-mode`, `indicators` | the mode (0 stock, 1 quiet, 2 balanced, 3 minimum hiss), the recommended one, and the `ModeIndicators` (`hiss`, `pop`, `delay`, `delay-ms`) of every mode by index |
+| `settle-ms` (in-out), `settle-min`, `settle-max`, `settle-step`, `delay-enabled` | the soft-start time |
 | `boost` (in-out), `boost-max`, `boost-db`, `boost-recommended`, `noise-reduction` (in-out), `agc` (in-out) | the microphone |
-| `sidetone` (in-out), `level-position` (in-out), `level-positions`, `level` | sidetone: the slider position and the register value it stands for |
+| `sidetone` (in-out), `level-position` (in-out), `level-positions`, `level` | sidetone: the slider position and the register value it stands for (1/256 dB) |
 | `speaker-present`, `speaker-volume` (in-out), `speaker-muted` (in-out), `microphone-present`, `microphone-volume` (in-out), `microphone-muted` (in-out) | the Windows volume |
 | `autostart` (in-out), `autostart-failed`, `language` (in-out; 0 Turkish, 1 English) | general |
 
@@ -170,11 +196,14 @@ forwards the click.)
 ## Development
 
 `cargo build -p cxtune-gui --features snapshot` adds `--snapshot <folder>`, which renders the
-window to PNG files (every tab in both languages and both colour schemes, the other modes and the
-status line of every problem) and quits. The problems in those pictures are simulated through
-`status::status`; the rest is the real state of the dongle. The release profile uses `lto` and
-`strip`, and `panic` stays `unwind`: the engine relies on `catch_unwind` to end with a last error
-state.
+window to PNG files (every page in both languages and both colour schemes, the other modes, muted
+volumes, sidetone on, the meters with made-up levels and the status line of every problem) and
+quits. Every state in those pictures is simulated: the engine is not started and the dongle is
+never read or written. A simulated engine state goes through the same code as a real one
+(`status::status` and the controls); the volumes and the meter levels are set directly.
+`SLINT_SCALE_FACTOR=1` makes the pictures 720 x 480 pixels, the size of the window at 100 %. The
+release profile uses `lto` and `strip`, and `panic` stays `unwind`: the engine relies on
+`catch_unwind` to end with a last error state.
 
 ## Not built
 

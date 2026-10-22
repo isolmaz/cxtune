@@ -1,74 +1,157 @@
-import { Button } from "std-widgets.slint";
-import { Hint, Model, Title, Tone } from "contract.slint";
-import { LinkText, TabBar, Hover } from "components.slint";
-import { AboutTab, GeneralTab, MicrophoneTab, OutputTab, SidetoneTab } from "tabs.slint";
-import { Grid, Surface } from "theme.slint";
+import { Model, Title } from "contract.slint";
+import { Caption, DeviceTile, FluentButton, Hover, LinkText, MeterRow, Nav, StatusPill, Strong } from "components.slint";
+import { AboutPage, GeneralPage, MicrophonePage, OutputPage, SidetonePage } from "pages.slint";
+import { Grid, Signal, Surface } from "theme.slint";
 import { Texts } from "texts.slint";
 
 export * from "contract.slint";
 export { Texts } from "texts.slint";
 
-component Footer inherits Rectangle {
-    // red for a problem, amber for what is not settled, green when the dongle holds the settings
-    property <color> tone: Model.tone == Tone.critical ? Surface.critical : Model.tone == Tone.caution ? Surface.caution : Surface.good;
-    background: Surface.page;
+component Header inherits Rectangle {
+    background: Surface.layer;
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Surface.stroke;
+    }
 
     HorizontalLayout {
         padding-left: Grid.margin;
         padding-right: Grid.margin;
-        padding-top: 6px;
-        padding-bottom: 6px;
         spacing: 12px;
 
         VerticalLayout {
             alignment: center;
+            horizontal-stretch: 0;
+            DeviceTile {
+                width: 48px;
+                height: 48px;
+                inset: 3px;
+                source: @image-url("../assets/dongle.png");
+                clip-x: 138;
+                clip-y: 12;
+                clip-width: 82;
+                clip-height: 78;
+                label: @tr("ui" => "HyperX Cloud II USB sound card");
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
             spacing: 2px;
+            horizontal-stretch: 1;
+
+            Text {
+                text: "HyperX Cloud II";
+                color: Surface.text;
+                font-size: 16px;
+                font-weight: 600;
+                height: 22px;
+                vertical-alignment: center;
+            }
 
             HorizontalLayout {
                 spacing: 8px;
+                alignment: start;
+
+                StatusPill {
+                    text: Texts.pill(Model.title);
+                    tone: Signal.tone(Model.tone);
+                }
+
                 VerticalLayout {
                     alignment: center;
-                    Rectangle {
-                        width: 10px;
-                        height: 10px;
-                        border-radius: 5px;
-                        background: root.tone;
-                    }
-                }
-
-                Text {
-                    text: Texts.title(Model.title);
-                    color: Surface.text;
-                    font-size: 13px;
-                    font-weight: 600;
-                    overflow: elide;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-
-                if Model.details: LinkText {
-                    text: @tr("ui" => "Open log");
-                    font-size: 12px;
-                    clicked => {
-                        Model.open-log-folder();
+                    horizontal-stretch: 0;
+                    Caption {
+                        text: @tr("ui" => "USB sound card");
                     }
                 }
             }
+        }
 
-            Text {
-                text: Texts.hint(Model.hint);
-                color: Surface.quiet;
-                font-size: 12px;
+        VerticalLayout {
+            alignment: center;
+            spacing: 8px;
+            horizontal-stretch: 0;
+
+            MeterRow {
+                tag: "OUT";
+                label: @tr("ui" => "Output level");
+                active: Model.meters-active;
+                db: Model.out-db;
+            }
+
+            MeterRow {
+                tag: "MIC";
+                label: @tr("ui" => "Microphone level");
+                active: Model.meters-active;
+                db: Model.mic-db;
+            }
+        }
+    }
+}
+
+component Footer inherits Rectangle {
+    background: Surface.layer;
+
+    Rectangle {
+        y: 0px;
+        height: 1px;
+        background: Surface.stroke;
+    }
+
+    HorizontalLayout {
+        padding-left: Grid.margin;
+        padding-right: 6px;
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: Signal.tone(Model.tone);
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+
+            Strong {
+                text: Texts.title(Model.title);
                 overflow: elide;
+                height: 20px;
+            }
+
+            if Texts.hint(Model.hint) != "": Caption {
+                text: Texts.hint(Model.hint);
+                overflow: elide;
+                height: 16px;
+            }
+        }
+
+        if Model.details: VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            LinkText {
+                text: @tr("ui" => "Open log");
+                clicked => {
+                    Model.open-log-folder();
+                }
             }
         }
 
         VerticalLayout {
             alignment: center;
             horizontal-stretch: 0;
-            width: Grid.button;
-            Button {
+            FluentButton {
                 text: @tr("ui" => "Re-apply");
+                icon: "\u{E72C}";
+                button-height: 32px;
                 enabled: Model.reapply-enabled;
                 clicked => {
                     Model.reapply();
@@ -81,7 +164,7 @@ component Footer inherits Rectangle {
 export component MainWindow inherits Window {
     title: "cxtune";
     icon: @image-url("../assets/window.png");
-    background: Surface.page;
+    background: Surface.window;
     default-font-family: "Segoe UI";
     preferred-width: Grid.width;
     preferred-height: Grid.height;
@@ -90,79 +173,88 @@ export component MainWindow inherits Window {
     min-height: Grid.height;
     max-height: Grid.height;
 
-    Rectangle {
-        x: 0px;
-        y: 0px;
-        width: Grid.width;
-        height: Grid.tab-bar + Grid.content;
-        background: Surface.card;
-    }
+    VerticalLayout {
+        Header {
+            height: Grid.header;
+        }
 
-    Rectangle {
-        x: 0px;
-        y: Grid.tab-bar;
-        width: Grid.width;
-        height: 1px;
-        background: Surface.stroke;
-    }
+        HorizontalLayout {
+            vertical-stretch: 1;
 
-    Rectangle {
-        x: 0px;
-        y: Grid.tab-bar + Grid.content;
-        width: Grid.width;
-        height: 1px;
-        background: Surface.stroke;
-    }
+            Rectangle {
+                width: Grid.nav;
+                background: Surface.layer;
 
-    TabBar {
-        x: Grid.margin - 10px;
-        y: 6px;
-        width: Grid.width - 2 * (Grid.margin - 10px);
-        names: [@tr("ui" => "Output"), @tr("ui" => "Microphone"), @tr("ui" => "Sidetone"), @tr("ui" => "General"), @tr("ui" => "About")];
-    }
+                Rectangle {
+                    x: parent.width - 1px;
+                    width: 1px;
+                    background: Surface.stroke;
+                }
 
-    Rectangle {
-        x: 0px;
-        y: Grid.tab-bar;
-        width: Grid.width;
-        height: Grid.content;
-        clip: true;
+                Nav {
+                    icons: ["\u{E767}", "\u{E720}", "\u{E95B}", "\u{E713}"];
+                    names: [@tr("ui" => "Output"), @tr("ui" => "Microphone"), @tr("ui" => "Sidetone"), @tr("ui" => "General")];
+                    // the About page belongs to General
+                    selected: Model.tab == 4 ? 3 : Model.tab;
+                    chosen(page) => {
+                        Model.tab = page;
+                    }
+                }
 
-        if Model.tab == 0: OutputTab { }
-        if Model.tab == 1: MicrophoneTab { }
-        if Model.tab == 2: SidetoneTab { }
-        if Model.tab == 3: GeneralTab { }
-        if Model.tab == 4: AboutTab { }
-    }
+                Caption {
+                    x: 16px;
+                    y: parent.height - 28px;
+                    width: parent.width - 32px;
+                    height: 16px;
+                    text: @tr("ui" => "cxtune {}", Model.version);
+                    color: Surface.faint;
+                }
+            }
 
-    Footer {
-        x: 0px;
-        y: Grid.tab-bar + Grid.content;
-        width: Grid.width;
-        height: Grid.footer;
+            Rectangle {
+                horizontal-stretch: 1;
+                clip: true;
+
+                if Model.tab == 0: OutputPage { }
+                if Model.tab == 1: MicrophonePage { }
+                if Model.tab == 2: SidetonePage { }
+                if Model.tab == 3: GeneralPage { }
+                if Model.tab == 4: AboutPage { }
+            }
+        }
+
+        Footer {
+            height: Grid.footer;
+        }
     }
 
     // above everything else
     if Hover.explanation != "": Rectangle {
-        property <length> tip-height: tip.preferred-height + 14px;
-        property <length> below: Hover.y + 8px;
-        x: Grid.margin;
-        y: below + tip-height > Grid.height - 4px ? Hover.y - 16px - 8px - tip-height : below;
-        width: Grid.width - 2 * Grid.margin;
+        property <length> text-width: Math.min(measure.preferred-width, 460px);
+        property <length> tip-height: tip.preferred-height + 16px;
+        width: text-width + 24px;
         height: tip-height;
+        x: Math.clamp(Hover.x - 8px, 8px, Grid.width - self.width - 8px);
+        y: Hover.y + 8px + tip-height > Grid.height - 4px ? Hover.y - 16px - 8px - tip-height : Hover.y + 8px;
         border-radius: 6px;
         border-width: 1px;
-        border-color: Surface.quiet.with-alpha(0.5);
+        border-color: Surface.faint;
         background: Surface.popup;
+
+        measure := Text {
+            text: Hover.explanation;
+            font-size: 12px;
+            visible: false;
+        }
 
         tip := Text {
             text: Hover.explanation;
             color: Surface.text;
             font-size: 12px;
             wrap: word-wrap;
-            x: 8px;
-            y: 7px;
-            width: parent.width - 16px;
+            x: 12px;
+            y: 8px;
+            width: parent.text-width;
             accessible-role: none;
         }
     }
@@ -201,7 +293,7 @@ export component Tray inherits SystemTrayIcon {
         MenuSeparator {}
 
         MenuItem {
-            title: (root.mode == 0 ? "● " : "○ ") + @tr("ui" => "Stock");
+            title: (root.mode == 0 ? "● " : "○ ") + Texts.mode-name(0);
             enabled: root.controls-enabled;
             activated => {
                 root.mode-requested(0);
@@ -209,7 +301,7 @@ export component Tray inherits SystemTrayIcon {
         }
 
         MenuItem {
-            title: (root.mode == 1 ? "● " : "○ ") + @tr("ui" => "Quiet start");
+            title: (root.mode == 1 ? "● " : "○ ") + Texts.mode-name(1);
             enabled: root.controls-enabled;
             activated => {
                 root.mode-requested(1);
@@ -217,7 +309,7 @@ export component Tray inherits SystemTrayIcon {
         }
 
         MenuItem {
-            title: (root.mode == 2 ? "● " : "○ ") + @tr("ui" => "Balanced");
+            title: (root.mode == 2 ? "● " : "○ ") + Texts.mode-name(2);
             enabled: root.controls-enabled;
             activated => {
                 root.mode-requested(2);
@@ -225,7 +317,7 @@ export component Tray inherits SystemTrayIcon {
         }
 
         MenuItem {
-            title: (root.mode == 3 ? "● " : "○ ") + @tr("ui" => "Minimum hiss");
+            title: (root.mode == 3 ? "● " : "○ ") + Texts.mode-name(3);
             enabled: root.controls-enabled;
             activated => {
                 root.mode-requested(3);

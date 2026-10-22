@@ -1,0 +1,546 @@
+import { ComboBox, Slider } from "std-widgets.slint";
+import { Model } from "contract.slint";
+import { Badge, Body, Caption, Card, DeviceTile, Divider, FluentButton, Help, Icon, InfoBar, LinkText, ModeGroup, Row, SliderControl, Strong, SwitchControl, ValueText } from "components.slint";
+import { Grid, Surface } from "theme.slint";
+import { Texts } from "texts.slint";
+
+component Page inherits VerticalLayout {
+    padding-left: Grid.margin;
+    padding-right: Grid.margin;
+    padding-top: 12px;
+    padding-bottom: 12px;
+    spacing: 8px;
+    alignment: start;
+}
+
+// The title of a page, and what goes with it on the right.
+component PageTitle inherits HorizontalLayout {
+    in property <string> text;
+    height: 32px;
+    spacing: 8px;
+
+    Text {
+        text: root.text;
+        font-size: 18px;
+        font-weight: 600;
+        color: Surface.text;
+        vertical-alignment: center;
+        horizontal-stretch: 0;
+    }
+
+    Rectangle {
+        horizontal-stretch: 1;
+    }
+
+    @children
+}
+
+export component OutputPage inherits Page {
+    PageTitle {
+        text: @tr("ui" => "Output");
+
+        HorizontalLayout {
+            spacing: 8px;
+            horizontal-stretch: 0;
+            FluentButton {
+                text: @tr("ui" => "Apply recommended");
+                enabled: Model.controls-enabled;
+                clicked => {
+                    Model.apply-recommended();
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Help {
+                    explanation: @tr("ui" => "Balanced mode, microphone boost 6, noise reduction on, AGC and sidetone off.");
+                }
+            }
+        }
+    }
+
+    ModeGroup { }
+
+    Card {
+        Row {
+            icon: "\u{E767}";
+            muted-icon: "\u{E74F}";
+            muted <=> Model.speaker-muted;
+            title: @tr("ui" => "Speaker volume");
+            caption: @tr("ui" => "Windows volume of the output");
+            help: @tr("ui" => "The Windows volume of the sound card. Click the speaker to mute.");
+            mute-toggled(muted) => {
+                Model.mute-toggled(0, muted);
+            }
+
+            SliderControl {
+                Slider {
+                    minimum: 0;
+                    maximum: 100;
+                    step: 1;
+                    value <=> Model.speaker-volume;
+                    enabled: Model.speaker-present;
+                    accessible-label: @tr("ui" => "Speaker volume");
+                    changed(value) => {
+                        Model.speaker-volume = Math.round(value);
+                        Model.volume-changed(0, Math.round(value));
+                    }
+                }
+
+                ValueText {
+                    text: Model.speaker-present ? @tr("ui" => "{} %", Math.round(Model.speaker-volume)) : "–";
+                    color: Model.speaker-present ? Surface.text : Surface.faint;
+                }
+            }
+        }
+
+        Divider { }
+
+        Row {
+            icon: "\u{E916}";
+            title: @tr("ui" => "Soft-start time");
+            caption: @tr("ui" => "Used only by Lowest noise");
+            help: @tr("ui" => "After audio starts it stays muted for this time plus 100 ms.");
+            dimmed: !Model.delay-enabled;
+
+            SliderControl {
+                Slider {
+                    minimum: Model.settle-min;
+                    maximum: Model.settle-max;
+                    step: Model.settle-step;
+                    value <=> Model.settle-ms;
+                    enabled: Model.delay-enabled;
+                    accessible-label: @tr("ui" => "Soft-start time");
+                    changed(value) => {
+                        self.value = Math.round(value / Model.settle-step) * Model.settle-step;
+                        Model.settle-changed(Math.round(self.value));
+                    }
+                    released => {
+                        Model.slider-released();
+                    }
+                }
+
+                ValueText {
+                    text: @tr("ui" => "{} ms", Math.round(Model.settle-ms));
+                }
+            }
+        }
+    }
+
+    InfoBar {
+        text: Texts.mode-note(Model.mode);
+    }
+}
+
+export component MicrophonePage inherits Page {
+    PageTitle {
+        text: @tr("ui" => "Microphone");
+    }
+
+    Card {
+        Row {
+            icon: "\u{E720}";
+            muted-icon: "\u{F781}";
+            muted <=> Model.microphone-muted;
+            title: @tr("ui" => "Microphone volume");
+            caption: @tr("ui" => "Windows volume of the input");
+            help: @tr("ui" => "The Windows volume of the microphone. Click the microphone to mute.");
+            mute-toggled(muted) => {
+                Model.mute-toggled(1, muted);
+            }
+
+            SliderControl {
+                Slider {
+                    minimum: 0;
+                    maximum: 100;
+                    step: 1;
+                    value <=> Model.microphone-volume;
+                    enabled: Model.microphone-present;
+                    accessible-label: @tr("ui" => "Microphone volume");
+                    changed(value) => {
+                        Model.microphone-volume = Math.round(value);
+                        Model.volume-changed(1, Math.round(value));
+                    }
+                }
+
+                ValueText {
+                    text: Model.microphone-present ? @tr("ui" => "{} %", Math.round(Model.microphone-volume)) : "–";
+                    color: Model.microphone-present ? Surface.text : Surface.faint;
+                }
+            }
+        }
+
+        Divider { }
+
+        Row {
+            icon: "\u{E9E9}";
+            title: @tr("ui" => "Microphone boost");
+            caption: @tr("ui" => "Gain compared with the vendor setting");
+            help: @tr("ui" => "Step 6 had the best signal-to-noise ratio in one take; step 7 added 6 dB of noise.");
+            recommended: Model.boost-recommended;
+
+            SliderControl {
+                Slider {
+                    minimum: 0;
+                    maximum: Model.boost-max;
+                    step: 1;
+                    value <=> Model.boost;
+                    enabled: Model.controls-enabled;
+                    accessible-label: @tr("ui" => "Microphone boost");
+                    changed(value) => {
+                        self.value = Math.round(value);
+                        Model.boost-changed(Math.round(value));
+                    }
+                    released => {
+                        Model.slider-released();
+                    }
+                }
+
+                ValueText {
+                    text: @tr("ui" => "{} ({})", Math.round(Model.boost), Texts.gain(Model.boost-db));
+                }
+            }
+        }
+
+        Divider { }
+
+        Row {
+            icon: "\u{E9D2}";
+            title: @tr("ui" => "Noise reduction");
+            caption: @tr("ui" => "Suppresses steady background noise");
+            help: @tr("ui" => "Measured: about 12 dB less steady noise. The effect on speech was not measured.");
+
+            SwitchControl {
+                label: @tr("ui" => "Noise reduction");
+                checked <=> Model.noise-reduction;
+                enabled: Model.controls-enabled;
+                toggled(on) => {
+                    Model.noise-reduction-toggled(on);
+                }
+            }
+        }
+
+        Divider { }
+
+        Row {
+            icon: "\u{E9D9}";
+            title: @tr("ui" => "AGC");
+            caption: @tr("ui" => "Automatic gain control");
+            help: @tr("ui" => "The firmware applies it; no effect on steady noise was measured and speech was not tested.");
+            experimental: true;
+
+            SwitchControl {
+                label: @tr("ui" => "AGC");
+                checked <=> Model.agc;
+                enabled: Model.controls-enabled;
+                toggled(on) => {
+                    Model.agc-toggled(on);
+                }
+            }
+        }
+    }
+
+    if Model.mode == 2: InfoBar {
+        text: @tr("ui" => "Balanced: opening the microphone from idle gives 1.26 s of silence and a click.");
+    }
+}
+
+export component SidetonePage inherits Page {
+    PageTitle {
+        text: @tr("ui" => "Sidetone");
+    }
+
+    Card {
+        Row {
+            icon: "\u{E95B}";
+            title: @tr("ui" => "Sidetone");
+            caption: @tr("ui" => "Hear your own voice in the headphones");
+            help: @tr("ui" => "Plays your microphone in the headphones while a microphone and playback are open.");
+            experimental: true;
+
+            SwitchControl {
+                label: @tr("ui" => "Sidetone");
+                checked <=> Model.sidetone;
+                enabled: Model.controls-enabled;
+                toggled(on) => {
+                    Model.sidetone-toggled(on);
+                }
+            }
+        }
+
+        Divider { }
+
+        Row {
+            icon: "\u{E767}";
+            title: @tr("ui" => "Sidetone level");
+            caption: @tr("ui" => "Vendor default: +3.7 dB");
+            help: @tr("ui" => "A gain of 0 to +16 dB. It was never listened to, so its loudness is unknown.");
+            experimental: true;
+
+            SliderControl {
+                Slider {
+                    minimum: 0;
+                    maximum: Model.level-positions;
+                    step: Model.level-positions / 100;
+                    value <=> Model.level-position;
+                    enabled: Model.controls-enabled;
+                    accessible-label: @tr("ui" => "Sidetone level");
+                    changed(value) => {
+                        Model.level-changed(value);
+                    }
+                    released => {
+                        Model.slider-released();
+                    }
+                }
+
+                ValueText {
+                    text: Texts.level-db(Model.level);
+                }
+            }
+        }
+    }
+
+    InfoBar {
+        icon: "\u{E7BA}";
+        tone: Surface.caution;
+        text: @tr("ui" => "Do not also turn on \"Listen to this device\" for the microphone in Windows: it would echo.");
+    }
+}
+
+// A row of a card that opens another page.
+component PageLink inherits Rectangle {
+    in property <string> icon;
+    in property <string> title;
+    in property <string> caption;
+    callback clicked();
+    min-height: Grid.row;
+    max-height: Grid.row;
+    background: touch.has-hover ? Surface.card-hover : transparent;
+    forward-focus: keys;
+    accessible-role: button;
+    accessible-label: root.title;
+    accessible-description: root.caption;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    Row {
+        icon: root.icon;
+        title: root.title;
+        caption: root.caption;
+
+        Icon {
+            text: "\u{E76C}";
+            font-size: 12px;
+            color: Surface.quiet;
+            width: 16px;
+        }
+    }
+
+    if keys.has-focus: Rectangle {
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: Surface.text;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    keys := FocusScope {
+        width: 0px;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+export component GeneralPage inherits Page {
+    PageTitle {
+        text: @tr("ui" => "General");
+    }
+
+    Card {
+        Row {
+            icon: "\u{E7E8}";
+            title: @tr("ui" => "Start with Windows");
+            caption: @tr("ui" => "Starts in the notification area");
+            help: @tr("ui" => "Starts minimized when you sign in; nothing is installed.");
+
+            SwitchControl {
+                label: @tr("ui" => "Start with Windows");
+                checked <=> Model.autostart;
+                toggled(on) => {
+                    Model.autostart-toggled(on);
+                }
+            }
+        }
+
+        Divider { }
+
+        Row {
+            icon: "\u{E775}";
+            title: @tr("ui" => "Language");
+            caption: @tr("ui" => "Language of the window and the menu");
+
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                ComboBox {
+                    width: 168px;
+                    model: ["Türkçe", "English"];
+                    current-index <=> Model.language;
+                    accessible-label: @tr("ui" => "Language");
+                    selected(value) => {
+                        Model.language-selected(self.current-index);
+                    }
+                }
+            }
+        }
+
+        Divider { }
+
+        Row {
+            icon: "\u{E838}";
+            title: @tr("ui" => "Log");
+            caption: @tr("ui" => "Technical details of what cxtune did");
+
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 0;
+                FluentButton {
+                    text: @tr("ui" => "Open log folder");
+                    clicked => {
+                        Model.open-log-folder();
+                    }
+                }
+            }
+        }
+    }
+
+    if Model.autostart-failed: InfoBar {
+        icon: "\u{E783}";
+        tone: Surface.critical;
+        text: @tr("ui" => "The setting could not be changed.");
+    }
+
+    Card {
+        PageLink {
+            icon: "\u{E946}";
+            title: @tr("ui" => "About");
+            caption: @tr("ui" => "cxtune {} · MIT license", Model.version);
+            clicked => {
+                Model.tab = 4;
+            }
+        }
+    }
+}
+
+export component AboutPage inherits Page {
+    // "General > About": the way back to the page that it belongs to
+    HorizontalLayout {
+        height: 32px;
+        spacing: 8px;
+        alignment: start;
+
+        Rectangle {
+            min-width: parent-title.preferred-width;
+            horizontal-stretch: 0;
+            accessible-role: button;
+            accessible-label: @tr("ui" => "General");
+            accessible-action-default => {
+                Model.tab = 3;
+            }
+
+            parent-title := Text {
+                text: @tr("ui" => "General");
+                font-size: 18px;
+                font-weight: 600;
+                color: parent-touch.has-hover ? Surface.text : Surface.quiet;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+
+            parent-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    Model.tab = 3;
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            Icon {
+                text: "\u{E76C}";
+                font-size: 12px;
+                color: Surface.quiet;
+                width: 12px;
+            }
+        }
+
+        Text {
+            text: @tr("ui" => "About");
+            font-size: 18px;
+            font-weight: 600;
+            color: Surface.text;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        height: 80px;
+
+        DeviceTile {
+            width: 128px;
+            height: 80px;
+            inset: 6px;
+            source: @image-url("../assets/dongle.png");
+            label: @tr("ui" => "HyperX Cloud II USB sound card");
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: "cxtune";
+                color: Surface.text;
+                font-size: 18px;
+                font-weight: 600;
+            }
+
+            Caption {
+                text: @tr("ui" => "Version {}", Model.version);
+            }
+
+            Text {
+                text: @tr("ui" => "Supports the HyperX Cloud II USB sound card (USB 0951:16A4).");
+                color: Surface.text;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    Card {
+        VerticalLayout {
+            padding: 12px;
+            Caption {
+                text: @tr("ui" => "cxtune is an independent project. It is not affiliated with, endorsed by or supported by HyperX, HP or Synaptics. It changes the device's settings at your own risk; the authors accept no liability. Changes are temporary: unplugging the dongle restores the original settings.");
+                wrap: word-wrap;
+                vertical-alignment: top;
+            }
+        }
+    }
+}

@@ -72,12 +72,20 @@ export enum Pop {
     loud,
 }
 
-// How long the start of audio is muted: not at all, about 0.6 s as measured, or the start delay
-// plus 100 ms (`delay-ms`).
+// How long the start of audio is muted: not at all, about 0.6 s as measured, or the soft-start
+// time plus 100 ms (`delay-ms`).
 export enum Delay {
     none,
     about-600-ms,
     settle,
+}
+
+// What a mode costs and gives.
+export struct ModeIndicators {
+    hiss: Hiss,
+    pop: Pop,
+    delay: Delay,
+    delay-ms: int,
 }
 
 // Development only: the screenshots of the `snapshot` feature show both colour schemes through
@@ -86,7 +94,7 @@ export global Theme {
     in-out property <ColorScheme> scheme <=> Palette.color-scheme;
 }
 
-// The tabs, by index: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about.
+// The tabs, by index: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about (a page of general).
 //
 // The modes, by index: 0 stock, 1 quiet start, 2 balanced, 3 minimum hiss.
 //
@@ -107,13 +115,17 @@ export global Model {
     // whether the controls that change the dongle can be used
     in property <bool> controls-enabled;
 
+    // header meters: the peak level of the output and of the microphone in dBFS, from -60 to 0.
+    // Only shown while `meters-active`; otherwise the meters stay neutral.
+    in property <bool> meters-active;
+    in property <float> out-db: -60;
+    in property <float> mic-db: -60;
+
     // output mode
     in-out property <int> mode: 0;
-    in property <bool> mode-recommended;
-    in property <Hiss> hiss;
-    in property <Pop> pop;
-    in property <Delay> delay;
-    in property <int> delay-ms;
+    in property <int> recommended-mode;
+    // the indicators of every mode, by mode index
+    in property <[ModeIndicators]> indicators;
     in-out property <float> settle-ms: 600;
     in property <float> settle-min: 20;
     in property <float> settle-max: 2000;
@@ -133,7 +145,7 @@ export global Model {
     in-out property <bool> sidetone;
     in-out property <float> level-position: 500;
     in property <float> level-positions: 1000;
-    // the register value that the position stands for
+    // the register value that the position stands for (1/256 dB)
     in property <int> level;
 
     // the volume of the dongle in Windows

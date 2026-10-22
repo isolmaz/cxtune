@@ -8,7 +8,7 @@ const FILES: [&str; 6] = [
     include_str!("../ui/app.slint"),
     include_str!("../ui/components.slint"),
     include_str!("../ui/contract.slint"),
-    include_str!("../ui/tabs.slint"),
+    include_str!("../ui/pages.slint"),
     include_str!("../ui/texts.slint"),
     include_str!("../ui/theme.slint"),
 ];
@@ -16,7 +16,17 @@ const TEXTS: &str = include_str!("../ui/texts.slint");
 const TURKISH: &str = include_str!("../lang/tr/LC_MESSAGES/cxtune-gui.po");
 
 /// Texts that read the same in Turkish.
-const SAME_IN_TURKISH: [&str; 5] = ["cxtune: {}", "{} ms", "AGC", "+{} dB", "{} dB"];
+const SAME_IN_TURKISH: [&str; 9] = [
+    "cxtune: {}",
+    "cxtune {}",
+    "{} ms",
+    "AGC",
+    "+{} dB",
+    "{} dB",
+    "{} ({})",
+    "{}: {}, {}: {}, {}: {}",
+    "≈ {} ms",
+];
 
 /// The string literal that starts at `text[0]` (an opening quote), unescaped, and the rest.
 fn literal(text: &str) -> (String, &str) {
@@ -131,13 +141,13 @@ fn texts_that_name_a_button_use_the_label_of_the_button() {
         assert!(FILES.iter().any(|file| file.contains(text)), "{text}");
         assert!(turkish(text).contains(&button), "{text}");
     }
-    let mode = turkish("Minimum hiss");
+    let mode = turkish("Lowest noise");
     assert!(
-        turkish(
-            "Only Minimum hiss uses the start delay. After audio starts it stays muted for this long plus 100 ms."
-        )
-        .contains(&mode)
+        FILES
+            .iter()
+            .any(|file| file.contains("Used only by Lowest noise"))
     );
+    assert!(turkish("Used only by Lowest noise").contains(&mode));
 }
 
 /// The texts of the functions of `texts.slint` from the one that starts with `from` up to the
@@ -152,9 +162,9 @@ fn texts_between(from: &str, to: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_two_status_lines_fit_the_footer_in_both_languages() {
-    // the footer shows each line on one line and elides what does not fit; the snapshots of
-    // the longest of these were looked at, and these are their lengths
+fn the_status_lines_and_the_mode_notes_fit_one_line_in_both_languages() {
+    // the footer and the note under the modes show each line on one line and elide what does
+    // not fit; the snapshots of the longest of these were looked at, and these are their lengths
     let entries = translations();
     let turkish = |english: &str| {
         entries
@@ -163,12 +173,13 @@ fn the_two_status_lines_fit_the_footer_in_both_languages() {
             .map(|(_, _, translation)| translation.clone())
             .unwrap_or_else(|| panic!("{english}"))
     };
-    for (from, to, limit) in [
-        ("function title(", "function hint(", 36),
-        ("function hint(", "function mode-note(", 54),
+    for (from, to, count, limit) in [
+        ("function title(", "function hint(", 21, 36),
+        ("function hint(", "function pill(", 14, 54),
+        ("function mode-note(", "function hiss(", 4, 90),
     ] {
         let texts = texts_between(from, to);
-        assert!(texts.len() > 10, "{from}");
+        assert_eq!(texts.len(), count, "{from}");
         for text in texts {
             for line in [text.clone(), turkish(&text)] {
                 assert!(

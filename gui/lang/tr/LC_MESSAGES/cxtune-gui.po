@@ -8,6 +8,22 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
 msgctxt "ui"
+msgid "HyperX Cloud II USB sound card"
+msgstr "HyperX Cloud II USB ses kartı"
+
+msgctxt "ui"
+msgid "USB sound card"
+msgstr "USB ses kartı"
+
+msgctxt "ui"
+msgid "Output level"
+msgstr "Çıkış düzeyi"
+
+msgctxt "ui"
+msgid "Microphone level"
+msgstr "Mikrofon düzeyi"
+
+msgctxt "ui"
 msgid "Open log"
 msgstr "Günlüğü aç"
 
@@ -32,8 +48,8 @@ msgid "General"
 msgstr "Genel"
 
 msgctxt "ui"
-msgid "About"
-msgstr "Hakkında"
+msgid "cxtune {}"
+msgstr "cxtune {}"
 
 msgctxt "ui"
 msgid "cxtune: {}"
@@ -44,168 +60,212 @@ msgid "Show"
 msgstr "Göster"
 
 msgctxt "ui"
-msgid "Stock"
-msgstr "Stok"
-
-msgctxt "ui"
-msgid "Quiet start"
-msgstr "Sessiz başlangıç"
-
-msgctxt "ui"
-msgid "Balanced"
-msgstr "Dengeli"
-
-msgctxt "ui"
-msgid "Minimum hiss"
-msgstr "En az tıslama"
+msgid "About"
+msgstr "Hakkında"
 
 msgctxt "ui"
 msgid "Quit"
 msgstr "Çıkış"
 
 msgctxt "ui"
-msgid "Experimental"
-msgstr "Deneysel"
-
-msgctxt "ui"
-msgid "{} %"
-msgstr "%{}"
-
-msgctxt "ui"
 msgid "Mute"
 msgstr "Sessiz"
 
 msgctxt "ui"
-msgid "Mode"
-msgstr "Mod"
+msgid "Experimental"
+msgstr "Deneysel"
 
 msgctxt "ui"
 msgid "Recommended"
 msgstr "Önerilen"
 
 msgctxt "ui"
-msgid "Hiss"
-msgstr "Tıslama"
+msgid "On"
+msgstr "Açık"
 
 msgctxt "ui"
-msgid "Pop"
-msgstr "Patlama"
+msgid "Off"
+msgstr "Kapalı"
 
 msgctxt "ui"
-msgid "Delay"
-msgstr "Gecikme"
+msgid "{}: {}, {}: {}, {}: {}"
+msgstr "{}: {}, {}: {}, {}: {}"
 
 msgctxt "ui"
-msgid "Start delay"
-msgstr "Başlangıç gecikmesi"
+msgid "Noise floor"
+msgstr "Gürültü tabanı"
 
 msgctxt "ui"
-msgid "Only Minimum hiss uses the start delay. After audio starts it stays muted for this long plus 100 ms."
-msgstr "Başlangıç gecikmesini yalnızca En az tıslama kullanır. Ses başladıktan sonra bu süre artı 100 ms susturulur."
+msgid "Click"
+msgstr "Tık"
 
 msgctxt "ui"
-msgid "{} ms"
-msgstr "{} ms"
+msgid "Mute delay"
+msgstr "Açılış gecikmesi"
 
 msgctxt "ui"
-msgid "Headphones"
-msgstr "Kulaklık"
-
-msgctxt "ui"
-msgid "The volume of the dongle in Windows. The buttons on the dongle and the Windows mixer change it too."
-msgstr "USB ses kartının Windows'taki ses düzeyi. Karttaki düğmeler ve Windows ses karıştırıcısı da bunu değiştirir."
+msgid "{} dB"
+msgstr "{} dB"
 
 msgctxt "ui"
 msgid "Apply recommended"
 msgstr "Önerileni uygula"
 
 msgctxt "ui"
-msgid "Balanced mode, microphone boost 6 (the best signal-to-noise ratio in a single measurement), noise reduction on (about 12 dB less steady noise), AGC and sidetone off."
-msgstr "Dengeli mod, mikrofon yükseltme 6 (tek bir ölçümde en iyi sinyal/gürültü oranı), gürültü azaltma açık (sabit gürültü yaklaşık 12 dB daha az), AGC ve yan ton kapalı."
+msgid "Balanced mode, microphone boost 6, noise reduction on, AGC and sidetone off."
+msgstr "Dengeli mod, mikrofon yükseltme 6, gürültü azaltma açık, AGC ve yan ton kapalı."
+
+msgctxt "ui"
+msgid "Speaker volume"
+msgstr "Hoparlör ses düzeyi"
+
+msgctxt "ui"
+msgid "Windows volume of the output"
+msgstr "Çıkışın Windows ses düzeyi"
+
+msgctxt "ui"
+msgid "The Windows volume of the sound card. Click the speaker to mute."
+msgstr "USB ses kartının Windows ses düzeyi. Susturmak için hoparlör simgesine tıklayın."
+
+msgctxt "ui"
+msgid "{} %"
+msgstr "%{}"
+
+msgctxt "ui"
+msgid "Soft-start time"
+msgstr "Yumuşak açılış süresi"
+
+msgctxt "ui"
+msgid "Used only by Lowest noise"
+msgstr "Yalnızca En düşük gürültü kullanır"
+
+msgctxt "ui"
+msgid "After audio starts it stays muted for this time plus 100 ms."
+msgstr "Ses başladıktan sonra bu süre artı 100 ms boyunca susturulur."
+
+msgctxt "ui"
+msgid "{} ms"
+msgstr "{} ms"
+
+msgctxt "ui"
+msgid "Microphone volume"
+msgstr "Mikrofon ses düzeyi"
+
+msgctxt "ui"
+msgid "Windows volume of the input"
+msgstr "Girişin Windows ses düzeyi"
+
+msgctxt "ui"
+msgid "The Windows volume of the microphone. Click the microphone to mute."
+msgstr "Mikrofonun Windows ses düzeyi. Susturmak için mikrofon simgesine tıklayın."
 
 msgctxt "ui"
 msgid "Microphone boost"
 msgstr "Mikrofon yükseltme"
 
 msgctxt "ui"
-msgid "The gain compared with the vendor setting (step 4), 6 dB per step. Step 6 gave the best signal-to-noise ratio in a single measurement, so the ranking is only indicative."
-msgstr "Üretici ayarına (4. adım) göre kazanç, adım başına 6 dB. En iyi sinyal/gürültü oranını tek bir ölçümde 6. adım verdi; sıralama yalnızca fikir verir."
+msgid "Gain compared with the vendor setting"
+msgstr "Üretici ayarına göre kazanç"
 
 msgctxt "ui"
-msgid "A higher boost also raises the noise: from step 6 to 7 it rose by 6 dB."
-msgstr "Yüksek yükseltme gürültüyü de artırır: 6. adımdan 7. adıma geçerken 6 dB arttı."
+msgid "Step 6 had the best signal-to-noise ratio in one take; step 7 added 6 dB of noise."
+msgstr "En iyi sinyal/gürültü oranı tek bir ölçümde 6. adımda çıktı; 7. adım gürültüyü 6 dB artırdı."
+
+msgctxt "ui"
+msgid "{} ({})"
+msgstr "{} ({})"
 
 msgctxt "ui"
 msgid "Noise reduction"
 msgstr "Gürültü azaltma"
 
 msgctxt "ui"
-msgid "Measured: about 12 dB less steady background noise. The effect on speech was not measured."
-msgstr "Ölçüm: sabit arka plan gürültüsü yaklaşık 12 dB daha az. Konuşma üzerindeki etkisi ölçülmedi."
+msgid "Suppresses steady background noise"
+msgstr "Sabit arka plan gürültüsünü bastırır"
+
+msgctxt "ui"
+msgid "Measured: about 12 dB less steady noise. The effect on speech was not measured."
+msgstr "Ölçüm: sabit gürültü yaklaşık 12 dB daha az. Konuşma üzerindeki etkisi ölçülmedi."
 
 msgctxt "ui"
 msgid "AGC"
 msgstr "AGC"
 
 msgctxt "ui"
-msgid "Automatic gain control. The firmware applies it, but no effect on steady noise could be measured and speech was not tested."
-msgstr "Otomatik kazanç denetimi. Bellenim bunu uygular; ancak sabit gürültü üzerinde bir etki ölçülemedi ve konuşma denenmedi."
+msgid "Automatic gain control"
+msgstr "Otomatik kazanç denetimi"
 
 msgctxt "ui"
-msgid "Volume"
-msgstr "Ses düzeyi"
+msgid "The firmware applies it; no effect on steady noise was measured and speech was not tested."
+msgstr "Bellenim bunu uygular; sabit gürültü üzerinde etkisi ölçülemedi, konuşma denenmedi."
 
 msgctxt "ui"
-msgid "The microphone volume of the dongle in Windows. The buttons on the dongle and the Windows mixer change it too."
-msgstr "USB ses kartının Windows'taki mikrofon düzeyi. Karttaki düğmeler ve Windows ses karıştırıcısı da bunu değiştirir."
+msgid "Balanced: opening the microphone from idle gives 1.26 s of silence and a click."
+msgstr "Dengeli: mikrofonu boştan açmak 1,26 sn sessizlik ve bir tık verir."
 
 msgctxt "ui"
-msgid "Plays your own microphone in the headphones. It works only while a microphone and audio playback are open."
-msgstr "Kendi mikrofonunuzu kulaklıkta çalar. Yalnızca bir mikrofon ve ses çalma birlikte açıkken çalışır."
+msgid "Hear your own voice in the headphones"
+msgstr "Kendi sesinizi kulaklıkta duyun"
 
 msgctxt "ui"
-msgid "Do not also turn on Windows' \"Listen to this device\" for the microphone: you would hear an echo."
+msgid "Plays your microphone in the headphones while a microphone and playback are open."
+msgstr "Mikrofon ve ses çalma birlikte açıkken mikrofonunuzu kulaklıkta çalar."
+
+msgctxt "ui"
+msgid "Sidetone level"
+msgstr "Yan ton düzeyi"
+
+msgctxt "ui"
+msgid "Vendor default: +3.7 dB"
+msgstr "Üretici varsayılanı: +3,7 dB"
+
+msgctxt "ui"
+msgid "A gain of 0 to +16 dB. It was never listened to, so its loudness is unknown."
+msgstr "Kazanç 0 ile +16 dB arasındadır. Hiç dinlenmedi; bu yüzden ne kadar yüksek olduğu bilinmiyor."
+
+msgctxt "ui"
+msgid "Do not also turn on \"Listen to this device\" for the microphone in Windows: it would echo."
 msgstr "Mikrofon için Windows'un \"Bu aygıtı dinle\" özelliğini de açmayın: yankı duyarsınız."
-
-msgctxt "ui"
-msgid "Level"
-msgstr "Seviye"
-
-msgctxt "ui"
-msgid "The level is a register value from 1 to 4096 of unknown unit; the vendor uses 947."
-msgstr "Seviye, birimi bilinmeyen 1 ile 4096 arasında bir yazmaç değeridir; üretici 947 kullanır."
-
-msgctxt "ui"
-msgid "Start low: the loudness was not measured and can be high in sensitive in-ear monitors."
-msgstr "Düşük başlayın: yüksekliği ölçülmedi ve hassas kulak içi monitörlerde yüksek olabilir."
 
 msgctxt "ui"
 msgid "Start with Windows"
 msgstr "Windows ile başlat"
 
 msgctxt "ui"
-msgid "Starts minimized in the notification area."
-msgstr "Bildirim alanında küçültülmüş olarak başlar."
+msgid "Starts in the notification area"
+msgstr "Bildirim alanında başlar"
 
 msgctxt "ui"
-msgid "The setting could not be changed."
-msgstr "Ayar değiştirilemedi."
+msgid "Starts minimized when you sign in; nothing is installed."
+msgstr "Oturum açınca küçültülmüş başlar; hiçbir şey kurulmaz."
 
 msgctxt "ui"
 msgid "Language"
 msgstr "Dil"
 
 msgctxt "ui"
+msgid "Language of the window and the menu"
+msgstr "Pencerenin ve menünün dili"
+
+msgctxt "ui"
 msgid "Log"
 msgstr "Günlük"
+
+msgctxt "ui"
+msgid "Technical details of what cxtune did"
+msgstr "cxtune'un yaptıklarının teknik ayrıntıları"
 
 msgctxt "ui"
 msgid "Open log folder"
 msgstr "Günlük klasörünü aç"
 
 msgctxt "ui"
-msgid "HyperX Cloud II USB sound card"
-msgstr "HyperX Cloud II USB ses kartı"
+msgid "The setting could not be changed."
+msgstr "Ayar değiştirilemedi."
+
+msgctxt "ui"
+msgid "cxtune {} · MIT license"
+msgstr "cxtune {} · MIT lisansı"
 
 msgctxt "ui"
 msgid "Version {}"
@@ -360,20 +420,76 @@ msgid "Something unusual happened. See the log."
 msgstr "Olağandışı bir şey oldu. Günlüğe bakın."
 
 msgctxt "ui"
-msgid "Constant idle hiss. No pop when audio starts; nothing is muted."
-msgstr "Boşta sürekli tıslama olur. Ses başlarken patlama sesi duyulmaz; hiçbir şey susturulmaz."
+msgid "Not connected"
+msgstr "Bağlı değil"
 
 msgctxt "ui"
-msgid "Some idle hiss. A low pop when audio starts; nothing is muted."
-msgstr "Boşta biraz tıslama olur. Ses başlarken hafif bir patlama sesi duyulur; hiçbir şey susturulmaz."
+msgid "Waiting for firmware"
+msgstr "Bellenim bekleniyor"
 
 msgctxt "ui"
-msgid "Reduces the idle hiss. The first 600 ms of audio after idle are muted; opening the microphone from full idle gives 1.26 s of silence and a click."
-msgstr "Boştaki tıslamayı azaltır. Boştan sonra sesin ilk 600 ms'si susturulur; mikrofonu tam boştan açmak 1,26 sn sessizlik ve bir tık sesi verir."
+msgid "Connected · Applying"
+msgstr "Bağlı · Uygulanıyor"
 
 msgctxt "ui"
-msgid "Reduces the idle hiss. A loud pop when audio starts, and audio is muted for the start delay plus 100 ms."
-msgstr "Boştaki tıslamayı azaltır. Ses başlarken yüksek bir patlama sesi duyulur; ses, başlangıç gecikmesi artı 100 ms boyunca susturulur."
+msgid "Connected · Reading"
+msgstr "Bağlı · Okunuyor"
+
+msgctxt "ui"
+msgid "Connected · In sync"
+msgstr "Bağlı · Senkron"
+
+msgctxt "ui"
+msgid "Connected · Not in sync"
+msgstr "Bağlı · Senkron değil"
+
+msgctxt "ui"
+msgid "Needs attention"
+msgstr "Dikkat gerekiyor"
+
+msgctxt "ui"
+msgid "Default"
+msgstr "Varsayılan"
+
+msgctxt "ui"
+msgid "Click-free"
+msgstr "Tıksız"
+
+msgctxt "ui"
+msgid "Balanced"
+msgstr "Dengeli"
+
+msgctxt "ui"
+msgid "Lowest noise"
+msgstr "En düşük gürültü"
+
+msgctxt "ui"
+msgid "Always on"
+msgstr "Hep açık"
+
+msgctxt "ui"
+msgid "Idle power-down"
+msgstr "Boşta kapanır"
+
+msgctxt "ui"
+msgid "Clamped when idle"
+msgstr "Boşta bastırılır"
+
+msgctxt "ui"
+msgid "Vendor behaviour: constant idle noise, no click, nothing muted."
+msgstr "Üretici davranışı: boşta sürekli gürültü, tık yok, ses susturulmaz."
+
+msgctxt "ui"
+msgid "Some idle noise and a low click when audio starts; nothing is muted."
+msgstr "Boşta biraz gürültü, ses başlarken hafif tık; ses susturulmaz."
+
+msgctxt "ui"
+msgid "Less idle noise; the first 0.6 s of audio after idle is muted."
+msgstr "Boşta daha az gürültü; boştan sonra sesin ilk 0,6 sn'si susturulur."
+
+msgctxt "ui"
+msgid "Less idle noise and a loud click; muted for the soft-start time plus 100 ms."
+msgstr "Boşta daha az gürültü, yüksek tık; yumuşak açılış süresi + 100 ms susturulur."
 
 msgctxt "ui"
 msgid "Constant"
@@ -404,17 +520,17 @@ msgid "Loud"
 msgstr "Yüksek"
 
 msgctxt "ui"
-msgid "about 0.6 s"
-msgstr "yaklaşık 0,6 sn"
+msgid "≈ 0.6 s"
+msgstr "≈ 0,6 sn"
 
 msgctxt "ui"
-msgid "about {} ms"
-msgstr "yaklaşık {} ms"
+msgid "≈ {} ms"
+msgstr "≈ {} ms"
 
 msgctxt "ui"
 msgid "+{} dB"
 msgstr "+{} dB"
 
 msgctxt "ui"
-msgid "{} dB"
-msgstr "{} dB"
+msgid "+{}.{} dB"
+msgstr "+{},{} dB"

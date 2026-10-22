@@ -9,7 +9,7 @@ use cxtune::config;
 use cxtune::engine::{self, Command, Engine, ErrorKind, Event, Handle, Snapshot};
 use cxtune::mode::Mode;
 use cxtune::volume::Side;
-use slint::{CloseRequestResponse, ComponentHandle, Timer, TimerMode, Weak};
+use slint::{CloseRequestResponse, ComponentHandle, ModelRc, Timer, TimerMode, VecModel, Weak};
 
 use crate::controls::{self, Controls};
 use crate::lang::{self, Lang};
@@ -20,7 +20,7 @@ use crate::throttle::Throttle;
 use crate::ui::{MainWindow, Model, Tray};
 use crate::{autostart, instance};
 
-/// The index of the About tab of the window.
+/// The index of the About page of the window.
 const ABOUT_TAB: i32 = 4;
 /// A slider sends at most one command per this long, and the last value always.
 const PACE: Duration = Duration::from_millis(100);
@@ -109,6 +109,7 @@ pub fn install(
     model.set_settle_step(f32::from(cxtune::mode::SETTLE_STEP_MS));
     model.set_boost_max(f32::from(controls::BOOST_MAX));
     model.set_level_positions(controls::LEVEL_POSITIONS);
+    model.set_recommended_mode(controls::mode_index(controls::RECOMMENDED_MODE));
     model.set_autostart(autostart::is_enabled().unwrap_or(false));
 
     let paced = || Paced {
@@ -248,7 +249,8 @@ impl App {
                         with_app(|app| app.on_event(generation, event));
                     });
                 });
-                // an engine that cannot be delivered because the loop has ended is dropped here
+                // Once the event loop has ended Slint 1.18.1 still accepts the call, never runs it
+                // and drops it, with the engine in it, only when the main thread ends.
                 let _ = slint::invoke_from_event_loop(move || {
                     with_app(|app| app.on_started(generation, started));
                 });
@@ -258,6 +260,14 @@ impl App {
             log(&format!("could not start the engine thread: {error}"));
             self.start_problem = Some(Problem::StartFailed);
         }
+        self.render();
+    }
+
+    /// Development only: shows `snapshot` as if the engine had reported it.
+    #[cfg(feature = "snapshot")]
+    pub fn preview(&mut self, snapshot: Snapshot) {
+        self.touched = Touched::default();
+        self.snapshot = Some(snapshot);
         self.render();
     }
 
@@ -353,13 +363,9 @@ impl App {
         let usable = running && status.controls;
         let controls = self.controls;
         model.set_controls_enabled(usable);
-        model.set_mode_recommended(controls.mode == controls::RECOMMENDED_MODE);
         model.set_delay_enabled(usable && controls.mode == Mode::MinHiss);
-        let indicators = controls::indicators(controls.mode, controls.settle_ms);
-        model.set_hiss(indicators.hiss);
-        model.set_pop(indicators.pop);
-        model.set_delay(indicators.delay);
-        model.set_delay_ms(indicators.delay_ms);
+        let indicators = Mode::ALL.map(|mode| controls::indicators(mode, controls.settle_ms));
+        model.set_indicators(ModelRc::new(VecModel::from(indicators.to_vec())));
         model.set_boost_db(controls::gain_db(controls.boost));
         model.set_boost_recommended(controls.boost == controls::BOOST_RECOMMENDED);
 
@@ -615,7 +621,12 @@ impl App {
         self.show_window();
     }
 
+    /// Does nothing once the program is quitting: a launch that arrives while the engine is
+    /// being stopped must not bring the hidden window back.
     fn show_window(&mut self) {
+        if self.quitting {
+            return;
+        }
         if let Some(window) = self.window.upgrade() {
             platform::show_and_raise(window.window());
             self.sound.watch(true);

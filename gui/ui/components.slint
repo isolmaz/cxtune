@@ -1,24 +1,100 @@
-import { Button, CheckBox, ComboBox, Palette, Slider, Switch } from "std-widgets.slint";
-import { Model } from "contract.slint";
-import { Grid, Surface } from "theme.slint";
+import { ComboBox, Palette, Slider, Switch } from "std-widgets.slint";
+import { Delay, Hiss, Model, ModeIndicators, Pop, Title, Tone } from "contract.slint";
+import { Grid, Signal, Surface } from "theme.slint";
 import { Texts } from "texts.slint";
 
-// The explanation that the mouse is pointing at, and where; only the visual layer knows of it.
+// The explanation that the mouse is pointing at, and where the "?" is; only the visual layer knows
+// of it.
 export global Hover {
     in-out property <string> explanation;
+    in-out property <length> x;
     in-out property <length> y;
 }
 
-// 12px text has a line pitch of 16px; a note reserves the height of its longest text in both languages.
-export component Note inherits Text {
-    color: Surface.quiet;
-    font-size: 12px;
-    wrap: word-wrap;
-    min-height: 20px;
-    vertical-alignment: top;
+// ---- Type: body 14, secondary 12, titles 14 semibold ----
+
+export component Body inherits Text {
+    font-size: 14px;
+    color: Surface.text;
+    vertical-alignment: center;
 }
 
-// A small coloured pill: "Experimental", "Recommended".
+export component Strong inherits Text {
+    font-size: 14px;
+    font-weight: 600;
+    color: Surface.text;
+    vertical-alignment: center;
+}
+
+export component Caption inherits Text {
+    font-size: 12px;
+    color: Surface.quiet;
+    vertical-alignment: center;
+}
+
+// A glyph of Segoe Fluent Icons.
+export component Icon inherits Text {
+    font-family: "Segoe Fluent Icons";
+    font-size: 16px;
+    color: Surface.text;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+    accessible-role: none;
+}
+
+// ---- Surfaces ----
+
+export component Divider inherits Rectangle {
+    height: 1px;
+    background: Surface.stroke;
+}
+
+export component Card inherits Rectangle {
+    background: Surface.card;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Surface.stroke;
+
+    VerticalLayout {
+        padding: 1px;
+        @children
+    }
+}
+
+// The product photo on a lighter stage. The clip is in pixels of the picture; 0 shows all of it.
+export component DeviceTile inherits Rectangle {
+    in property <image> source;
+    in property <length> inset: 4px;
+    in property <float> clip-x;
+    in property <float> clip-y;
+    in property <float> clip-width;
+    in property <float> clip-height;
+    in property <string> label;
+    border-radius: 12px;
+    background: Surface.stage;
+    border-width: 1px;
+    border-color: Surface.stroke;
+    clip: true;
+
+    Image {
+        x: root.inset;
+        y: root.inset;
+        width: root.width - 2 * root.inset;
+        height: root.height - 2 * root.inset;
+        source: root.source;
+        source-clip-x: root.clip-x;
+        source-clip-y: root.clip-y;
+        source-clip-width: root.clip-width > 0 ? root.clip-width : root.source.width;
+        source-clip-height: root.clip-height > 0 ? root.clip-height : root.source.height;
+        image-fit: contain;
+        accessible-role: image;
+        accessible-label: root.label;
+    }
+}
+
+// ---- Small things ----
+
+// A coloured pill: "Experimental", "Recommended".
 export component Badge inherits VerticalLayout {
     in property <string> label;
     in property <color> tone: Surface.caution;
@@ -27,11 +103,11 @@ export component Badge inherits VerticalLayout {
 
     Rectangle {
         height: 18px;
-        min-width: pill-label.preferred-width + 14px;
+        min-width: pill-label.preferred-width + 16px;
         border-radius: 9px;
         border-width: 1px;
-        border-color: root.tone;
-        background: root.tone.with-alpha(0.15);
+        border-color: root.tone.with-alpha(0.4);
+        background: root.tone.with-alpha(Surface.dark ? 0.15 : 0.1);
         accessible-role: text;
         accessible-label: root.label;
 
@@ -40,7 +116,6 @@ export component Badge inherits VerticalLayout {
             color: root.tone;
             font-size: 11px;
             font-weight: 600;
-            x: 0px;
             width: parent.width;
             height: parent.height;
             horizontal-alignment: center;
@@ -50,14 +125,14 @@ export component Badge inherits VerticalLayout {
     }
 }
 
-// A small "?" that explains its row while the mouse is over it.
+// A "?" that explains its row in one line while the mouse is over it.
 export component Help inherits Rectangle {
     in property <string> explanation;
     width: 16px;
     height: 16px;
     border-radius: 8px;
     border-width: 1px;
-    border-color: Surface.quiet;
+    border-color: Surface.faint;
     background: touch.has-hover ? Surface.stroke : transparent;
     accessible-role: text;
     accessible-label: root.explanation;
@@ -78,6 +153,7 @@ export component Help inherits Rectangle {
         changed has-hover => {
             if self.has-hover {
                 Hover.explanation = root.explanation;
+                Hover.x = root.absolute-position.x;
                 Hover.y = root.absolute-position.y + root.height;
             } else if Hover.explanation == root.explanation {
                 Hover.explanation = "";
@@ -88,7 +164,7 @@ export component Help inherits Rectangle {
 
 export component LinkText inherits Rectangle {
     in property <string> text;
-    in property <length> font-size: 14px;
+    in property <length> font-size: 12px;
     callback clicked();
     accessible-role: button;
     accessible-label: root.text;
@@ -101,7 +177,7 @@ export component LinkText inherits Rectangle {
 
     label := Text {
         text: root.text;
-        color: Palette.accent-background;
+        color: Surface.accent;
         font-size: root.font-size;
         vertical-alignment: center;
     }
@@ -114,158 +190,595 @@ export component LinkText inherits Rectangle {
     }
 }
 
-// A label on the left, with a "?" if there is something to explain, and the control in the
-// column that starts at 170px.
-export component Row inherits HorizontalLayout {
-    in property <string> label;
-    in property <string> help;
-    min-height: Grid.row;
-    max-height: Grid.row;
-    spacing: 0px;
+// A message under the cards: a note, or a warning when `tone` is not the accent. It is one line
+// high unless the text needs more.
+export component InfoBar inherits Rectangle {
+    in property <string> text;
+    in property <string> icon: "\u{E946}";
+    in property <brush> tone: Surface.accent;
+    height: Math.max(32px, message.preferred-height + 16px);
+    border-radius: 4px;
+    background: Surface.card;
+    border-width: 1px;
+    border-color: Surface.stroke;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+
+    Icon {
+        x: 12px;
+        y: 8px;
+        width: 16px;
+        height: 16px;
+        text: root.icon;
+        font-size: 14px;
+        color: root.tone;
+    }
+
+    message := Caption {
+        x: 36px;
+        y: 0px;
+        width: root.width - 36px - 12px;
+        height: root.height;
+        text: root.text;
+        wrap: word-wrap;
+        accessible-role: none;
+    }
+}
+
+// A button with an optional glyph; it takes the keyboard focus.
+export component FluentButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> enabled: true;
+    in property <length> button-height: 32px;
+    callback clicked();
+    height: root.button-height;
+    border-radius: 4px;
+    background: !root.enabled ? Surface.control.with-alpha(0.4) : touch.pressed ? Surface.stroke : touch.has-hover ? Surface.card-hover : Surface.control;
+    border-width: 1px;
+    border-color: Surface.control-stroke;
+    forward-focus: keys;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if root.enabled {
+            root.clicked();
+        }
+    }
 
     HorizontalLayout {
-        width: Grid.label;
-        spacing: 6px;
-        Text {
-            text: root.label;
-            color: Surface.text;
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        alignment: center;
+
+        if root.icon != "": Icon {
+            text: root.icon;
+            width: 16px;
             font-size: 14px;
+            color: root.enabled ? Surface.text : Surface.faint;
+        }
+
+        Text {
+            text: root.text;
+            font-size: 13px;
+            color: root.enabled ? Surface.text : Surface.faint;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+
+    if keys.has-focus && root.enabled: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 7px;
+        border-width: 2px;
+        border-color: Surface.text;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    keys := FocusScope {
+        width: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+// The speaker of a volume row: muting is a click on it, and the glyph tells whether it is muted.
+component MuteToggle inherits Rectangle {
+    in property <string> icon;
+    in property <string> muted-icon;
+    in property <bool> muted;
+    callback toggled();
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    background: touch.pressed ? Surface.stroke : touch.has-hover ? Surface.card-hover : transparent;
+    forward-focus: keys;
+    accessible-role: button;
+    accessible-label: @tr("ui" => "Mute");
+    accessible-checkable: true;
+    accessible-checked: root.muted;
+    accessible-action-default => {
+        root.toggled();
+    }
+
+    Icon {
+        text: root.muted ? root.muted-icon : root.icon;
+        color: root.muted ? Surface.critical : Surface.text;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    if keys.has-focus: Rectangle {
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: Surface.text;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.toggled();
+        }
+    }
+
+    keys := FocusScope {
+        width: 0px;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.toggled();
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+// ---- Rows ----
+
+// A row of a card: a glyph, a title with its "?" and badges, a caption, and the control on the
+// right. A row with a `muted-icon` shows the glyph as a mute button.
+export component Row inherits Rectangle {
+    in property <string> icon;
+    in property <string> muted-icon;
+    in-out property <bool> muted;
+    in property <string> title;
+    in property <string> caption;
+    in property <string> help;
+    in property <bool> experimental;
+    in property <bool> recommended;
+    // greyed out while the control has no effect
+    in property <bool> dimmed;
+    callback mute-toggled(bool);
+    min-height: Grid.row;
+    max-height: Grid.row;
+    opacity: root.dimmed ? 0.5 : 1;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 16px;
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            width: 32px;
+
+            if root.muted-icon == "": Icon {
+                text: root.icon;
+                width: 32px;
+                height: 32px;
+            }
+
+            if root.muted-icon != "": MuteToggle {
+                icon: root.icon;
+                muted-icon: root.muted-icon;
+                muted: root.muted;
+                toggled => {
+                    root.muted = !root.muted;
+                    root.mute-toggled(root.muted);
+                }
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+
+                Body {
+                    text: root.title;
+                    overflow: elide;
+                    horizontal-stretch: 0;
+                }
+
+                if root.help != "": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+                    Help {
+                        explanation: root.help;
+                    }
+                }
+
+                if root.experimental: Badge {
+                    label: @tr("ui" => "Experimental");
+                }
+
+                if root.recommended: Badge {
+                    label: @tr("ui" => "Recommended");
+                    tone: Surface.good;
+                }
+            }
+
+            Caption {
+                text: root.caption;
+                overflow: elide;
+            }
+        }
+
+        @children
+    }
+}
+
+// The control of a row: a slider and its value.
+export component SliderControl inherits VerticalLayout {
+    alignment: center;
+    horizontal-stretch: 0;
+    width: Grid.control;
+
+    HorizontalLayout {
+        spacing: 12px;
+        @children
+    }
+}
+
+export component ValueText inherits Text {
+    font-size: 13px;
+    color: Surface.text;
+    vertical-alignment: center;
+    horizontal-alignment: right;
+    width: 72px;
+}
+
+// A switch with the "On" / "Off" it stands for, as in the settings of Windows 11.
+export component SwitchControl inherits HorizontalLayout {
+    in property <string> label;
+    in property <bool> enabled: true;
+    in-out property <bool> checked;
+    callback toggled(bool);
+    spacing: 12px;
+    alignment: end;
+    horizontal-stretch: 0;
+
+    Text {
+        text: root.checked ? @tr("ui" => "On") : @tr("ui" => "Off");
+        font-size: 13px;
+        color: root.enabled ? Surface.text : Surface.faint;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        Switch {
+            text: "";
+            checked <=> root.checked;
+            enabled: root.enabled;
+            accessible-label: root.label;
+            toggled => {
+                root.toggled(self.checked);
+            }
+        }
+    }
+}
+
+// ---- Output modes ----
+
+component Indicator inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <color> tone;
+    in property <bool> known: true;
+    height: 30px;
+
+    Caption {
+        text: root.label;
+        overflow: elide;
+        height: 15px;
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        height: 15px;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            Rectangle {
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: root.tone;
+            }
+        }
+
+        Text {
+            text: root.value;
+            color: root.known ? Surface.text : Surface.quiet;
+            font-size: 12px;
+            font-weight: root.known ? 600 : 400;
             vertical-alignment: center;
             overflow: elide;
         }
+    }
+}
 
-        if root.help != "": VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
-            Help {
-                explanation: root.help;
+component ModeCard inherits Rectangle {
+    in property <int> index;
+    in property <bool> selected;
+    in property <bool> focused;
+    in property <bool> enabled: true;
+    in property <bool> recommended;
+    in property <ModeIndicators> indicators;
+    callback clicked();
+    border-radius: 8px;
+    background: root.selected ? Surface.accent-soft : touch.has-hover && root.enabled ? Surface.card-hover : Surface.card;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Surface.accent : Surface.stroke;
+    opacity: root.enabled ? 1 : 0.7;
+    accessible-role: radio-button;
+    accessible-label: Texts.mode-name(root.index);
+    accessible-checkable: true;
+    accessible-checked: root.selected;
+    accessible-enabled: root.enabled;
+    accessible-description: @tr("ui" => "{}: {}, {}: {}, {}: {}", @tr("ui" => "Noise floor"), Texts.hiss(root.indicators.hiss), @tr("ui" => "Click"), Texts.pop(root.indicators.pop), @tr("ui" => "Mute delay"), Texts.delay(root.indicators.delay, root.indicators.delay-ms));
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    VerticalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-top: 12px;
+        padding-bottom: 8px;
+
+        Strong {
+            text: Texts.mode-name(root.index);
+            overflow: elide;
+            height: 20px;
+            accessible-role: none;
+        }
+
+        HorizontalLayout {
+            height: 18px;
+            spacing: 4px;
+
+            if root.recommended: Badge {
+                label: @tr("ui" => "Recommended");
+                tone: Surface.good;
+            }
+
+            if !root.recommended: Caption {
+                text: Texts.mode-tagline(root.index);
+                overflow: elide;
+                accessible-role: none;
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
             }
         }
 
         Rectangle {
-            horizontal-stretch: 1;
+            height: 4px;
+        }
+
+        Divider { }
+
+        Rectangle {
+            height: 4px;
+        }
+
+        Indicator {
+            label: @tr("ui" => "Noise floor");
+            value: Texts.hiss(root.indicators.hiss);
+            tone: Signal.hiss(root.indicators.hiss);
+        }
+
+        Indicator {
+            label: @tr("ui" => "Click");
+            value: Texts.pop(root.indicators.pop);
+            tone: Signal.pop(root.indicators.pop);
+            known: root.indicators.pop != Pop.not-measured;
+        }
+
+        Indicator {
+            label: @tr("ui" => "Mute delay");
+            value: Texts.delay(root.indicators.delay, root.indicators.delay-ms);
+            tone: Surface.faint;
         }
     }
 
-    @children
-}
+    // the check sits on the corner of the card, so it takes no room from the texts
+    if root.selected: Rectangle {
+        x: parent.width - 14px;
+        y: -4px;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: Surface.accent;
 
-// A switch with its title, a "?" and a badge for what is experimental.
-export component ToggleRow inherits HorizontalLayout {
-    in property <string> label;
-    in property <string> help;
-    in property <bool> experimental;
-    in property <bool> enabled: true;
-    in-out property <bool> checked;
-    callback toggled(bool);
-    min-height: Grid.row;
-    max-height: Grid.row;
-    spacing: 10px;
+        Icon {
+            text: "\u{E73E}";
+            font-size: 10px;
+            color: Surface.on-accent;
+            width: parent.width;
+            height: parent.height;
+        }
+    }
 
-    Switch {
-        text: "";
-        checked <=> root.checked;
+    if root.focused: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 11px;
+        border-width: 2px;
+        border-color: Surface.text;
+    }
+
+    touch := TouchArea {
         enabled: root.enabled;
-        accessible-label: root.label;
-        toggled => {
-            root.toggled(self.checked);
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
         }
-    }
-
-    Text {
-        text: root.label;
-        color: Surface.text;
-        font-size: 14px;
-        vertical-alignment: center;
-        horizontal-stretch: 0;
-    }
-
-    if root.help != "": VerticalLayout {
-        alignment: center;
-        horizontal-stretch: 0;
-        Help {
-            explanation: root.help;
-        }
-    }
-
-    if root.experimental: Badge {
-        label: @tr("ui" => "Experimental");
-    }
-
-    Rectangle {
-        horizontal-stretch: 1;
     }
 }
 
-// The slider of a volume, its value and the mute switch. `side` is 0 for the speakers and 1 for
-// the microphone.
-export component VolumeRow inherits Row {
-    in property <int> side;
-    in property <bool> present;
-    in-out property <float> volume;
-    in-out property <bool> muted;
+// The four modes as cards. The group is one stop of the keyboard: the arrows move between the
+// cards and Space or Enter chooses one.
+export component ModeGroup inherits Rectangle {
+    property <int> focus-index;
+    height: 157px;
+    forward-focus: keys;
+    accessible-role: list;
 
     HorizontalLayout {
-        spacing: 8px;
-        Slider {
-            minimum: 0;
-            maximum: 100;
-            step: 1;
-            value <=> root.volume;
-            enabled: root.present;
-            accessible-label: root.label;
-            changed(value) => {
-                root.volume = Math.round(value);
-                Model.volume-changed(root.side, Math.round(value));
+        spacing: 4px;
+
+        for i in 4: ModeCard {
+            width: (root.width - 3 * 4px) / 4;
+            index: i;
+            selected: Model.mode == i;
+            focused: keys.has-focus && root.focus-index == i;
+            enabled: Model.controls-enabled;
+            recommended: Model.recommended-mode == i;
+            indicators: Model.indicators[i];
+            clicked => {
+                root.focus-index = i;
+                Model.mode-selected(i);
             }
+        }
+    }
+
+    keys := FocusScope {
+        width: 0px;
+        enabled: Model.controls-enabled;
+        changed has-focus => {
+            if self.has-focus {
+                root.focus-index = Model.mode;
+            }
+        }
+        key-pressed(event) => {
+            if event.text == Key.LeftArrow {
+                root.focus-index = Math.max(root.focus-index - 1, 0);
+                return accept;
+            }
+            if event.text == Key.RightArrow {
+                root.focus-index = Math.min(root.focus-index + 1, 3);
+                return accept;
+            }
+            if event.text == Key.Space || event.text == Key.Return {
+                Model.mode-selected(root.focus-index);
+                return accept;
+            }
+            return reject;
+        }
+    }
+}
+
+// ---- Navigation ----
+
+component NavItem inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> selected;
+    in property <bool> focused;
+    in property <int> index;
+    callback clicked();
+    height: 36px;
+    border-radius: 4px;
+    background: root.selected ? Surface.card-hover : touch.has-hover ? Surface.card : transparent;
+    accessible-role: tab;
+    accessible-label: root.label;
+    accessible-item-index: root.index;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.selected;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    if root.selected: Rectangle {
+        x: 0px;
+        y: (parent.height - self.height) / 2;
+        width: 3px;
+        height: 16px;
+        border-radius: 1.5px;
+        background: Surface.accent;
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        spacing: 8px;
+
+        Icon {
+            text: root.icon;
+            width: 16px;
+            color: root.selected ? Surface.accent : Surface.text;
         }
 
         Text {
-            text: root.present ? @tr("ui" => "{} %", Math.round(root.volume)) : "–";
-            color: root.present ? Surface.text : Surface.quiet;
+            text: root.label;
             font-size: 14px;
+            font-weight: root.selected ? 600 : 400;
+            color: Surface.text;
             vertical-alignment: center;
-            horizontal-alignment: right;
-            width: 44px;
+            overflow: elide;
+            accessible-role: none;
         }
+    }
 
-        CheckBox {
-            text: @tr("ui" => "Mute");
-            checked <=> root.muted;
-            enabled: root.present;
-            toggled => {
-                Model.mute-toggled(root.side, self.checked);
-            }
+    if root.focused: Rectangle {
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: Surface.text;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
         }
     }
 }
 
-export component Indicator inherits VerticalLayout {
-    in property <string> name;
-    in property <string> value;
-    in property <bool> known: true;
-    spacing: 1px;
-    horizontal-stretch: 1;
-
-    Text {
-        text: root.name;
-        color: Surface.quiet;
-        font-size: 11px;
-    }
-
-    Text {
-        text: root.value;
-        color: root.known ? Surface.text : Surface.quiet;
-        font-size: 13px;
-        font-weight: root.known ? 600 : 400;
-        overflow: elide;
-    }
-}
-
-export component TabBar inherits Rectangle {
+// The pages, by glyph and name. `selected` is the page that is current; the arrows move between
+// the pages.
+export component Nav inherits Rectangle {
+    in property <[string]> icons;
     in property <[string]> names;
-    height: 40px;
-
+    in property <int> selected;
+    callback chosen(int);
     forward-focus: keys;
     accessible-role: tab-list;
     accessible-item-count: root.names.length;
@@ -273,88 +786,131 @@ export component TabBar inherits Rectangle {
     keys := FocusScope {
         width: 0px;
         key-pressed(event) => {
-            if event.text == Key.LeftArrow {
-                Model.tab = Math.max(Model.tab - 1, 0);
+            if event.text == Key.UpArrow {
+                root.chosen(Math.max(root.selected - 1, 0));
                 return accept;
             }
-            if event.text == Key.RightArrow {
-                Model.tab = Math.min(Model.tab + 1, root.names.length - 1);
+            if event.text == Key.DownArrow {
+                root.chosen(Math.min(root.selected + 1, root.names.length - 1));
                 return accept;
             }
             return reject;
         }
     }
 
-    HorizontalLayout {
+    VerticalLayout {
+        padding: 4px;
+        spacing: 4px;
         alignment: start;
-        for name[index] in root.names: Rectangle {
-            property <bool> selected: Model.tab == index;
-            // the selected tab is bold; every tab keeps the width of its bold text so that nothing shifts
-            min-width: widest.preferred-width + 20px;
-            background: touch.has-hover && !selected ? Surface.text.with-alpha(0.06) : transparent;
-            border-radius: 6px;
-            accessible-role: tab;
-            accessible-label: name;
-            accessible-item-index: index;
-            accessible-item-selectable: true;
-            accessible-item-selected: selected;
-            accessible-action-default => {
-                Model.tab = index;
+
+        for name[index] in root.names: NavItem {
+            index: index;
+            icon: root.icons[index];
+            label: name;
+            selected: root.selected == index;
+            focused: root.selected == index && keys.has-focus;
+            clicked => {
+                root.chosen(index);
                 keys.focus();
-            }
-
-            widest := Text {
-                text: name;
-                font-size: 14px;
-                font-weight: 600;
-                visible: false;
-            }
-
-            Text {
-                text: name;
-                color: selected || touch.has-hover ? Surface.text : Surface.quiet;
-                font-size: 14px;
-                font-weight: selected ? 600 : 400;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                x: 0px;
-                y: 0px;
-                width: parent.width;
-                height: parent.height - 6px;
-                accessible-role: none;
-            }
-
-            if selected: Rectangle {
-                x: (parent.width - self.width) / 2;
-                y: parent.height - 7px;
-                width: 16px;
-                height: 3px;
-                border-radius: 1.5px;
-                background: Palette.accent-background;
-            }
-
-            if selected && keys.has-focus: Rectangle {
-                border-radius: 6px;
-                border-width: 2px;
-                border-color: Surface.text;
-            }
-
-            touch := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                    Model.tab = index;
-                    keys.focus();
-                }
             }
         }
     }
 }
 
-export component Tab inherits VerticalLayout {
-    padding-left: Grid.margin;
-    padding-right: Grid.margin;
-    padding-top: 16px;
-    spacing: Grid.gap;
-    alignment: start;
+// ---- Header ----
+
+// The state of the dongle: a dot of the colour of the status and a few words.
+export component StatusPill inherits Rectangle {
+    in property <string> text;
+    in property <color> tone;
+    height: 24px;
+    min-width: label.preferred-width + 30px;
+    border-radius: 12px;
+    background: root.tone.with-alpha(Surface.dark ? 0.15 : 0.1);
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 12px;
+        spacing: 6px;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+            Rectangle {
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.tone;
+            }
+        }
+
+        label := Text {
+            text: root.text;
+            font-size: 12px;
+            font-weight: 600;
+            color: Surface.text;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
 }
 
+// A segmented level meter for a peak level in dBFS (-60 to 0). Without a level it stays neutral.
+component Meter inherits Rectangle {
+    in property <bool> active;
+    in property <float> db;
+    property <int> segments: 28;
+    property <float> level: Math.clamp((root.db + 60) / 60, 0, 1);
+    width: root.segments * 7px - 2px;
+    height: 8px;
+
+    for i in root.segments: Rectangle {
+        property <float> t: (i + 0.5) / root.segments;
+        x: i * 7px;
+        width: 5px;
+        height: root.height;
+        border-radius: 1.5px;
+        background: root.active && t <= root.level ? (t < 0.7 ? Surface.good : t < 0.9 ? Surface.caution : Surface.critical) : Surface.meter-off;
+    }
+}
+
+export component MeterRow inherits HorizontalLayout {
+    in property <string> tag;
+    in property <string> label;
+    in property <bool> active;
+    in property <float> db;
+    spacing: 8px;
+    accessible-role: text;
+    accessible-label: root.label;
+
+    Text {
+        text: root.tag;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.8px;
+        color: Surface.quiet;
+        vertical-alignment: center;
+        width: 28px;
+        accessible-role: none;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        Meter {
+            active: root.active;
+            db: root.db;
+        }
+    }
+
+    Text {
+        text: root.active ? @tr("ui" => "{} dB", Math.round(root.db)) : "–";
+        font-size: 12px;
+        color: root.active ? Surface.text : Surface.faint;
+        vertical-alignment: center;
+        horizontal-alignment: right;
+        width: 52px;
+        accessible-role: none;
+    }
+}

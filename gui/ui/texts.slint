@@ -113,17 +113,72 @@ export global Texts {
         return "";
     }
 
-    public pure function mode-note(mode: int) -> string {
+    // the short state of the dongle in the header
+    public pure function pill(kind: Title) -> string {
+        if kind == Title.starting {
+            return @tr("ui" => "Starting…");
+        }
+        if kind == Title.disconnected {
+            return @tr("ui" => "Not connected");
+        }
+        if kind == Title.waiting {
+            return @tr("ui" => "Waiting for firmware");
+        }
+        if kind == Title.applying {
+            return @tr("ui" => "Connected · Applying");
+        }
+        if kind == Title.reading {
+            return @tr("ui" => "Connected · Reading");
+        }
+        if kind == Title.in-sync {
+            return @tr("ui" => "Connected · In sync");
+        }
+        if kind == Title.not-applied {
+            return @tr("ui" => "Connected · Not in sync");
+        }
+        if kind == Title.stopped {
+            return @tr("ui" => "Stopped");
+        }
+        return @tr("ui" => "Needs attention");
+    }
+
+    public pure function mode-name(mode: int) -> string {
         if mode == 0 {
-            return @tr("ui" => "Constant idle hiss. No pop when audio starts; nothing is muted.");
+            return @tr("ui" => "Default");
         }
         if mode == 1 {
-            return @tr("ui" => "Some idle hiss. A low pop when audio starts; nothing is muted.");
+            return @tr("ui" => "Click-free");
         }
         if mode == 2 {
-            return @tr("ui" => "Reduces the idle hiss. The first 600 ms of audio after idle are muted; opening the microphone from full idle gives 1.26 s of silence and a click.");
+            return @tr("ui" => "Balanced");
         }
-        return @tr("ui" => "Reduces the idle hiss. A loud pop when audio starts, and audio is muted for the start delay plus 100 ms.");
+        return @tr("ui" => "Lowest noise");
+    }
+
+    public pure function mode-tagline(mode: int) -> string {
+        if mode == 0 {
+            return @tr("ui" => "Always on");
+        }
+        if mode == 1 {
+            return @tr("ui" => "Idle power-down");
+        }
+        if mode == 3 {
+            return @tr("ui" => "Clamped when idle");
+        }
+        return "";
+    }
+
+    public pure function mode-note(mode: int) -> string {
+        if mode == 0 {
+            return @tr("ui" => "Vendor behaviour: constant idle noise, no click, nothing muted.");
+        }
+        if mode == 1 {
+            return @tr("ui" => "Some idle noise and a low click when audio starts; nothing is muted.");
+        }
+        if mode == 2 {
+            return @tr("ui" => "Less idle noise; the first 0.6 s of audio after idle is muted.");
+        }
+        return @tr("ui" => "Less idle noise and a loud click; muted for the soft-start time plus 100 ms.");
     }
 
     public pure function hiss(kind: Hiss) -> string {
@@ -154,9 +209,9 @@ export global Texts {
             return @tr("ui" => "None");
         }
         if kind == Delay.about-600-ms {
-            return @tr("ui" => "about 0.6 s");
+            return @tr("ui" => "≈ 0.6 s");
         }
-        return @tr("ui" => "about {} ms", ms);
+        return @tr("ui" => "≈ {} ms", ms);
     }
 
     public pure function gain(db: int) -> string {
@@ -164,5 +219,15 @@ export global Texts {
             return @tr("ui" => "+{} dB", db);
         }
         return @tr("ui" => "{} dB", db);
+    }
+
+    // the sidetone gain register is in 1/256 dB (UAC); the tenths are formatted separately so that
+    // the Turkish text can use a decimal comma
+    public pure function level-db(register: int) -> string {
+        let tenths = Math.round(register / 25.6);
+        if tenths <= 0 {
+            return @tr("ui" => "{} dB", 0);
+        }
+        return @tr("ui" => "+{}.{} dB", Math.floor(tenths / 10), Math.mod(tenths, 10));
     }
 }

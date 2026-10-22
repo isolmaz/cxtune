@@ -44,6 +44,14 @@ impl Args {
                 .map(Into::into),
         }
     }
+
+    /// Whether the window shows simulated states instead of the dongle (development only).
+    fn simulated(&self) -> bool {
+        #[cfg(feature = "snapshot")]
+        return self.snapshot.is_some();
+        #[cfg(not(feature = "snapshot"))]
+        false
+    }
 }
 
 fn main() {
@@ -68,15 +76,18 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let show = !args.minimized;
     #[cfg(feature = "snapshot")]
     let show = show || args.snapshot.is_some();
-    app::install(&window, &tray, lang, &guard, show);
+    // the volume is read only for a window that shows the real state
+    app::install(&window, &tray, lang, &guard, show && !args.simulated());
     if show {
         window.show()?;
     }
+    tray.show()?;
     #[cfg(feature = "snapshot")]
     if let Some(folder) = args.snapshot {
         snapshot::schedule(&window, folder);
+        slint::run_event_loop_until_quit()?;
+        return Ok(());
     }
-    tray.show()?;
     app::start();
     slint::run_event_loop_until_quit()?;
     Ok(())

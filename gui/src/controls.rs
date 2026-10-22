@@ -8,7 +8,7 @@ use cxtune::patches::{
     SIDETONE_MIN,
 };
 
-use crate::ui::{Delay, Hiss, Pop};
+use crate::ui::{Delay, Hiss, ModeIndicators, Pop};
 
 pub const SETTLE_MIN_MS: u16 = SETTLE_MIN as u16 * SETTLE_STEP_MS;
 pub const SETTLE_MAX_MS: u16 = SETTLE_MAX as u16 * SETTLE_STEP_MS;
@@ -31,28 +31,19 @@ pub fn gain_db(step: u8) -> i32 {
 /// The mode that the recommended settings use.
 pub const RECOMMENDED_MODE: Mode = Mode::Balanced;
 
-/// What a mode costs and gives, for the indicators under the mode selector. The words are the
-/// README's; the delay is the time that the start of audio is muted, measured on the device
+/// What a mode costs and gives, for the indicators on its card. The words are the README's; the
+/// delay is the time that the start of audio is muted, measured on the device
 /// (docs/firmware-notes.md): none in stock and quiet mode, 0.59 s plus 37 ms in balanced mode,
-/// and in minimum hiss the start delay plus the fixed 100 ms. The start pop of balanced mode was
-/// not measured.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Indicators {
-    pub hiss: Hiss,
-    pub pop: Pop,
-    pub delay: Delay,
-    /// The delay in ms where it depends on the start delay.
-    pub delay_ms: i32,
-}
-
-pub fn indicators(mode: Mode, settle_ms: u16) -> Indicators {
+/// and in minimum hiss the soft-start time plus the fixed 100 ms. The start pop of balanced mode
+/// was not measured.
+pub fn indicators(mode: Mode, settle_ms: u16) -> ModeIndicators {
     let (hiss, pop, delay) = match mode {
         Mode::Stock => (Hiss::Constant, Pop::None, Delay::None),
         Mode::Quiet => (Hiss::Some, Pop::Low, Delay::None),
         Mode::Balanced => (Hiss::Cut, Pop::NotMeasured, Delay::About600Ms),
         Mode::MinHiss => (Hiss::Cut, Pop::Loud, Delay::Settle),
     };
-    Indicators {
+    ModeIndicators {
         hiss,
         pop,
         delay,
