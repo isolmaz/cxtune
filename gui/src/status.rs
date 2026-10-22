@@ -157,7 +157,7 @@ pub fn status(snapshot: Option<&Snapshot>, start: Option<Problem>, warned: bool)
 #[cfg(test)]
 mod tests {
     use cxtune::config::Config;
-    use cxtune::engine::{Failure, Readback};
+    use cxtune::engine::{Failure, Readback, TestState};
     use cxtune::mode::Mode;
 
     use super::*;
@@ -172,6 +172,9 @@ mod tests {
             agc: false,
             sidetone: false,
             sidetone_level: 947,
+            balanced_decay_ms: None,
+            surround: false,
+            surround_level: Some(4),
         }
     }
 
@@ -186,6 +189,7 @@ mod tests {
             save_error: None,
             device,
             error: None,
+            test: TestState::default(),
         }
     }
 

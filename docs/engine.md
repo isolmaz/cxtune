@@ -34,11 +34,14 @@
 
 | `Command` | Effect |
 |---|---|
-| `SetMode(Mode)` | mode |
-| `SetMinHissMs(u16)` | min-hiss settle time (20-2000 ms in steps of 10), used in min-hiss mode |
+| `SetMode(Mode)` | mode: default, low click, balanced or lowest noise |
+| `SetMinHissMs(u16)` | lowest-noise soft-start time (20-2000 ms in steps of 10), used in lowest-noise mode |
+| `SetBalancedDecayMs(u16)` | balanced stop decay time (100-2000 ms in steps of 10), used in balanced mode |
 | `SetMicBoost(u8)` | analog mic boost 0-7 |
 | `SetNoiseReduction(bool)`, `SetAgc(bool)` | microphone DSP bits |
-| `SetSidetone(bool)`, `SetSidetoneLevel(u16)` | sidetone on/off and gain register 1-4096 |
+| `SetSidetone(bool)`, `SetSidetoneLevel(u16)` | sidetone on/off and the gain register 1-4096, in UAC 1/256 dB units per the ROM; not exposed to the host; DSP loudness not measured (947 = +3.70 dB, 4096 = +16 dB; `patches::sidetone_register(db)` and `sidetone_db(register)` convert). Every level amplifies: only sidetone off is silent. |
+| `SetSurround(bool)`, `SetSurroundLevel(u8)` | virtual surround on/off and its level 1-10 (experimental; the sound was not listened to) |
+| `Test(TestRequest)` | a request of the Test tab; not a setting, nothing is saved (see The Test tab) |
 | `Reapply` | applies the settings now, forced, and starts over after earlier failures and after a setting was left alone (see Drift) |
 | `Refresh` | reads the dongle now and publishes what it holds; writes nothing |
 
@@ -57,9 +60,11 @@ An `Event` is one of:
   - `save_error`: why the settings file could not be written, until a write succeeds;
   - `device`: the `Readback` of every managed setting from the last read (`None` while
     disconnected or not yet read);
-  - `error`: the open problem with the dongle, if any.
+  - `error`: the open problem with the dongle, if any;
+  - `test`: what the Test tab has running (see The Test tab).
 
   `in_sync()` is true when the device was read and holds every chosen setting.
+- `Test(TestEvent)`: a message for the Test tab (see The Test tab).
 - `Warning(String)`: something to be aware of that stops nothing: a stream event near a DSP
   reload request, or a setting that changed on the dongle without cxtune and was corrected.
 - `Error(Failure)`: a problem, sent when it first appears or changes; a problem that persists
@@ -107,7 +112,7 @@ All decisions are in `engine::supervisor`; the worker loop calls `command` with 
   `settings::ensure`, which writes through the guarded patches only what differs. After
   `ensure` the dongle is read again; a difference that remains is a `Verify` failure.
 - **Restart between two polls.** A dongle that held the settings at the last verification and
-  now holds the vendor's (mode `stock`, `$1017 = 0x3C` (boost 4), noise reduction on, AGC and
+  now holds the vendor's (mode default, `$1017 = 0x3C` (boost 4), noise reduction on, AGC and
   sidetone off, sidetone level 947; `docs/firmware-notes.md`) while the settings differ from that
   has restarted without the poll seeing it go. It is handled like an arrival: what was learned
   about the dongle (including the corrections below) is forgotten, it is `Waiting` for `SETTLE`,
@@ -145,6 +150,65 @@ All decisions are in `engine::supervisor`; the worker loop calls `command` with 
 - **Log.** `%LOCALAPPDATA%\cxtune\cxtune.log`, rotated at 256 KiB to `cxtune.log.1`. A program
   that holds either file open without delete sharing blocks the rename; the current file is then
   emptied instead, so the two files stay within 512 KiB either way.
+
+## The Test tab
+
+`Command::Test(TestRequest)` drives the measurements and output tests of the user interface.
+Nothing in it is a setting. The microphone is opened on demand (by VID/PID, shared mode) and
+closed by the engine as soon as nothing needs it. A request that cannot be run is answered with
+`TestEvent::Failed` and changes nothing; `Snapshot::error` is not touched.
+
+| `TestRequest` | What it does |
+|---|---|
+| `Meter(bool)` | opens or closes the microphone; while it is open `TestEvent::Level` reports the RMS and peak level of every 50 ms (about 20 per second). Opening it is refused (`Invalid`) while a click test, noise listening or playback runs, because those need the output at rest |
+| `NoiseFloor { seconds }` | the median of the 50 ms levels over 1-60 s, after the warm-up |
+| `Record { seconds }` | records 1-30 s into memory, after the warm-up |
+| `PlayRecording` | plays the recording through the dongle, scaled down as a whole if its peak is above -12 dBFS |
+| `NoiseReductionAb { seconds }` | measures 1-30 s with noise reduction on and as long with it off, and puts the setting back (also when the test fails or is cancelled) |
+| `ClickTest` | waits until the output is idle, rests, then plays a 1 kHz tone at -40 dBFS, 300 ms with 10 ms fades |
+| `NoiseListen` | closes the microphone and waits until the output is idle; no stream is open afterwards |
+| `Cancel` | ends the running test, puts back what it changed and closes the microphone unless the meter is on |
+
+- **State.** `Snapshot::test` is a `TestState`: `meter` (the level meter is on), `running` (the
+  `TestKind` that runs, at most one) and `has_recording`. `TestEvent::Progress` names the step
+  (`WarmingUp`, `Measuring`, `Recording`, `MeasuringWithNoiseReduction`,
+  `SwitchingNoiseReduction`, `MeasuringWithoutNoiseReduction`, `WaitingForIdle`, `Resting`,
+  `Playing`) and the milliseconds left in it, every 100 ms, for a countdown. `TestEvent::Done`
+  carries the outcome (`NoiseFloor`, `Recorded`, `Played`, `NoiseReductionAb`, `ClickTest`,
+  `NoiseListen`, `Cancelled`).
+- **The dongle while a test runs.** A running test holds the dongle: the saved settings wait until
+  it ends. The meter alone does not, so a setting can be changed and watched on the meter. A
+  disconnect, a sleep or `Engine::stop` ends the test and closes everything it opened. A
+  noise reduction comparison that `Engine::stop` ends puts the setting back at once; one that a
+  disconnect ends tries to, and a warning is logged when the write fails. One that a sleep ends
+  leaves the dongle alone: the put-back is pending until the settling wait of 2 s after the wake
+  is over, and the first settings pass after it writes it. A pending put-back stays through a
+  further sleep and through a test that does not switch noise reduction; a comparison that starts
+  meanwhile takes the pending value as its own original and puts it back itself when it ends. If
+  the dongle disconnects or the engine stops before that pass, the pending put-back is dropped.
+  A test request is not held back during that settling wait, so a comparison started in it writes
+  `$1151` before the wait is over (the write is guarded like every other).
+- **Warm-up.** The first 4 s after the microphone opens are not measured or recorded: the codec
+  delivers digital silence and a click first, and in balanced mode the meter showed higher
+  levels for a while longer (`docs/firmware-notes.md`; the 4 s is provisional until it is
+  checked in a quiet room). A test started while the meter is on does not wait again, except that
+  a noise reduction comparison lets the level settle for 1 s after its first switch, as it does
+  after its second. A microphone that delivers nothing for 3 s ends the test with an `Audio`
+  error.
+- **The output after a capture.** In balanced mode a capture opens the driver, and the output is
+  idle again only after the stop decay time. After every microphone close the engine reads the
+  output registers every 100 ms until `mode::Output::is_idle` holds for the mode (15 s at most,
+  then a warning) and logs the time. The other modes change nothing for a capture and are not
+  watched. `ClickTest` and `NoiseListen` wait for the same state before they go on, and the
+  click test rests 500 ms before it plays.
+- **The tone and the recording.** The clip starts with silence of the mode's mute delay
+  (`mode::mute_delay_ms`: none in default and low click, 650 ms in balanced, the soft-start
+  time plus 150 ms in lowest noise) plus 200 ms, so the first samples are not swallowed by the
+  power-up, and ends with 300 ms of silence. It is played in an exclusive 16-bit stereo stream
+  when possible and a shared one otherwise, and the stream is closed when the clip is over.
+- **The noise reduction comparison.** It switches `$1151` bit 2 and requests a reload (NEWC)
+  like the settings do, leaves 1 s after the switch for the level to settle and checks that the
+  codec applied each step (`$00A4` bit 7).
 
 ## A request that never returns
 
@@ -190,7 +254,8 @@ applied after that: the user interface shows the error and offers a restart.
 
 The supervisor runs against the fake dongle (`src/fake.rs`) with a clock the tests advance by
 hand (`engine::testing::Rig`), so arrival, flapping, drift, coalescing, retries, sleep, partial
-reports and the settings file's retries are checked without real time. A few tests run the whole
+reports, the settings file's retries and the whole Test tab (a scripted microphone and clip
+player stand in for the audio streams) are checked without real time. A few tests run the whole
 engine on its worker thread with real time (`engine::tests`): commands from other threads,
 sleep, the lock, a panic, a stuck call and its recovery. Tests keep their files in directories
 that are removed when the test ends, also when it fails (`testdir`).

@@ -6,6 +6,8 @@
 //! arbitrary address. Nothing here writes EEPROM or DSP memory; [`dump`] only reads the EEPROM.
 
 pub mod audio;
+pub mod capture;
+pub mod clip;
 pub mod config;
 pub mod dsp;
 pub mod dump;

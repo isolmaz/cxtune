@@ -1,21 +1,123 @@
 //! Test doubles for the engine: a backend on the fake dongle and a rig that drives the
 //! supervisor with a clock the test advances by hand.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use super::Backend;
 use super::supervisor::Supervisor;
-use super::types::{Command, Event, Failure, Phase, Snapshot};
+use super::types::{Command, Event, Failure, Phase, Snapshot, TestEvent};
 use super::watch::CallWatch;
+use super::{Backend, Clip, Microphone};
+use crate::audio::PLAY_RATE;
+use crate::capture::{self, BLOCK_MS, Level};
 use crate::config::{self, Config};
-use crate::fake::{FakeDevice, FakeStream};
+use crate::fake::{FakeDevice, FakeMic, FakeStream};
 use crate::testdir::TempDir;
 use crate::{Error, Result};
+
+type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
+
+/// What the fake microphone delivers.
+#[derive(Clone, Debug)]
+pub(super) struct MicScript {
+    /// The first this long after the stream opened is loud, as the codec's start-up is.
+    pub warmup: Duration,
+    pub warmup_dbfs: f32,
+    /// The level of the noise floor with the codec applying noise reduction, and without.
+    pub floor_nr_on_dbfs: f32,
+    pub floor_nr_off_dbfs: f32,
+    /// The stream delivers nothing.
+    pub stall: bool,
+    /// The stream has stopped by itself.
+    pub fail: bool,
+}
+
+impl Default for MicScript {
+    fn default() -> Self {
+        MicScript {
+            warmup: Duration::from_millis(3200),
+            warmup_dbfs: -20.0,
+            floor_nr_on_dbfs: -60.0,
+            floor_nr_off_dbfs: -48.0,
+            stall: false,
+            fail: false,
+        }
+    }
+}
+
+/// The microphone on the fake dongle: opening it opens the fake codec's capture path, and it
+/// delivers one block per [`BLOCK_MS`] of clock time.
+pub(super) struct FakeCapture {
+    _mic: FakeMic,
+    dev: FakeDevice,
+    clock: Clock,
+    script: Arc<Mutex<MicScript>>,
+    opened: Instant,
+    produced: Instant,
+    recording: bool,
+}
+
+impl Microphone for FakeCapture {
+    fn poll(&mut self) -> Result<capture::Poll> {
+        let script = self.script.lock().unwrap().clone();
+        if script.fail {
+            return Err(Error::Audio("the microphone stream stopped".into()));
+        }
+        let now = (self.clock)();
+        let mut poll = capture::Poll::default();
+        let block = Duration::from_millis(u64::from(BLOCK_MS));
+        if script.stall {
+            self.produced = now;
+            return Ok(poll);
+        }
+        while self.produced + block <= now {
+            self.produced += block;
+            let dbfs = if self.produced - self.opened <= script.warmup {
+                script.warmup_dbfs
+            } else if self.dev.appliers() & 0x80 != 0 {
+                script.floor_nr_on_dbfs
+            } else {
+                script.floor_nr_off_dbfs
+            };
+            let amplitude = (32768.0 * 10f64.powf(f64::from(dbfs) / 20.0))
+                .round()
+                .min(32767.0) as i16;
+            let samples: Vec<i16> = (0..capture::RATE * BLOCK_MS / 1000)
+                .map(|i| if i % 2 == 0 { amplitude } else { -amplitude })
+                .collect();
+            poll.levels.push(Level::of(&samples));
+            if self.recording {
+                poll.samples.extend(samples);
+            }
+        }
+        Ok(poll)
+    }
+
+    fn record(&mut self, on: bool) {
+        self.recording = on;
+    }
+}
+
+/// A clip on the fake dongle's output: it plays for as long as it is long.
+pub(super) struct FakePlayback {
+    _stream: FakeStream,
+    clock: Clock,
+    until: Instant,
+    fails: Arc<AtomicBool>,
+}
+
+impl Clip for FakePlayback {
+    fn is_finished(&mut self) -> Result<bool> {
+        if self.fails.load(Ordering::SeqCst) {
+            return Err(Error::Audio("the playback stream stopped".into()));
+        }
+        Ok((self.clock)() >= self.until)
+    }
+}
 
 /// The fake dongle behind the engine's [`Backend`], with switches the test flips.
 pub(super) struct TestBackend {
@@ -34,6 +136,14 @@ pub(super) struct TestBackend {
     pub on_open: Arc<Mutex<Box<dyn Fn() + Send>>>,
     /// Runs when the connected devices are listed.
     pub on_present: Arc<Mutex<Box<dyn Fn() + Send>>>,
+    pub clock: Clock,
+    pub mic: Arc<Mutex<MicScript>>,
+    /// Opening the microphone fails.
+    pub capture_fails: Arc<AtomicBool>,
+    /// The clip being played stops by itself.
+    pub playback_fails: Arc<AtomicBool>,
+    /// Every clip that was started, as handed to the backend.
+    pub played: Arc<Mutex<Vec<Vec<i16>>>>,
 }
 
 impl TestBackend {
@@ -47,6 +157,11 @@ impl TestBackend {
             on_stream: Arc::new(Mutex::new(Box::new(|| {}))),
             on_open: Arc::new(Mutex::new(Box::new(|| {}))),
             on_present: Arc::new(Mutex::new(Box::new(|| {}))),
+            clock: Arc::new(Instant::now),
+            mic: Arc::new(Mutex::new(MicScript::default())),
+            capture_fails: Arc::new(AtomicBool::new(false)),
+            playback_fails: Arc::new(AtomicBool::new(false)),
+            played: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -54,6 +169,8 @@ impl TestBackend {
 impl Backend for TestBackend {
     type Dev = FakeDevice;
     type Stream = FakeStream;
+    type Capture = FakeCapture;
+    type Playback = FakePlayback;
 
     fn present(&mut self) -> Result<bool> {
         (self.on_present.lock().unwrap())();
@@ -81,6 +198,34 @@ impl Backend for TestBackend {
         (self.on_stream.lock().unwrap())();
         self.dev.open_active_stream()
     }
+
+    fn open_capture(&mut self) -> Result<FakeCapture> {
+        if self.capture_fails.load(Ordering::SeqCst) {
+            return Err(Error::Audio("no microphone endpoint".into()));
+        }
+        let now = (self.clock)();
+        Ok(FakeCapture {
+            _mic: self.dev.open_mic(),
+            dev: self.dev.clone(),
+            clock: Arc::clone(&self.clock),
+            script: Arc::clone(&self.mic),
+            opened: now,
+            produced: now,
+            recording: false,
+        })
+    }
+
+    fn play(&mut self, samples: Vec<i16>) -> Result<FakePlayback> {
+        let stream = self.dev.open_active_stream()?;
+        let length = Duration::from_micros(samples.len() as u64 * 1_000_000 / u64::from(PLAY_RATE));
+        self.played.lock().unwrap().push(samples);
+        Ok(FakePlayback {
+            _stream: stream,
+            clock: Arc::clone(&self.clock),
+            until: (self.clock)() + length,
+            fails: Arc::clone(&self.playback_fails),
+        })
+    }
 }
 
 /// A supervisor on a [`TestBackend`] whose clock only moves when the test says so.
@@ -92,9 +237,13 @@ pub(super) struct Rig {
     pub vanish_on_open: Arc<AtomicBool>,
     pub opens: Arc<AtomicUsize>,
     on_stream: Arc<Mutex<Box<dyn Fn() + Send>>>,
+    pub mic: Arc<Mutex<MicScript>>,
+    pub capture_fails: Arc<AtomicBool>,
+    pub playback_fails: Arc<AtomicBool>,
+    pub played: Arc<Mutex<Vec<Vec<i16>>>>,
     _dir: TempDir,
     pub config_path: PathBuf,
-    now: Rc<Cell<Instant>>,
+    now: Arc<Mutex<Instant>>,
     events: Rc<RefCell<Vec<Event>>>,
     log: Rc<RefCell<Vec<String>>>,
 }
@@ -108,7 +257,18 @@ impl Rig {
         let dir = TempDir::new("engine-rig");
         let config_path = dir.join("config.toml");
 
-        let backend = TestBackend::new(dev.clone(), present);
+        let now = Arc::new(Mutex::new(Instant::now()));
+        let mut backend = TestBackend::new(dev.clone(), present);
+        backend.clock = Arc::new({
+            let now = Arc::clone(&now);
+            move || *now.lock().unwrap()
+        });
+        let (mic, capture_fails, playback_fails, played) = (
+            Arc::clone(&backend.mic),
+            Arc::clone(&backend.capture_fails),
+            Arc::clone(&backend.playback_fails),
+            Arc::clone(&backend.played),
+        );
         let (present, present_fails, vanish_on_open, opens, on_stream) = (
             Arc::clone(&backend.present),
             Arc::clone(&backend.present_fails),
@@ -116,7 +276,6 @@ impl Rig {
             Arc::clone(&backend.opens),
             Arc::clone(&backend.on_stream),
         );
-        let now = Rc::new(Cell::new(Instant::now()));
         let events = Rc::new(RefCell::new(Vec::new()));
         let log = Rc::new(RefCell::new(Vec::new()));
         let sup = Supervisor::new(
@@ -132,8 +291,8 @@ impl Rig {
                 move |line| log.borrow_mut().push(line.to_string())
             }),
             Box::new({
-                let now = Rc::clone(&now);
-                move || now.get()
+                let now = Arc::clone(&now);
+                move || *now.lock().unwrap()
             }),
             CallWatch::default(),
         );
@@ -145,6 +304,10 @@ impl Rig {
             vanish_on_open,
             opens,
             on_stream,
+            mic,
+            capture_fails,
+            playback_fails,
+            played,
             _dir: dir,
             config_path,
             now,
@@ -176,17 +339,21 @@ impl Rig {
 
     /// Lets `seconds` of virtual time pass, running the supervisor at every moment it asks to be.
     pub fn run(&mut self, seconds: f64) {
-        let end = self.now.get() + Duration::from_secs_f64(seconds);
-        for _ in 0..10_000 {
+        let end = self.now() + Duration::from_secs_f64(seconds);
+        for _ in 0..100_000 {
             let wake = self.sup.next_wake();
             if wake > end {
-                self.now.set(end);
+                *self.now.lock().unwrap() = end;
                 return;
             }
-            self.now.set(wake.max(self.now.get()));
+            *self.now.lock().unwrap() = wake.max(self.now());
             self.sup.step();
         }
         panic!("the supervisor keeps asking to run at once");
+    }
+
+    fn now(&self) -> Instant {
+        *self.now.lock().unwrap()
     }
 
     pub fn events(&self) -> Vec<Event> {
@@ -231,6 +398,17 @@ impl Rig {
             .into_iter()
             .filter_map(|e| match e {
                 Event::Warning(w) => Some(w),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The events of the Test tab, in order.
+    pub fn test_events(&self) -> Vec<TestEvent> {
+        self.events()
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::Test(t) => Some(t),
                 _ => None,
             })
             .collect()

@@ -10,7 +10,10 @@
 //! The microphone side models the DSP settings: a capture stream makes the ROM evaluate the
 //! noise-reduction and AGC bits of `$1151` (as the stream-open reload does), a NEWC request in
 //! `$1154` does the same when it is consumed, and sidetone follows its bit within a pass while
-//! a capture and a playback stream are both open.
+//! a capture and a playback stream are both open. The virtual surround bit of `$1152` is
+//! evaluated at the start of a playback stream and at a NEWC request while one is open. In the
+//! balanced routine a capture opens the driver and brings the analog references up; they drop
+//! at once when it ends, and the driver is clamped a few reads later.
 //!
 //! Every write is checked as it arrives, and a violation panics, so a planner or guard bug fails
 //! the test that triggers it:
@@ -22,8 +25,12 @@
 //! - a live hook always runs a whole known routine;
 //! - `$1151` holds only the noise-reduction, AGC and sidetone bits, `$1154` is only ever written
 //!   with its NEWC bit added to the byte it holds, the sidetone level stays in its range, and
-//!   none of the three is written while the chip-mode or DSP-bypass flags are set.
+//!   none of the three is written while the chip-mode or DSP-bypass flags are set;
+//! - `$1152` is only ever written with bit 3 (the virtual surround) changed, `$10D3` only with a
+//!   level of 1-10 and its high nibble kept, and the same chip-mode and DSP-bypass rule holds;
+//! - the soft-start and decay bytes stay in their ranges.
 
+use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::mode::{Mode, Stream};
@@ -48,6 +55,7 @@ const HOOK: usize = 0x14B1;
 const WINDOW: usize = 0x1EFC;
 const WINDOW_END: usize = 0x1F26;
 const SETTLE: usize = 0x1F15;
+const DECAY: usize = 0x1F0E;
 const DAC_A: usize = 0x16CF;
 const DAC_B: usize = 0x17D0;
 const MIC: usize = 0x1017;
@@ -58,13 +66,18 @@ const REFS: usize = 0x0F3E;
 const DSP_ENABLE: usize = 0x1151;
 const NEWC: usize = 0x1154;
 const SIDETONE_LEVEL: usize = 0x1276;
+const SURROUND: usize = 0x1152;
+const SURROUND_LEVEL: usize = 0x10D3;
 const MIC_STREAM: usize = 0x13DC;
 const PLAYBACK_STREAM: usize = 0x13DD;
 const APPLIERS: usize = 0x00A4;
+const CAPTURE_ACTIVE: usize = 0x00A5;
 const MIXER: usize = 0x00A8;
 
 /// Reads between a stream opening and the codec showing it.
 const STREAM_DELAY_READS: usize = 10;
+/// Reads between the end of a capture and the balanced routine clamping the driver.
+const DRIVER_HOLD_READS: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Running {
@@ -115,6 +128,11 @@ struct Inner {
     /// Bytes the ROM sets when it consumes a request, without updating `$1154`.
     newc_poke: Vec<(usize, u8)>,
     newc_consumed: usize,
+    /// Reads left until the headphone driver is clamped after a capture ended in the balanced
+    /// routine (its stop decay time).
+    driver_hold: usize,
+    /// Reads the driver stays open after a capture ended in the balanced routine.
+    driver_hold_reads: usize,
 }
 
 /// A handle to the fake dongle; clones share the same device.
@@ -133,6 +151,9 @@ impl Drop for FakeMic {
         d.mic_open = false;
         d.mem[NEWC] &= !0x02;
         d.evaluate();
+        if d.running_balanced() {
+            d.driver_hold = d.driver_hold_reads;
+        }
         if !std::thread::panicking() {
             d.settle();
         }
@@ -163,6 +184,13 @@ impl Inner {
     fn stop_stream(&mut self) {
         self.stream_open = false;
         self.stream_seen = false;
+        self.apply_surround();
+    }
+
+    fn running_balanced(&self) -> bool {
+        self.mem[HOOK] == 0x4C
+            && self.mem[HOOK + 1..HOOK + 3] == [0xFC, 0x1E]
+            && balanced_with_any_decay(&self.mem[WINDOW..=WINDOW_END])
     }
 
     /// The dongle restarts: `fresh` is the memory the vendor patch loads, and every stream is gone.
@@ -173,6 +201,7 @@ impl Inner {
         self.mic_open = false;
         self.pending = None;
         self.newc_reads = None;
+        self.driver_hold = 0;
         self.settle();
     }
 
@@ -195,7 +224,7 @@ impl Inner {
                 );
                 Running::Vendor
             }
-            [0xFC, 0x1E] if window == bytes(BALANCED_HEX) => Running::Balanced,
+            [0xFC, 0x1E] if balanced_with_any_decay(window) => Running::Balanced,
             [0xFC, 0x1E] if min_hiss_with_any_settle(window) => Running::MinHiss,
             _ => panic!(
                 "live hook leads to an unknown routine: {:02x?}",
@@ -208,6 +237,7 @@ impl Inner {
     /// hook and stream state.
     fn settle(&mut self) {
         self.mem[MIC_STREAM] = u8::from(self.mic_open);
+        self.mem[CAPTURE_ACTIVE] = (self.mem[CAPTURE_ACTIVE] & !0x01) | u8::from(self.mic_open);
         self.mem[PLAYBACK_STREAM] = u8::from(self.stream_seen);
         self.mem[NEWC] = (self.mem[NEWC] & !0x12)
             | (u8::from(self.mic_open) << 1)
@@ -223,11 +253,20 @@ impl Inner {
     /// the stream's own reload and when it consumes a NEWC request.
     fn evaluate(&mut self) {
         let bits = self.mem[DSP_ENABLE];
-        self.mem[APPLIERS] = if self.mic_open {
-            ((bits & 0x04) << 5) | ((bits & 0x10) << 1)
-        } else {
-            0
-        };
+        let surround = self.mem[APPLIERS] & 0x10;
+        self.mem[APPLIERS] = surround
+            | if self.mic_open {
+                ((bits & 0x04) << 5) | ((bits & 0x10) << 1)
+            } else {
+                0
+            };
+    }
+
+    /// The ROM applies the virtual surround bit while a playback stream is open: at the stream's
+    /// start and when it consumes a NEWC request.
+    fn apply_surround(&mut self) {
+        let on = self.stream_seen && self.mem[SURROUND] & 0x08 != 0;
+        self.mem[APPLIERS] = (self.mem[APPLIERS] & !0x10) | (u8::from(on) << 4);
     }
 
     fn consume_newc(&mut self) {
@@ -248,6 +287,7 @@ impl Inner {
         }
         self.newc_consumed += 1;
         self.evaluate();
+        self.apply_surround();
     }
 
     fn settle_playback(&mut self) {
@@ -267,8 +307,16 @@ impl Inner {
         match running {
             Running::Vendor => self.mem[DRIVER] = 0x00,
             Running::Balanced => {
-                self.mem[DRIVER] = 0x77;
-                self.mem[REFS] &= !0x02;
+                self.mem[DRIVER] = if self.mic_open || self.driver_hold > 0 {
+                    0x33
+                } else {
+                    0x77
+                };
+                if self.mic_open {
+                    self.mem[REFS] |= 0x02;
+                } else {
+                    self.mem[REFS] &= !0x02;
+                }
             }
             Running::MinHiss => self.mem[DRIVER] = 0x77,
             Running::Rom => self.mem[DRIVER] = if held == 0 { 0x33 } else { 0x00 },
@@ -293,12 +341,16 @@ impl Inner {
                 || inside(MIC, MIC)
                 || inside(DSP_ENABLE, DSP_ENABLE)
                 || inside(NEWC, NEWC)
-                || inside(SIDETONE_LEVEL, SIDETONE_LEVEL + 1),
+                || inside(SIDETONE_LEVEL, SIDETONE_LEVEL + 1)
+                || inside(SURROUND, SURROUND)
+                || inside(SURROUND_LEVEL, SURROUND_LEVEL),
             "write of {data:02x?} to ${addr:04X} is outside the allowed regions"
         );
         if inside(DSP_ENABLE, DSP_ENABLE)
             || inside(NEWC, NEWC)
             || inside(SIDETONE_LEVEL, SIDETONE_LEVEL + 1)
+            || inside(SURROUND, SURROUND)
+            || inside(SURROUND_LEVEL, SURROUND_LEVEL)
         {
             assert_eq!(
                 self.mem[0x1000] & 0x80,
@@ -335,9 +387,40 @@ impl Inner {
             let level = u16::from_le_bytes([data[0], data[1]]);
             assert!((1..=0x1000).contains(&level), "sidetone level {level:#06x}");
         }
+        if inside(SURROUND, SURROUND) {
+            let known = 0x08 | 0x03;
+            assert_eq!(self.mem[SURROUND] & !known, 0, "$1152 holds other bits");
+            assert_eq!(
+                data[0] & !known,
+                0,
+                "write of {data:02x?} to $1152 sets other bits"
+            );
+            assert_eq!(
+                data[0] & 0x03,
+                self.mem[SURROUND] & 0x03,
+                "write of {data:02x?} to $1152 changes the preset bits"
+            );
+        }
+        if inside(SURROUND_LEVEL, SURROUND_LEVEL) {
+            assert!(
+                (1..=10).contains(&(data[0] & 0x0F)),
+                "surround level {data:02x?}"
+            );
+            assert_eq!(
+                data[0] & 0xF0,
+                self.mem[SURROUND_LEVEL] & 0xF0,
+                "write of {data:02x?} to $10D3 changes the high nibble"
+            );
+        }
+        if addr == SETTLE && data.len() == 1 {
+            assert!((2..=0xC8).contains(&data[0]), "soft-start byte {data:02x?}");
+        }
+        if addr == DECAY && data.len() == 1 {
+            assert!((0x0A..=0xC8).contains(&data[0]), "decay byte {data:02x?}");
+        }
         let touches_hook = addr <= HOOK + 2 && end > HOOK;
         let touches_window = addr <= WINDOW_END && end > WINDOW;
-        let settle_only = addr == SETTLE && data.len() == 1;
+        let settle_only = (addr == SETTLE || addr == DECAY) && data.len() == 1;
         if (touches_hook || touches_window) && !settle_only {
             assert!(
                 self.active(),
@@ -359,10 +442,19 @@ impl Inner {
     }
 }
 
+/// `window` is the image `hex` with any value in `range` at `addr`.
+fn window_with_any(window: &[u8], hex: &str, addr: usize, range: RangeInclusive<u8>) -> bool {
+    let want = bytes(hex);
+    let i = addr - WINDOW;
+    window[..i] == want[..i] && window[i + 1..] == want[i + 1..] && range.contains(&window[i])
+}
+
 fn min_hiss_with_any_settle(window: &[u8]) -> bool {
-    let want = bytes(MIN_HISS_HEX);
-    let i = SETTLE - WINDOW;
-    window[..i] == want[..i] && window[i + 1..] == want[i + 1..] && (2..=0xC8).contains(&window[i])
+    window_with_any(window, MIN_HISS_HEX, SETTLE, 2..=0xC8)
+}
+
+fn balanced_with_any_decay(window: &[u8]) -> bool {
+    window_with_any(window, BALANCED_HEX, DECAY, 0x0A..=0xC8)
 }
 
 impl FakeDevice {
@@ -400,6 +492,8 @@ impl FakeDevice {
         put(0x1000, &[0x01]);
         put(DSP_ENABLE, &[0x04]);
         put(SIDETONE_LEVEL, &[0xB3, 0x03]);
+        put(SURROUND, &[0x00]);
+        put(SURROUND_LEVEL, &[0x04]);
         let dev = Self(Arc::new(Mutex::new(Inner {
             mem,
             eeprom: vec![0; 0x4000],
@@ -426,6 +520,8 @@ impl FakeDevice {
             newc_flip: 0,
             newc_poke: Vec::new(),
             newc_consumed: 0,
+            driver_hold: 0,
+            driver_hold_reads: DRIVER_HOLD_READS,
         })));
         dev.lock().settle();
         dev
@@ -449,6 +545,17 @@ impl FakeDevice {
     /// Bit 3 of the mixer flags: the sidetone path is running.
     pub fn sidetone_running(&self) -> bool {
         self.byte(MIXER as u16) & 0x08 != 0
+    }
+
+    /// Bit 4 of the applier flags: the virtual surround as the ROM last applied it.
+    pub fn surround_applied(&self) -> bool {
+        self.appliers() & 0x10 != 0
+    }
+
+    /// The headphone driver stays open for `reads` reads after a capture ends in the balanced
+    /// routine, as it does for the stop decay time (default 3).
+    pub fn hold_driver_after_capture(&self, reads: usize) {
+        self.lock().driver_hold_reads = reads;
     }
 
     /// NEWC requests the ROM has consumed.
@@ -578,6 +685,12 @@ impl FakeDevice {
         self.lock().no_endpoint = true;
     }
 
+    /// The handles to this device that are alive: the fake itself, every one the engine opened
+    /// and has not dropped, and what they hand out.
+    pub fn handles(&self) -> usize {
+        Arc::strong_count(&self.0)
+    }
+
     pub fn streams_opened(&self) -> usize {
         self.lock().streams_opened
     }
@@ -596,6 +709,7 @@ impl FakeDevice {
         let stream = self.open_stream()?;
         let mut d = self.lock();
         d.stream_seen = true;
+        d.apply_surround();
         d.settle();
         Ok(stream)
     }
@@ -703,6 +817,13 @@ impl Transport for FakeDevice {
                 d.reads_until_seen = d.reads_until_seen.saturating_sub(1);
                 if d.reads_until_seen == 0 {
                     d.stream_seen = true;
+                    d.apply_surround();
+                    d.settle();
+                }
+            }
+            if d.driver_hold > 0 {
+                d.driver_hold -= 1;
+                if d.driver_hold == 0 {
                     d.settle();
                 }
             }

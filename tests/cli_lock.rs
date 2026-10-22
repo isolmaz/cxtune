@@ -33,16 +33,20 @@ fn every_device_command_is_refused_while_the_lock_is_held() {
 
     let dump_dir = appdata.0.join("dump-out");
     let dump_dir = dump_dir.to_str().unwrap();
-    let commands: [&[&str]; 10] = [
+    let commands: [&[&str]; 14] = [
         &["status"],
         &["dump", dump_dir],
         &["apply", "balanced"],
+        &["soft-start", "300"],
         &["tune", "300"],
+        &["decay", "300"],
         &["mic-boost", "6"],
         &["mic-nr", "off"],
         &["mic-agc", "on"],
         &["sidetone", "on"],
-        &["sidetone-level", "100"],
+        &["sidetone-level", "3.7"],
+        &["surround", "on"],
+        &["surround-level", "6"],
         &["watch"],
     ];
     for args in commands {

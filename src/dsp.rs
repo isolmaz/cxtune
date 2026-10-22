@@ -1,22 +1,26 @@
-//! Experimental microphone DSP settings: noise reduction, AGC and sidetone.
+//! Experimental DSP settings: microphone noise reduction, AGC and sidetone, and the virtual
+//! surround.
 //!
 //! Noise reduction and AGC are bits of the DSP enable byte (`$1151`). The ROM evaluates them
 //! when a capture stream opens and when it reloads the DSP settings on a NEWC request, so a
 //! change made while a capture stream is open is followed by a NEWC request and a change made
 //! without one is picked up by the next stream. Sidetone is a bit of the same byte plus a gain
-//! word (`$1276`); the ROM applies both within one main-loop pass, while a capture and a
-//! playback stream are open. See docs/firmware-notes.md for what was measured.
+//! word (`$1276`, in UAC 1/256 dB units per the ROM, never below 0 dB); the ROM applies both
+//! within one main-loop pass, while a capture and a playback stream are open. The virtual
+//! surround is a bit and a level nibble of two bytes that the ROM applies at the same two
+//! moments, while a playback stream is open. See docs/firmware-notes.md for what was measured.
 
 use crate::config::Config;
 use crate::patches::{
-    self, DSP_ENABLE, DSP_SIDETONE, MIC_STREAM, Outcome, Patch, SIDETONE_LEVEL_ADDR, SIDETONE_MAX,
-    SIDETONE_MIN, StreamEvent, apply_patch,
+    self, DSP_ENABLE, DSP_SIDETONE, MIC_STREAM, Outcome, PLAYBACK_STREAM, Patch,
+    SIDETONE_LEVEL_ADDR, SIDETONE_MAX, SIDETONE_MIN, SURROUND_ADDR, SURROUND_BIT, StreamEvent,
+    apply_patch,
 };
 use crate::protocol::{Transport, read_mem};
 use crate::{Error, Result};
 
 /// Number of gain steps when the sidetone level changes while sidetone is on. Each step is a
-/// separate guarded write.
+/// separate guarded write, and all steps are the same size in dB.
 const RAMP_STEPS: u32 = 4;
 
 /// What a setter did.
@@ -55,12 +59,32 @@ pub struct Attempt {
 
 /// Sets microphone noise reduction.
 pub fn set_noise_reduction<T: Transport + ?Sized>(t: &mut T, on: bool) -> Result<Applied> {
-    set_and_reload(t, &patches::noise_reduction(on))
+    set_and_reload(t, &patches::noise_reduction(on), MIC_STREAM)
 }
 
 /// Sets microphone AGC.
 pub fn set_agc<T: Transport + ?Sized>(t: &mut T, on: bool) -> Result<Applied> {
-    set_and_reload(t, &patches::agc(on))
+    set_and_reload(t, &patches::agc(on), MIC_STREAM)
+}
+
+/// Sets the virtual surround. A playback stream that is open already gets it by a reload request;
+/// otherwise the next one applies it.
+pub fn set_surround<T: Transport + ?Sized>(t: &mut T, on: bool) -> Result<Applied> {
+    set_and_reload(t, &patches::surround(on), PLAYBACK_STREAM)
+}
+
+/// Sets the virtual surround level (`SURROUND_LEVEL_MIN..=SURROUND_LEVEL_MAX`). The ROM only uses
+/// it while the surround is on, so with the surround off the byte is written and no reload is
+/// requested.
+pub fn set_surround_level<T: Transport + ?Sized>(t: &mut T, level: u8) -> Result<Applied> {
+    let patch = patches::surround_level(level)?;
+    if read_mem(t, SURROUND_ADDR, 1)?[0] & SURROUND_BIT == 0 {
+        return Ok(Applied {
+            writes: usize::from(apply_patch(t, &patch)? == Outcome::Written),
+            stream_event: None,
+        });
+    }
+    set_and_reload(t, &patch, PLAYBACK_STREAM)
 }
 
 /// Switches sidetone on or off. Returns true if a byte was written.
@@ -68,8 +92,9 @@ pub fn set_sidetone<T: Transport + ?Sized>(t: &mut T, on: bool) -> Result<bool> 
     Ok(apply_patch(t, &patches::sidetone(on))? == Outcome::Written)
 }
 
-/// Sets the sidetone gain register (`SIDETONE_MIN..=SIDETONE_MAX`, unit not measured). While
-/// sidetone is on the gain moves to the new value in [`RAMP_STEPS`] steps of equal ratio.
+/// Sets the sidetone gain register (`SIDETONE_MIN..=SIDETONE_MAX`, in UAC 1/256 dB units per the
+/// ROM, see [`patches::sidetone_db`]). While sidetone is on the register moves to the new
+/// value in [`RAMP_STEPS`] steps of equal size in dB.
 /// Returns the number of writes made.
 pub fn set_sidetone_level<T: Transport + ?Sized>(t: &mut T, level: u16) -> Result<usize> {
     patches::sidetone_level(level)?;
@@ -88,13 +113,14 @@ pub fn set_sidetone_level<T: Transport + ?Sized>(t: &mut T, level: u16) -> Resul
     Ok(writes)
 }
 
-/// The gain values from `from` (excluded) to `to` (included): equal ratio from step to step,
-/// every value between the two, no value twice in a row.
+/// The register values from `from` (excluded) to `to` (included): the ROM counts the register in
+/// 1/256 dB, so equal steps of the register are equal steps in dB. Every value is
+/// between the two, none twice in a row.
 fn ramp(from: u16, to: u16) -> Vec<u16> {
-    let ratio = f64::from(to) / f64::from(from);
     let mut steps: Vec<u16> = (1..RAMP_STEPS)
         .map(|i| {
-            let gain = f64::from(from) * ratio.powf(f64::from(i) / f64::from(RAMP_STEPS));
+            let gain = f64::from(from)
+                + (f64::from(to) - f64::from(from)) * f64::from(i) / f64::from(RAMP_STEPS);
             (gain.round() as u16).clamp(from.min(to), from.max(to))
         })
         .collect();
@@ -139,6 +165,12 @@ fn apply_settings<T: Transport + ?Sized>(
     if let Some(on) = cfg.mic_agc {
         report.add(set_agc(t, on)?);
     }
+    if let Some(on) = cfg.surround {
+        report.add(set_surround(t, on)?);
+    }
+    if let Some(level) = cfg.surround_level {
+        report.add(set_surround_level(t, level)?);
+    }
     if cfg.sidetone == Some(true) {
         report.writes += set_sidetone_with_level(t, true, cfg.sidetone_level)?;
         return Ok(());
@@ -152,10 +184,11 @@ fn apply_settings<T: Transport + ?Sized>(
     Ok(())
 }
 
-/// Writes `patch`; if that changed a byte and a capture stream is open, asks the ROM to reload
-/// the DSP settings so the change reaches the running stream. Without an open capture stream
-/// the next one applies it, and the byte holding the ROM's stream state is not touched.
-fn set_and_reload<T: Transport + ?Sized>(t: &mut T, patch: &Patch) -> Result<Applied> {
+/// Writes `patch`; if that changed a byte and the stream whose interface register is `stream` is
+/// open, asks the ROM to reload the DSP settings so the change reaches the running stream.
+/// Without an open stream the next one applies it, and the byte holding the ROM's stream state is
+/// not touched.
+fn set_and_reload<T: Transport + ?Sized>(t: &mut T, patch: &Patch, stream: u16) -> Result<Applied> {
     if apply_patch(t, patch)? != Outcome::Written {
         return Ok(Applied::default());
     }
@@ -163,7 +196,7 @@ fn set_and_reload<T: Transport + ?Sized>(t: &mut T, patch: &Patch) -> Result<App
         writes: 1,
         stream_event: None,
     };
-    if read_mem(t, MIC_STREAM, 1)?[0] != 0 {
+    if read_mem(t, stream, 1)?[0] != 0 {
         match apply_patch(t, &patches::newc())? {
             Outcome::Written => applied.writes += 1,
             Outcome::StreamEvent(event) => {
@@ -308,23 +341,33 @@ mod tests {
                     "{from} -> {to}: {step}"
                 );
                 // monotonic towards the target, never past it, and no step is larger than an
-                // equal share of the whole change (plus rounding)
+                // equal share of the whole change in dB (plus rounding)
                 assert_ne!(step, previous, "{from} -> {to}: {steps:?}");
                 assert!(
                     (previous < to && step > previous && step <= to)
                         || (previous > to && step < previous && step >= to),
                     "{from} -> {to}: {steps:?}"
                 );
-                let ratio = f64::from(step.max(previous)) / f64::from(step.min(previous));
-                let share = (f64::from(from.max(to)) / f64::from(from.min(to)))
-                    .powf(1.0 / f64::from(RAMP_STEPS));
+                let share = from.abs_diff(to).div_ceil(RAMP_STEPS as u16) + 1;
                 assert!(
-                    ratio <= share * 1.05 || from.abs_diff(to) <= 1,
+                    step.abs_diff(previous) <= share,
                     "{from} -> {to}: {steps:?}"
                 );
                 previous = step;
             }
         }
+    }
+
+    #[test]
+    fn the_steps_are_equal_in_db_not_in_ratio() {
+        // 947 is +3.70 dB and 200 is +0.78 dB: the four steps are 0.73 dB each
+        assert_eq!(ramp(947, 200), [760, 574, 387, 200]);
+        assert_eq!(ramp(200, 947), [387, 574, 760, 947]);
+        assert_eq!(ramp(1, 4096), [1025, 2049, 3072, 4096]);
+        assert_eq!(ramp(4096, 1), [3072, 2049, 1025, 1]);
+        // a change smaller than the number of steps has fewer steps
+        assert_eq!(ramp(947, 949), [948, 949]);
+        assert_eq!(ramp(947, 948), [948]);
     }
 
     #[test]
@@ -507,6 +550,161 @@ mod tests {
     }
 
     #[test]
+    fn the_surround_reaches_a_running_playback_stream_by_a_reload_request() {
+        let d = dev();
+        let _playback = d.open_active_stream().unwrap();
+        assert!(!d.surround_applied());
+
+        let applied = set_surround(&mut d.clone(), true).unwrap();
+        assert_eq!(applied.writes, 2);
+        assert_eq!(applied.stream_event, None);
+        assert_eq!(d.writes(), vec![(0x1152, vec![0x08]), (0x1154, vec![0x11])]);
+        assert_eq!(d.newc_consumed(), 1);
+        assert!(d.surround_applied());
+
+        // it holds: nothing is written and no reload is requested
+        d.clear_writes();
+        assert!(!put(&d, |t| set_surround(t, true)));
+        assert!(d.writes().is_empty());
+
+        assert!(put(&d, |t| set_surround(t, false)));
+        assert_eq!(d.byte(0x1152), 0x00);
+        assert_eq!(d.newc_consumed(), 2);
+        assert!(!d.surround_applied());
+    }
+
+    #[test]
+    fn the_surround_set_without_a_playback_stream_is_picked_up_by_the_next_one() {
+        let d = dev();
+        assert!(put(&d, |t| set_surround(t, true)));
+        assert_eq!(d.writes(), vec![(0x1152, vec![0x08])]);
+        assert_eq!(d.newc_consumed(), 0);
+        assert!(!d.surround_applied());
+        let _playback = d.open_active_stream().unwrap();
+        assert!(d.surround_applied());
+
+        // a capture stream alone is no reason for a reload
+        let d = dev();
+        let _mic = d.open_mic();
+        assert!(put(&d, |t| set_surround(t, true)));
+        assert_eq!(d.writes(), vec![(0x1152, vec![0x08])]);
+        assert_eq!(d.newc_consumed(), 0);
+    }
+
+    #[test]
+    fn the_surround_level_is_reloaded_only_while_the_surround_is_on_and_playing() {
+        let level = |d: &FakeDevice, level| set_surround_level(&mut d.clone(), level).unwrap();
+
+        // surround off, playing: the byte is written and the ROM does not use it yet
+        let d = dev();
+        let _playback = d.open_active_stream().unwrap();
+        assert_eq!(level(&d, 7).writes, 1);
+        assert_eq!(d.writes(), vec![(0x10D3, vec![0x07])]);
+        assert_eq!(d.newc_consumed(), 0);
+
+        // surround on, not playing
+        let d = dev();
+        d.poke(0x1152, &[0x08]);
+        assert_eq!(level(&d, 7).writes, 1);
+        assert_eq!(d.newc_consumed(), 0);
+
+        // surround on and playing: the running stream gets the new level
+        let d = dev();
+        d.poke(0x1152, &[0x08]);
+        let _playback = d.open_active_stream().unwrap();
+        assert_eq!(level(&d, 7).writes, 2);
+        assert_eq!(d.writes(), vec![(0x10D3, vec![0x07]), (0x1154, vec![0x11])]);
+        assert_eq!(d.newc_consumed(), 1);
+
+        // the level that is there already writes nothing
+        d.clear_writes();
+        assert_eq!(level(&d, 7).writes, 0);
+        assert!(d.writes().is_empty());
+    }
+
+    #[test]
+    fn a_surround_level_outside_one_to_ten_writes_nothing() {
+        for bad in [0, 11, 16, 255] {
+            let d = dev();
+            assert!(matches!(
+                set_surround_level(&mut d.clone(), bad),
+                Err(Error::Refused(_))
+            ));
+            assert!(d.writes().is_empty(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_saved_surround_is_applied_before_sidetone_with_its_level() {
+        let cfg = Config {
+            surround: Some(true),
+            surround_level: Some(8),
+            sidetone: Some(true),
+            sidetone_level: Some(0x0200),
+            ..Config::default()
+        };
+        let d = dev();
+        assert_eq!(apply_all(&d, &cfg).writes, 4);
+        assert_eq!(
+            d.writes(),
+            vec![
+                (0x1152, vec![0x08]),
+                (0x10D3, vec![0x08]),
+                (0x1276, vec![0x00, 0x02]),
+                (0x1151, vec![0x84]),
+            ]
+        );
+        d.clear_writes();
+        assert_eq!(apply_all(&d, &cfg).writes, 0);
+
+        // with a playback stream open each of the two is followed by a reload request
+        let d = dev();
+        let _playback = d.open_active_stream().unwrap();
+        let cfg = Config {
+            surround: Some(true),
+            surround_level: Some(8),
+            ..Config::default()
+        };
+        assert_eq!(apply_all(&d, &cfg).writes, 4);
+        assert_eq!(
+            d.writes(),
+            vec![
+                (0x1152, vec![0x08]),
+                (0x1154, vec![0x11]),
+                (0x10D3, vec![0x08]),
+                (0x1154, vec![0x11]),
+            ]
+        );
+        assert!(d.surround_applied());
+
+        // a switch alone leaves the level as the device has it
+        let d = dev();
+        let cfg = Config {
+            surround: Some(true),
+            ..Config::default()
+        };
+        assert_eq!(apply_all(&d, &cfg).writes, 1);
+        assert_eq!(d.byte(0x10D3), 0x04);
+    }
+
+    #[test]
+    fn a_surround_byte_with_bits_that_are_not_ours_is_left_alone_after_the_earlier_settings() {
+        let d = dev();
+        d.poke(0x1152, &[0x04]);
+        let cfg = Config {
+            mic_nr: Some(false),
+            surround: Some(true),
+            surround_level: Some(8),
+            ..Config::default()
+        };
+        let attempt = apply_config(&mut d.clone(), &cfg);
+        assert!(matches!(attempt.error, Some(Error::Refused(_))));
+        assert_eq!(attempt.report.writes, 1);
+        assert_eq!(d.writes(), vec![(0x1151, vec![0x00])]);
+        assert_eq!(d.byte(0x1152), 0x04);
+    }
+
+    #[test]
     fn nothing_is_written_when_the_dsp_flags_forbid_it() {
         let d = dev();
         d.poke(0x00A6, &[0x01]);
@@ -524,6 +722,14 @@ mod tests {
         ));
         assert!(matches!(
             set_sidetone_level(&mut d.clone(), 0x0200),
+            Err(Error::Refused(_))
+        ));
+        assert!(matches!(
+            set_surround(&mut d.clone(), true),
+            Err(Error::Refused(_))
+        ));
+        assert!(matches!(
+            set_surround_level(&mut d.clone(), 7),
             Err(Error::Refused(_))
         ));
         assert!(d.writes().is_empty());

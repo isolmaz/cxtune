@@ -492,7 +492,9 @@ before each call; the parameter semantics are not decoded.
   RAM writes are the only route here. The Linux driver `cx2070x` (GPL, Conexant, 2012) sets
   `DSP_PROCESSING_ENABLE_1/2` and NEWC the same way.
 - *Stage enhancer / `$1152` bit 3.* One read showed `$1152 = 0x08`; other readings (idle and
-  with streams) show `0x00` (firmware-notes). What sets the bit and when is UNKNOWN.
+  with streams) show `0x00` (firmware-notes). What sets the bit and when is UNKNOWN: the vendor
+  patch (`$18BA..$18C5`) and ROM `$DA30` contain code that sets and clears it, but which control
+  calls them was not tested (firmware-notes, "Virtual surround").
 
 **Sidetone gain unit.** See section 8, item 2: the evidence points to USB audio class units,
 in which case small register values are not necessarily quiet.
@@ -564,7 +566,7 @@ byte-identical to the HP one.
    code outside `4..8` (a likely boot hang, section 5.2), an interrupted update (section 5.3),
    descriptor selection without a valid patch. It needs a sacrificial unit and is the main obstacle to ever
    offering a persistent (EEPROM) mode.
-2. **Sidetone gain unit.** The host-facing unit is a fact of the ROM code (PROVEN): its request
+2. **Sidetone gain unit.** The unit is a fact of the ROM code (PROVEN): its request
    table serves the feature unit 11 GET_CUR from `$1276` itself (`$EA84`) and MIN/MAX/RES from
    `$0081`, `$0083` and `$0085`, so a host to which feature unit 11 is exposed sees USB audio class 1/256 dB units, 0 to +16 dB
    in 1/256 dB steps (this unit's descriptor does not declare feature unit 11), with default `+3.70 dB` (`0x03B3`). Further evidence: zero page `$81..$88`

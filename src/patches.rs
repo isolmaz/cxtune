@@ -31,11 +31,17 @@ pub const HP_DRIVER2: u16 = 0x0F1B;
 /// Analog power-up reference register; bit 1 is the bias reference.
 pub const REFS: u16 = 0x0F3E;
 pub const REFS_ON: u8 = 0x02;
-/// Minimum-hiss settle time immediate (units of 10 ms).
+/// Lowest-noise soft-start time immediate (units of 10 ms).
 pub const SETTLE_ADDR: u16 = 0x1F15;
 pub const SETTLE_DEFAULT: u8 = 0x3C;
 pub const SETTLE_MIN: u8 = 0x02;
 pub const SETTLE_MAX: u8 = 0xC8;
+/// Balanced stop decay time immediate (units of 10 ms): the `MOVI #imm,$D7` that starts timer 8
+/// when the references are switched off.
+pub const DECAY_ADDR: u16 = 0x1F0E;
+pub const DECAY_DEFAULT: u8 = 0x50;
+pub const DECAY_MIN: u8 = 0x0A;
+pub const DECAY_MAX: u8 = 0xC8;
 /// The vendor hook-29 body, `PLA PLA RTS`: both of our routines leave through it.
 const GADGET_ADDR: u16 = 0x1EF9;
 const GADGET: [u8; 3] = [0x68, 0x68, 0x60];
@@ -68,11 +74,38 @@ const DSP_BITS: u8 = DSP_NR | DSP_AGC | DSP_SIDETONE;
 /// The other bits of the byte are stream state owned by the ROM.
 pub const NEWC_ADDR: u16 = 0x1154;
 pub const NEWC: u8 = 0x01;
-/// Sidetone gain, little endian. The unit is not known; the register accepts 0x0001..=0x1000.
+/// Sidetone gain, little endian. The ROM's class-request handler encodes it as a USB audio class
+/// volume in 1/256 dB (minimum 0, maximum 0x1000 = +16 dB, resolution 1), but this unit's
+/// descriptor does not declare the feature unit, so no host sees it. How the DSP applies the value
+/// was not measured and nothing was listened to. Read as dB, every value is a gain of 0 dB or
+/// more: there is no quiet end, and the vendor default is +3.70 dB. cxtune writes 0x0001..=0x1000
+/// and never a value with the high bit set, which the class uses for silence.
 pub const SIDETONE_LEVEL_ADDR: u16 = 0x1276;
 pub const SIDETONE_MIN: u16 = 0x0001;
 pub const SIDETONE_MAX: u16 = 0x1000;
+/// The vendor default, +3.70 dB, which is also what the dongle holds after it starts.
 pub const SIDETONE_DEFAULT: u16 = 0x03B3;
+const SIDETONE_UNITS_PER_DB: f32 = 256.0;
+
+/// The sidetone gain register value `level` in dB.
+pub fn sidetone_db(level: u16) -> f32 {
+    f32::from(level) / SIDETONE_UNITS_PER_DB
+}
+
+/// The register value for a sidetone gain of `db` (0.0..=16.0), to the nearest 1/256 dB. 0.0 dB is
+/// written as [`SIDETONE_MIN`], which is 0.004 dB.
+pub fn sidetone_register(db: f32) -> Result<u16> {
+    let units = (db * SIDETONE_UNITS_PER_DB).round();
+    if !(0.0..=f32::from(SIDETONE_MAX)).contains(&units) {
+        return Err(Error::Refused(format!(
+            "sidetone gain {db} dB is outside 0.0..={:.1} dB",
+            sidetone_db(SIDETONE_MAX)
+        )));
+    }
+    Ok((units as u16).max(SIDETONE_MIN))
+}
+/// Bit 0 is set while the codec captures.
+pub const CAPTURE_ACTIVE: u16 = 0x00A5;
 /// Alternate setting of the microphone capture interface: non-zero while a capture stream is open.
 pub const MIC_STREAM: u16 = 0x13DC;
 /// The same for the playback interface.
@@ -80,12 +113,27 @@ pub const PLAYBACK_STREAM: u16 = 0x13DD;
 /// Bits of the NEWC byte that follow the capture and the playback stream.
 const NEWC_CAPTURE: u8 = 0x02;
 const NEWC_PLAYBACK: u8 = 0x10;
-/// Applier flags of the ROM, read-only: bit 7 is set while noise reduction is applied and bit 5
-/// while AGC is applied. They follow `$1151` only at the stream-open reload or a NEWC pass, and
-/// only while the microphone gate is satisfied.
+/// Applier flags of the ROM, read-only: bit 7 is set while noise reduction is applied, bit 5
+/// while AGC is applied and bit 4 while the virtual surround is applied. They follow `$1151` and
+/// `$1152` only at the stream-open reload or a NEWC pass, and only while the microphone gate
+/// (noise reduction, AGC) or a playback stream (virtual surround) is satisfied.
 pub const APPLIERS: u16 = 0x00A4;
 pub const APPLIED_NR: u8 = 0x80;
 pub const APPLIED_AGC: u8 = 0x20;
+pub const APPLIED_SURROUND: u8 = 0x10;
+/// Second DSP enable byte. Bit 3 is the virtual surround; bits 1:0 are an equaliser index that the
+/// vendor patch clears on every pass, so they are tolerated when read and never written.
+pub const SURROUND_ADDR: u16 = 0x1152;
+pub const SURROUND_BIT: u8 = 0x08;
+const SURROUND_TOLERATED: u8 = 0x03;
+/// Virtual surround level in the low nibble (bit 4 selects a variant and is left alone). The ROM
+/// takes 0 as 1 and anything above 10 as 10, so cxtune writes 1 to 10 only.
+pub const SURROUND_LEVEL_ADDR: u16 = 0x10D3;
+pub const SURROUND_LEVEL_MIN: u8 = 1;
+pub const SURROUND_LEVEL_MAX: u8 = 10;
+pub const SURROUND_LEVEL_DEFAULT: u8 = 4;
+const SURROUND_LEVEL_MASK: u8 = 0x0F;
+pub const SURROUND_LEVEL_UNKNOWN_BITS: u8 = 0xE0;
 /// Mixer flags of the ROM, read-only: bit 3 is set while the sidetone path runs.
 pub const MIXER: u16 = 0x00A8;
 pub const MIXER_SIDETONE: u8 = 0x08;
@@ -113,14 +161,38 @@ pub const BALANCED_WINDOW: [u8; WINDOW_LEN] = [
     0x0F, 0xB2, 0x50, 0xD7, 0x57, 0x9E, 0x5F, 0x9E, 0xE6, 0xD2, 0x77, 0x1A, 0x0F, 0x80, 0xDE, 0xF2,
     0x3E, 0x0F, 0x02, 0x03, 0x20, 0x71, 0xD6, 0x1F, 0x9D, 0xD3, 0x60,
 ];
-/// Minimum hiss: driver clamped at 0x77 when idle, settle stage on start. The immediate at
-/// [`SETTLE_ADDR`] is the settle time.
+/// Lowest noise: driver clamped at 0x77 when idle, soft-start stage on start. The immediate at
+/// [`SETTLE_ADDR`] is the soft-start time.
 pub const MIN_HISS_WINDOW: [u8; WINDOW_LEN] = [
     0xE2, 0x18, 0x0F, 0x01, 0x1C, 0xE2, 0x1A, 0x0F, 0x01, 0xF5, 0xB2, 0x0A, 0xC9, 0x17, 0x9D, 0xE2,
     0x1A, 0x0F, 0x04, 0x09, 0xC2, 0x44, 0x1A, 0x0F, 0xB2, 0x3C, 0xD7, 0x57, 0x9E, 0x5F, 0x9E, 0xDD,
     0x60, 0xD2, 0x77, 0x1A, 0x0F, 0xD2, 0x33, 0x1B, 0x0F, 0x80, 0xD2,
 ];
 pub const SETTLE_INDEX: usize = (SETTLE_ADDR - WINDOW) as usize;
+pub const DECAY_INDEX: usize = (DECAY_ADDR - WINDOW) as usize;
+
+/// An immediate of a window routine that can be changed in place while the hook is live: one
+/// byte, in units of 10 ms, that only a timer reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tunable {
+    /// What the immediate is, for messages.
+    pub what: &'static str,
+    /// Offset in the window.
+    pub index: usize,
+    pub default: u8,
+    pub min: u8,
+    pub max: u8,
+}
+
+impl Tunable {
+    pub fn addr(self) -> u16 {
+        WINDOW + self.index as u16
+    }
+
+    pub fn contains(self, units: u8) -> bool {
+        (self.min..=self.max).contains(&units)
+    }
+}
 
 /// The routine the window holds. [`Window::Vendor`] is the vendor bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,7 +215,28 @@ impl Window {
         match self {
             Window::Vendor => "vendor",
             Window::Balanced => "balanced",
-            Window::MinHiss => "min-hiss",
+            Window::MinHiss => "lowest-noise",
+        }
+    }
+
+    /// The immediate of this routine that may be changed in place, if there is one.
+    pub fn tunable(self) -> Option<Tunable> {
+        match self {
+            Window::Vendor => None,
+            Window::Balanced => Some(Tunable {
+                what: "decay time",
+                index: DECAY_INDEX,
+                default: DECAY_DEFAULT,
+                min: DECAY_MIN,
+                max: DECAY_MAX,
+            }),
+            Window::MinHiss => Some(Tunable {
+                what: "soft-start time",
+                index: SETTLE_INDEX,
+                default: SETTLE_DEFAULT,
+                min: SETTLE_MIN,
+                max: SETTLE_MAX,
+            }),
         }
     }
 }
@@ -183,13 +276,15 @@ impl Part {
 
 /// Address ranges (start, length) that may ever be written. Checked on every write as a
 /// second line of defence behind the patch constructors.
-const WRITABLE: [(u16, usize); 8] = [
+const WRITABLE: [(u16, usize); 10] = [
     (HOOK, 3),
     (DAC_A, 1),
     (DAC_B, 1),
     (WINDOW, WINDOW_LEN),
     (MIC_CONTROL, 1),
     (DSP_ENABLE, 1),
+    (SURROUND_ADDR, 1),
+    (SURROUND_LEVEL_ADDR, 1),
     (NEWC_ADDR, 1),
     (SIDETONE_LEVEL_ADDR, 2),
 ];
@@ -361,21 +456,20 @@ fn playback_active() -> [Guard; 2] {
     ]
 }
 
-/// Guards that hold while the window is `window` (any allowed settle time for
-/// [`Window::MinHiss`]).
+/// Guards that hold while the window is `window` (any allowed value of its tunable immediate).
 fn window_guards(window: Window) -> Vec<Guard> {
     let image = window.image();
-    match window {
-        Window::MinHiss => vec![
-            bytes_at(WINDOW, &image[..SETTLE_INDEX]),
+    match window.tunable() {
+        Some(t) => vec![
+            bytes_at(WINDOW, &image[..t.index]),
             Guard::ByteIn {
-                addr: SETTLE_ADDR,
-                lo: SETTLE_MIN,
-                hi: SETTLE_MAX,
+                addr: t.addr(),
+                lo: t.min,
+                hi: t.max,
             },
-            bytes_at(SETTLE_ADDR + 1, &image[SETTLE_INDEX + 1..]),
+            bytes_at(t.addr() + 1, &image[t.index + 1..]),
         ],
-        _ => vec![bytes_at(WINDOW, image)],
+        None => vec![bytes_at(WINDOW, image)],
     }
 }
 
@@ -473,7 +567,7 @@ pub fn operands(window_operands: bool) -> Patch {
 }
 
 /// Replaces one part of the window with the same part of another image, while the hook is RTS.
-/// The minimum-hiss image is the one with the default settle time.
+/// The lowest-noise image is the one with the default soft-start time.
 pub fn window_part(part: Part, from: Window, to: Window) -> Patch {
     Patch {
         name: format!(
@@ -496,25 +590,47 @@ pub fn window_part(part: Part, from: Window, to: Window) -> Patch {
     }
 }
 
-/// Changes the minimum-hiss settle time immediate in place; it is refused unless the
-/// minimum-hiss routine is in the window. `units` is in 10 ms steps.
-pub fn settle_time(units: u8) -> Result<Patch> {
-    if !(SETTLE_MIN..=SETTLE_MAX).contains(&units) {
+/// Changes the tunable immediate of the routine `window` in place; it is refused unless that
+/// routine is in the window. `units` is in 10 ms steps. Fails for a window without a tunable
+/// immediate and for a value outside its range.
+pub fn tune(window: Window, units: u8) -> Result<Patch> {
+    let t = window.tunable().ok_or_else(|| {
+        Error::Refused(format!("the {} routine has no tunable time", window.name()))
+    })?;
+    if !t.contains(units) {
         return Err(Error::Refused(format!(
-            "settle time {units:#04x} is outside {SETTLE_MIN:#04x}..={SETTLE_MAX:#04x}"
+            "{} {units:#04x} is outside {:#04x}..={:#04x}",
+            t.what, t.min, t.max
         )));
     }
     Ok(Patch {
-        name: format!("min-hiss settle time ($1F15) = {units:#04x}"),
-        addr: SETTLE_ADDR,
+        name: format!(
+            "{} {} (${:04X}) = {units:#04x}",
+            window.name(),
+            t.what,
+            t.addr()
+        ),
+        addr: t.addr(),
         change: Change::Byte {
-            lo: SETTLE_MIN,
-            hi: SETTLE_MAX,
+            lo: t.min,
+            hi: t.max,
             value: units,
         },
-        guards: window_guards(Window::MinHiss),
+        guards: window_guards(window),
         needs_stream: false,
     })
+}
+
+/// Changes the lowest-noise soft-start time immediate in place; it is refused unless the
+/// lowest-noise routine is in the window. `units` is in 10 ms steps.
+pub fn settle_time(units: u8) -> Result<Patch> {
+    tune(Window::MinHiss, units)
+}
+
+/// Changes the balanced stop decay time immediate in place; it is refused unless the balanced
+/// routine is in the window. `units` is in 10 ms steps.
+pub fn decay_time(units: u8) -> Result<Patch> {
+    tune(Window::Balanced, units)
 }
 
 /// Sets $1017 to 0x38 + `step` (analog mic boost, 6 dB steps, step 0..=7).
@@ -600,6 +716,44 @@ pub fn sidetone_level(level: u16) -> Result<Patch> {
             lo: SIDETONE_MIN,
             hi: SIDETONE_MAX,
             value: level,
+        },
+        guards: dsp_guards(),
+        needs_stream: false,
+    })
+}
+
+/// Virtual surround on or off. The ROM applies it at the next [`newc`] pass or the next time a
+/// playback stream opens. The byte may hold the equaliser index bits (the vendor patch clears
+/// them) and nothing else.
+pub fn surround(on: bool) -> Patch {
+    Patch {
+        name: format!("virtual surround {} ($1152 bit 3)", on_off(on)),
+        addr: SURROUND_ADDR,
+        change: Change::Bits {
+            mask: SURROUND_BIT,
+            value: if on { SURROUND_BIT } else { 0 },
+            forbidden: !(SURROUND_BIT | SURROUND_TOLERATED),
+        },
+        guards: dsp_guards(),
+        needs_stream: false,
+    }
+}
+
+/// Sets the virtual surround level, `SURROUND_LEVEL_MIN..=SURROUND_LEVEL_MAX`, keeping the
+/// variant bit; applied like [`surround`].
+pub fn surround_level(level: u8) -> Result<Patch> {
+    if !(SURROUND_LEVEL_MIN..=SURROUND_LEVEL_MAX).contains(&level) {
+        return Err(Error::Refused(format!(
+            "surround level {level} is outside {SURROUND_LEVEL_MIN}..={SURROUND_LEVEL_MAX}"
+        )));
+    }
+    Ok(Patch {
+        name: format!("virtual surround level ($10D3) = {level}"),
+        addr: SURROUND_LEVEL_ADDR,
+        change: Change::Bits {
+            mask: SURROUND_LEVEL_MASK,
+            value: level,
+            forbidden: SURROUND_LEVEL_UNKNOWN_BITS,
         },
         guards: dsp_guards(),
         needs_stream: false,
@@ -867,6 +1021,9 @@ mod tests {
         for units in [SETTLE_MIN, SETTLE_DEFAULT, SETTLE_MAX] {
             v.push(settle_time(units).unwrap());
         }
+        for units in [DECAY_MIN, DECAY_DEFAULT, DECAY_MAX] {
+            v.push(decay_time(units).unwrap());
+        }
         for step in 0..=7 {
             v.push(mic_boost(step).unwrap());
         }
@@ -877,6 +1034,16 @@ mod tests {
         }
         for level in [SIDETONE_MIN, SIDETONE_DEFAULT, SIDETONE_MAX] {
             v.push(sidetone_level(level).unwrap());
+        }
+        for on in [false, true] {
+            v.push(surround(on));
+        }
+        for level in [
+            SURROUND_LEVEL_MIN,
+            SURROUND_LEVEL_DEFAULT,
+            SURROUND_LEVEL_MAX,
+        ] {
+            v.push(surround_level(level).unwrap());
         }
         v.push(newc());
         v
@@ -919,7 +1086,7 @@ mod tests {
 
     #[test]
     fn write_reports_are_cpu_ram_writes_to_allowed_addresses() {
-        let allowed: [(u16, usize); 11] = [
+        let allowed: [(u16, usize); 14] = [
             (0x14B1, 1),
             (0x14B2, 2),
             (0x16CF, 1),
@@ -927,8 +1094,11 @@ mod tests {
             (0x1EFC, 32),
             (0x1F1C, 11),
             (0x1F15, 1),
+            (0x1F0E, 1),
             (0x1017, 1),
             (0x1151, 1),
+            (0x1152, 1),
+            (0x10D3, 1),
             (0x1154, 1),
             (0x1276, 2),
         ];
@@ -972,10 +1142,10 @@ mod tests {
         for p in all_patches() {
             let hook_or_routine = (HOOK..=HOOK_OPERANDS + 1).contains(&p.addr())
                 || (WINDOW..WINDOW + WINDOW_LEN as u16).contains(&p.addr());
-            let in_place_settle = p.addr() == SETTLE_ADDR;
+            let in_place_time = p.addr() == SETTLE_ADDR || p.addr() == DECAY_ADDR;
             assert_eq!(
                 p.needs_stream(),
-                hook_or_routine && !in_place_settle,
+                hook_or_routine && !in_place_time,
                 "{}",
                 p.name()
             );
@@ -989,6 +1159,9 @@ mod tests {
         assert_eq!(MIN_HISS_WINDOW.to_vec(), bytes(MIN_HISS_HEX));
         assert_eq!(MIN_HISS_WINDOW[SETTLE_INDEX], SETTLE_DEFAULT);
         assert_eq!((SETTLE_ADDR, SETTLE_INDEX), (0x1F15, 25));
+        assert_eq!(BALANCED_WINDOW[DECAY_INDEX], DECAY_DEFAULT);
+        assert_eq!((DECAY_ADDR, DECAY_INDEX), (0x1F0E, 18));
+        assert_eq!(DECAY_DEFAULT, 0x50, "800 ms");
         assert_eq!((DAC_A, DAC_B), (0x16CF, 0x17D0));
         assert_eq!(Part::First.addr(), WINDOW);
         assert_eq!(
@@ -1080,8 +1253,12 @@ mod tests {
             rogue(0x14B4, &[0x4C], &[0x60]),
             rogue(0x1F26, &[0x60, 0x00], &[0x00, 0x00]),
             rogue(0x1EFB, &[0x60, 0x2F], &[0x00, 0x00]),
-            rogue(0x1152, &[0x00], &[0x02]),
             rogue(0x1153, &[0x00], &[0x80]),
+            rogue(0x1151, &[0x04, 0x00], &[0x04, 0x08]),
+            rogue(0x10D2, &[0x00], &[0x01]),
+            rogue(0x10D3, &[0x04, 0x00], &[0x05, 0x00]),
+            rogue(0x10D4, &[0x00], &[0x01]),
+            rogue(0x0F1A, &[0x77], &[0x00]),
             rogue(0x1155, &[0x00], &[0x01]),
             rogue(0x1275, &[0x00], &[0x01]),
             rogue(0x1277, &[0x03, 0x00], &[0x00, 0x00]),
@@ -1342,6 +1519,208 @@ mod tests {
         }
     }
 
+    #[test]
+    fn decay_time_is_changed_in_place_only_in_the_balanced_routine() {
+        let dev = FakeDevice::in_mode(Mode::Balanced);
+        assert_eq!(
+            apply(&dev, &decay_time(0x20).unwrap()).unwrap(),
+            Outcome::Written
+        );
+        assert_eq!(dev.writes(), vec![(0x1F0E, vec![0x20])]);
+        assert_eq!(dev.byte(HOOK), JMP);
+        assert_eq!(
+            apply(&dev, &decay_time(0x20).unwrap()).unwrap(),
+            Outcome::AlreadySet
+        );
+        assert_eq!(dev.writes().len(), 1);
+
+        // a byte of the routine around the time is not what it should be
+        for corrupt in [0x1EFC, 0x1F0D, 0x1F0F, 0x1F15, 0x1F26] {
+            let dev = FakeDevice::in_mode(Mode::Balanced);
+            dev.poke(corrupt, &[dev.byte(corrupt) ^ 0xFF]);
+            assert_refused(&dev, &decay_time(0x20).unwrap());
+        }
+        // another routine is in the window, or none of ours
+        for mode in [Mode::Stock, Mode::Quiet, Mode::MinHiss] {
+            let dev = FakeDevice::in_mode(mode);
+            dev.poke(DECAY_ADDR, &[DECAY_DEFAULT]);
+            assert_refused(&dev, &decay_time(0x20).unwrap());
+        }
+    }
+
+    #[test]
+    fn decay_time_is_limited_to_its_range_in_the_patch_and_on_the_device() {
+        for bad in [0x00, 0x01, DECAY_MIN - 1, DECAY_MAX + 1, 0xFF] {
+            assert!(
+                matches!(decay_time(bad), Err(Error::Refused(_))),
+                "{bad:#04x}"
+            );
+        }
+        for ok in [DECAY_MIN, 0x20, DECAY_DEFAULT, DECAY_MAX] {
+            assert!(decay_time(ok).is_ok(), "{ok:#04x}");
+        }
+        // a value in the window that is out of range is not a balanced routine to change
+        for bad in [0x00, DECAY_MIN - 1, DECAY_MAX + 1, 0xFF] {
+            let dev = FakeDevice::in_mode(Mode::Balanced);
+            dev.poke(DECAY_ADDR, &[bad]);
+            assert_refused(&dev, &decay_time(0x20).unwrap());
+        }
+        // the two tunable times belong to their own routines
+        assert!(tune(Window::Vendor, 0x20).is_err());
+        assert_eq!(tune(Window::Balanced, 0x20).unwrap().addr(), DECAY_ADDR);
+        assert_eq!(tune(Window::MinHiss, 0x20).unwrap().addr(), SETTLE_ADDR);
+    }
+
+    #[test]
+    fn balanced_goes_live_only_with_a_decay_time_in_range() {
+        for (decay, live) in [
+            (0x00, false),
+            (DECAY_MIN - 1, false),
+            (DECAY_MIN, true),
+            (0x20, true),
+            (DECAY_DEFAULT, true),
+            (DECAY_MAX, true),
+            (DECAY_MAX + 1, false),
+            (0xFF, false),
+        ] {
+            let dev = quiet_with(BALANCED_HEX);
+            dev.poke(DECAY_ADDR, &[decay]);
+            let _stream = dev.open_active_stream().unwrap();
+            if live {
+                assert_eq!(
+                    apply(&dev, &hook_jmp(Window::Balanced)).unwrap(),
+                    Outcome::Written,
+                    "{decay:#04x}"
+                );
+            } else {
+                assert_refused(&dev, &hook_jmp(Window::Balanced));
+            }
+        }
+    }
+
+    #[test]
+    fn surround_changes_only_its_own_bit_and_keeps_the_preset_bits() {
+        for (patch, start, end) in [
+            (surround(true), 0x00, 0x08),
+            (surround(true), 0x02, 0x0A),
+            (surround(true), 0x03, 0x0B),
+            (surround(false), 0x08, 0x00),
+            (surround(false), 0x0B, 0x03),
+            (surround(false), 0x0A, 0x02),
+        ] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x1152, &[start]);
+            assert_eq!(apply(&dev, &patch).unwrap(), Outcome::Written);
+            assert_eq!(dev.writes(), vec![(0x1152, vec![end])], "{}", patch.name());
+        }
+        for (patch, state) in [
+            (surround(false), 0x00),
+            (surround(false), 0x03),
+            (surround(true), 0x08),
+            (surround(true), 0x0B),
+        ] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x1152, &[state]);
+            assert_eq!(apply(&dev, &patch).unwrap(), Outcome::AlreadySet);
+            assert!(dev.writes().is_empty(), "{}", patch.name());
+        }
+    }
+
+    #[test]
+    fn surround_is_refused_when_the_byte_holds_any_other_bit() {
+        for other in [0x04, 0x10, 0x20, 0x40, 0x80] {
+            for on in [false, true] {
+                let dev = FakeDevice::stock();
+                dev.poke(0x1152, &[other]);
+                assert_refused(&dev, &surround(on));
+            }
+        }
+    }
+
+    #[test]
+    fn surround_level_is_limited_to_its_range_and_keeps_the_variant_bit() {
+        for bad in [0, 11, 15, 16, 0x14, 255] {
+            assert!(
+                matches!(surround_level(bad), Err(Error::Refused(_))),
+                "{bad}"
+            );
+        }
+        for ok in SURROUND_LEVEL_MIN..=SURROUND_LEVEL_MAX {
+            let dev = FakeDevice::stock();
+            let written = apply(&dev, &surround_level(ok).unwrap()).unwrap();
+            assert_eq!(dev.byte(0x10D3), ok);
+            assert_eq!(
+                written,
+                if ok == SURROUND_LEVEL_DEFAULT {
+                    Outcome::AlreadySet
+                } else {
+                    Outcome::Written
+                }
+            );
+        }
+        // the variant bit is not touched, and a level that is already there is not rewritten
+        let dev = FakeDevice::stock();
+        dev.poke(0x10D3, &[0x14]);
+        assert_eq!(
+            apply(&dev, &surround_level(6).unwrap()).unwrap(),
+            Outcome::Written
+        );
+        assert_eq!(dev.writes(), vec![(0x10D3, vec![0x16])]);
+        assert_eq!(
+            apply(&dev, &surround_level(6).unwrap()).unwrap(),
+            Outcome::AlreadySet
+        );
+        // bits other than the level and the variant are not ours
+        for other in [0x20, 0x40, 0x80] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x10D3, &[0x04 | other]);
+            assert_refused(&dev, &surround_level(6).unwrap());
+        }
+    }
+
+    #[test]
+    fn a_surround_level_nibble_outside_the_range_is_overwritten_and_the_variant_bit_kept() {
+        // the ROM clamps these, so setting a level replaces them; only bits 7:5 stop the write
+        for (before, after) in [(0x00, 0x06), (0x0B, 0x06), (0x0F, 0x06), (0x1B, 0x16)] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x10D3, &[before]);
+            assert_eq!(
+                apply(&dev, &surround_level(6).unwrap()).unwrap(),
+                Outcome::Written,
+                "{before:#04x}"
+            );
+            assert_eq!(dev.writes(), vec![(0x10D3, vec![after])], "{before:#04x}");
+        }
+    }
+
+    #[test]
+    fn a_surround_byte_changed_by_the_rom_meanwhile_is_judged_again() {
+        // the target is read again after the guards: a bit that appears there stops the write,
+        // and a preset bit that appears there is kept
+        let p = surround(true);
+        let dev = needing(&p);
+        let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, |d| d.poke(0x1152, &[0x04]));
+        assert!(matches!(
+            apply_patch(&mut meddled, &p),
+            Err(Error::Refused(_))
+        ));
+        assert!(dev.writes().is_empty());
+
+        let dev = needing(&p);
+        let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, |d| d.poke(0x1152, &[0x02]));
+        assert_eq!(apply_patch(&mut meddled, &p).unwrap(), Outcome::Written);
+        assert_eq!(dev.writes(), vec![(0x1152, vec![0x0A])]);
+
+        let p = surround_level(7).unwrap();
+        let dev = needing(&p);
+        let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, |d| d.poke(0x10D3, &[0x84]));
+        assert!(matches!(
+            apply_patch(&mut meddled, &p),
+            Err(Error::Refused(_))
+        ));
+        assert!(dev.writes().is_empty());
+    }
+
     type Event = Box<dyn FnOnce(&FakeDevice)>;
 
     /// A device that runs `event` once, just before the `at`th read request reaches it.
@@ -1385,9 +1764,13 @@ mod tests {
     const READ_AFTER_GUARDS: usize = 5;
 
     fn dsp_patches() -> Vec<Patch> {
-        let mut v = vec![sidetone_level(0x0200).unwrap(), newc()];
+        let mut v = vec![
+            sidetone_level(0x0200).unwrap(),
+            surround_level(6).unwrap(),
+            newc(),
+        ];
         for on in [false, true] {
-            v.extend([noise_reduction(on), agc(on), sidetone(on)]);
+            v.extend([noise_reduction(on), agc(on), sidetone(on), surround(on)]);
         }
         v
     }
@@ -1496,6 +1879,42 @@ mod tests {
             let dev = FakeDevice::stock();
             dev.poke(0x1276, &bad.to_le_bytes());
             assert_refused(&dev, &sidetone_level(0x0200).unwrap());
+        }
+    }
+
+    #[test]
+    fn the_sidetone_register_counts_in_256ths_of_a_db() {
+        assert_eq!(sidetone_db(SIDETONE_DEFAULT), 947.0 / 256.0);
+        assert_eq!(format!("{:.2}", sidetone_db(SIDETONE_DEFAULT)), "3.70");
+        assert_eq!(sidetone_db(SIDETONE_MAX), 16.0);
+        assert_eq!(sidetone_register(3.7).unwrap(), 947);
+        assert_eq!(sidetone_register(16.0).unwrap(), SIDETONE_MAX);
+        assert_eq!(sidetone_register(1.0).unwrap(), 256);
+        assert_eq!(sidetone_register(0.5).unwrap(), 128);
+        // 0 dB is written as the lowest value that cxtune writes
+        assert_eq!(sidetone_register(0.0).unwrap(), SIDETONE_MIN);
+        for level in [SIDETONE_MIN, 100, SIDETONE_DEFAULT, SIDETONE_MAX] {
+            assert_eq!(sidetone_register(sidetone_db(level)).unwrap(), level);
+        }
+        for bad in [
+            -0.1,
+            16.01,
+            100.0,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
+            assert!(
+                matches!(sidetone_register(bad), Err(Error::Refused(_))),
+                "{bad}"
+            );
+        }
+        // whatever the conversion returns is accepted by the patch
+        for db in [0.0, 0.004, 3.7, 15.99, 16.0] {
+            assert!(
+                sidetone_level(sidetone_register(db).unwrap()).is_ok(),
+                "{db}"
+            );
         }
     }
 
