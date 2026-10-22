@@ -1,7 +1,7 @@
 # The engine
 
 `cxtune::engine` keeps the dongle at the settings the user chose, for a user interface to drive.
-The tray application uses it; `cxtune watch` is the same engine without an interface.
+`cxtune watch` is the same engine without an interface.
 
 ## Threads and ownership
 

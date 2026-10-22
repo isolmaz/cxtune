@@ -1,5 +1,6 @@
 //! Traces the codec's playback state registers while a stream of digital silence is opened and
-//! closed on the dongle's output. Reads only; needs the dongle.
+//! closed on the dongle's output. Reads only; needs the dongle and holds the device lock, so it
+//! refuses to run while another cxtune process controls the dongle.
 //!
 //! usage: cargo run --release --example trace -- <open_s> <close_s> <total_s>
 //!
@@ -12,6 +13,7 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use cxtune::lock::NamedLock;
 use cxtune::protocol::read_mem;
 use cxtune::{Error, Result, audio, hid};
 
@@ -26,6 +28,7 @@ fn secs(arg: Option<String>, default: f64) -> Result<Duration> {
 }
 
 fn main() -> Result<()> {
+    let _lock = NamedLock::device()?;
     let mut args = std::env::args().skip(1);
     let open_at = secs(args.next(), 2.0)?;
     let close_at = secs(args.next(), 7.0)?;
