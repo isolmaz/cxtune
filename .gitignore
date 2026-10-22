@@ -1,1 +1,11 @@
 /target
+
+# Firmware dumps and what the tools generate from them must never be committed.
+*.bin
+/dump/
+listing.txt
+xrefs.txt
+calls.txt
+jtables.txt
+ptrseeds.txt
+undef.txt

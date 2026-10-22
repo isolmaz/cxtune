@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Modelled on Ghidra's Ghidra/Processors/6502/data/languages/6502.ldefs (Apache License 2.0, see
+     ../../LICENSE; attribution in ../../NOTICE); modified for the CX65C02 language. -->
+<language_definitions>
+  <language processor="CX65C02"
+            endian="little"
+            size="16"
+            variant="default"
+            version="1.0"
+            slafile="cx65c02.sla"
+            processorspec="6502.pspec"
+            id="CX65C02:LE:16:default">
+    <description>Conexant CX2077x 65C02 derivative (custom bit/patch ops, hypothesised)</description>
+    <compiler name="default" spec="6502.cspec" id="default"/>
+  </language>
+</language_definitions>
