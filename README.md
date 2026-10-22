@@ -58,6 +58,7 @@ cxtune mic-agc <on|off>         set microphone AGC (experimental) and remember i
 cxtune sidetone <on|off>        set sidetone (experimental) and remember it
 cxtune sidetone-level <1-4096>  set the sidetone gain register (experimental) and remember it
 cxtune watch                    keep the remembered settings applied across replugs
+                                (holds the dongle; other commands are refused meanwhile)
 ```
 
 A noise reduction or AGC change made while a microphone stream is open is followed by a
@@ -94,11 +95,17 @@ A config file with keys from an earlier version (`profile`, `idle`, `clamp`) is 
 an error that names the file, before anything is written to the device; delete it or rewrite it
 with the keys above.
 
-Do not run cxtune at the same time as another tool that reads codec memory over HID (for
-example a second cxtune or the vendor software poking the same interface): the read protocol
-has no request tag, so concurrent readers can receive each other's responses. The checks are
-meant to turn that into a refusal rather than a wrong write, but untagged responses cannot
-guarantee it (a crossed response that happens to satisfy a single-bit check passes).
+Only one cxtune process controls the dongle at a time, because the read protocol has no
+request tag and concurrent readers can receive each other's responses. Every command holds the
+machine-wide named mutex `Global\cxtune-device` while it runs, and `watch` holds it for as long
+as it runs; a command that finds it held prints `busy: another cxtune process is controlling
+the dongle ...` and exits with status 1 before it reads the config or touches the device. The
+mutex is released when the holder exits, also when it is killed.
+
+The lock does not keep other programs that read codec memory over HID (for example vendor
+software poking the same interface) away. The checks are meant to turn crossed responses into
+a refusal rather than a wrong write, but untagged responses cannot guarantee it (a crossed
+response that happens to satisfy a single-bit check passes).
 
 ## Safety design
 

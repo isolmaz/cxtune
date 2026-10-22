@@ -24,7 +24,8 @@ usage page `0x000C` (interface 3).
 - A read needs about 5 ms between the request and GET_REPORT; a write needs about 50 ms before
   the readback. Reads are retried up to five times when the IN report is not `0x05`.
 - Requests carry no tag. Two programs talking to the dongle at once can receive each other's
-  responses, so only one process may use the interface.
+  responses, so only one process may use the interface. cxtune enforces this between its own
+  processes with the named mutex `Global\cxtune-device` (`src/lock.rs`).
 - All patch RAM is reloaded from EEPROM by a replug or USB reset: every change is volatile.
 
 ## Registers and variables

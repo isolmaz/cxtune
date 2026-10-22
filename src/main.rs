@@ -3,6 +3,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use cxtune::config::{self, Config};
+use cxtune::lock::NamedLock;
 use cxtune::mode::{self, Mode, State};
 use cxtune::patches::{
     APPLIED_AGC, APPLIED_NR, DSP_AGC, DSP_NR, DSP_SIDETONE, MIXER_SIDETONE, ROM_ID, SIDETONE_MAX,
@@ -40,20 +41,24 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match args.as_slice() {
-        ["status"] => status(),
-        ["apply", name] => apply(name),
-        ["tune", ms] => tune(ms),
-        ["mic-boost", n] => mic_boost(n),
-        ["mic-nr", v] => switch(
-            "mic noise reduction",
-            v,
-            dsp::set_noise_reduction,
-            |cfg, on| cfg.mic_nr = Some(on),
-        ),
-        ["mic-agc", v] => switch("mic AGC", v, dsp::set_agc, |cfg, on| cfg.mic_agc = Some(on)),
-        ["sidetone", v] => sidetone(v),
-        ["sidetone-level", v] => sidetone_level(v),
-        ["watch"] => watch(),
+        ["status"] => locked(status),
+        ["apply", name] => locked(|| apply(name)),
+        ["tune", ms] => locked(|| tune(ms)),
+        ["mic-boost", n] => locked(|| mic_boost(n)),
+        ["mic-nr", v] => locked(|| {
+            switch(
+                "mic noise reduction",
+                v,
+                dsp::set_noise_reduction,
+                |cfg, on| cfg.mic_nr = Some(on),
+            )
+        }),
+        ["mic-agc", v] => {
+            locked(|| switch("mic AGC", v, dsp::set_agc, |cfg, on| cfg.mic_agc = Some(on)))
+        }
+        ["sidetone", v] => locked(|| sidetone(v)),
+        ["sidetone-level", v] => locked(|| sidetone_level(v)),
+        ["watch"] => locked(watch),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
@@ -66,6 +71,13 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Runs `command` while this process holds the lock that keeps other cxtune processes away from
+/// the dongle, or fails without running it when another process holds the lock.
+fn locked(command: impl FnOnce() -> Result<()>) -> Result<()> {
+    let _lock = NamedLock::device()?;
+    command()
 }
 
 fn open() -> Result<hid::HidTransport> {
