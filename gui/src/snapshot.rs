@@ -2,7 +2,8 @@
 //! in both languages, then quits. The files show every page in both colour schemes, the other
 //! modes of the output page and the status of every problem. Every state is simulated: the engine
 //! is not started, so the dongle is never read or written, and the header meters show made-up
-//! levels in one picture.
+//! levels in one picture. The folder `grid` inside the folder holds the same pictures with a
+//! guide line at each x that the layout promises (docs/gui.md), to check them by eye.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -11,7 +12,8 @@ use cxtune::config::Config;
 use cxtune::engine::{Phase, Readback, Snapshot};
 use cxtune::mode::Mode;
 use slint::language::ColorScheme;
-use slint::{ComponentHandle, Timer, TimerMode};
+use slint::platform::{Key, WindowEvent};
+use slint::{ComponentHandle, Rgba8Pixel, SharedPixelBuffer, Timer, TimerMode};
 
 use crate::app::{self, App};
 use crate::lang::Lang;
@@ -20,6 +22,23 @@ use crate::ui::{Hint, MainWindow, Model, Theme, Title, Tone};
 
 /// Gives the window time to draw after each change.
 const STEP: Duration = Duration::from_millis(600);
+
+/// The x of the guide lines, in logical pixels of a window of `WIDTH`, and their colours: the
+/// left edge of the page, where every label starts, where every slider starts and ends, where
+/// every value and every control ends, and the right edge of the page. They follow from the
+/// spec (navigation 160, page padding 24, card padding 12, glyph column 20, gap 12, slider 200,
+/// value 64 after a gap of 8), not from the interface files.
+const WIDTH: u32 = 720;
+const GUIDES: [(u32, [u8; 3]); 6] = [
+    (184, [0, 90, 255]),
+    (228, [0, 170, 60]),
+    (412, [255, 0, 0]),
+    (612, [255, 0, 0]),
+    (684, [255, 0, 200]),
+    (696, [0, 90, 255]),
+];
+/// The pages and the number of controls that Tab reaches on them (English only, in `focus`).
+const FOCUS: [(usize, usize); 5] = [(0, 7), (1, 10), (2, 6), (3, 7), (4, 3)];
 const TABS: [&str; 5] = ["output", "microphone", "sidetone", "general", "about"];
 const MODES: [&str; 4] = ["default", "low-click", "balanced", "lowest-noise"];
 const PROBLEMS: [(Problem, &str); 12] = [
@@ -54,6 +73,8 @@ enum Scene {
     Warned,
     Disconnected,
     AutostartFailed,
+    /// The keyboard focus after one more press of Tab: the pictures of a page follow each other.
+    Focus(usize),
 }
 
 struct Shot {
@@ -81,6 +102,13 @@ impl Shot {
             Scene::Warned => "warning".into(),
             Scene::Disconnected => "disconnected".into(),
             Scene::AutostartFailed => "general-autostart-failed".into(),
+            Scene::Focus(press) => {
+                return format!(
+                    "focus/{}-{scheme}-{}-focus-{press:02}.png",
+                    self.lang.code(),
+                    TABS[self.tab]
+                );
+            }
         };
         format!("{}-{scheme}-{what}.png", self.lang.code())
     }
@@ -122,6 +150,14 @@ fn shots() -> Vec<Shot> {
         shot(ColorScheme::Light, 0, Scene::Disconnected);
         shot(ColorScheme::Dark, 0, Scene::Disconnected);
         shot(ColorScheme::Light, 3, Scene::AutostartFailed);
+        for (tab, presses) in FOCUS {
+            if lang == Lang::English {
+                for press in 1..=presses {
+                    shot(ColorScheme::Light, tab, Scene::Focus(press));
+                    shot(ColorScheme::Dark, tab, Scene::Focus(press));
+                }
+            }
+        }
     }
     shots
 }
@@ -248,16 +284,57 @@ pub fn schedule(window: &MainWindow, folder: PathBuf) {
             window.global::<Theme>().set_scheme(shot.scheme);
             window.global::<Model>().set_tab(shot.tab as i32);
             simulate(&window, shot.scene);
+            if matches!(shot.scene, Scene::Focus(_)) && shot.scheme == ColorScheme::Light {
+                press_tab(&window);
+            }
         } else {
-            save(&window, &folder.join(shot.name()));
+            save(&window, &folder, &shot.name());
         }
         tick += 1;
     });
     std::mem::forget(timer);
 }
 
-fn save(window: &MainWindow, path: &Path) {
+/// Moves the keyboard focus as the user would, from the first control of the window.
+fn press_tab(window: &MainWindow) {
+    let window = window.window();
+    window.dispatch_event(WindowEvent::WindowActiveChanged(true));
+    window.dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Tab.into(),
+    });
+    window.dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Tab.into(),
+    });
+}
+
+fn save(window: &MainWindow, folder: &Path, name: &str) {
     let buffer = window.window().take_snapshot().expect("a snapshot");
+    if name.starts_with("focus/") {
+        let _ = std::fs::create_dir_all(folder.join("focus"));
+        write_png(&buffer, &folder.join(name));
+        return;
+    }
+    write_png(&buffer, &folder.join(name));
+    let mut guided = buffer.clone();
+    draw_guides(&mut guided);
+    let grid = folder.join("grid");
+    let _ = std::fs::create_dir_all(&grid);
+    write_png(&guided, &grid.join(name));
+}
+
+/// Lines one pixel wide, over the picture.
+fn draw_guides(buffer: &mut SharedPixelBuffer<Rgba8Pixel>) {
+    let (width, height) = (buffer.width(), buffer.height());
+    let pixels = buffer.make_mut_slice();
+    for (x, [r, g, b]) in GUIDES {
+        let x = x * width / WIDTH;
+        for y in 0..height {
+            pixels[(y * width + x) as usize] = Rgba8Pixel::new(r, g, b, 255);
+        }
+    }
+}
+
+fn write_png(buffer: &SharedPixelBuffer<Rgba8Pixel>, path: &Path) {
     let file = std::fs::File::create(path).expect("a file for the snapshot");
     let mut encoder = png::Encoder::new(
         std::io::BufWriter::new(file),
