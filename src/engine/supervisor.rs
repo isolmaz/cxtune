@@ -20,10 +20,15 @@
 //!   arrival and is never drift, and a dongle that does it again and again is also reported.
 //! - **The settings file** is written shortly after a change and written again, with growing
 //!   pauses, for as long as that fails.
+//! - **Tests** of the Test tab ([`session`]) run on the same clock. While one that needs the
+//!   dongle for itself runs, the saved settings wait.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod session;
+
+use self::session::Tests;
 use super::Backend;
 use super::types::{Command, ErrorKind, Event, Failure, Phase, Readback, Snapshot, without};
 use super::watch::{CallWatch, Watched};
@@ -115,6 +120,7 @@ pub(super) struct Supervisor<B: Backend> {
     /// Settings that are no longer corrected because something keeps changing them.
     muted: Vec<&'static str>,
     drift_error: Option<Failure>,
+    tests: Tests<B>,
 
     phase: Phase,
     device: Option<Readback>,
@@ -157,6 +163,7 @@ impl<B: Backend> Supervisor<B> {
             restarts: Vec::new(),
             muted: Vec::new(),
             drift_error: None,
+            tests: Tests::default(),
             phase: Phase::Disconnected,
             device: None,
             error: None,
@@ -174,14 +181,20 @@ impl<B: Backend> Supervisor<B> {
 
     /// When [`Supervisor::step`] next has something to do.
     pub(super) fn next_wake(&self) -> Instant {
-        let work = self.work_at.filter(|_| self.present);
-        let look =
-            (self.refresh && self.present && self.phase != Phase::Waiting).then(|| self.now());
-        [Some(self.next_poll), work, self.save_at, look]
-            .into_iter()
-            .flatten()
-            .min()
-            .unwrap_or(self.next_poll)
+        let free = self.present && !self.tests.holds_the_dongle();
+        let work = self.work_at.filter(|_| free);
+        let look = (self.refresh && free && self.phase != Phase::Waiting).then(|| self.now());
+        [
+            Some(self.next_poll),
+            work,
+            self.save_at,
+            look,
+            self.tests.next_tick(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(self.next_poll)
     }
 
     /// Takes one command. Nothing is written to the dongle here; the next steps do that.
@@ -199,6 +212,9 @@ impl<B: Backend> Supervisor<B> {
             Command::SetMicBoost(step) => {
                 patches::mic_boost(step).map(|_| next.mic_boost = Some(step))
             }
+            Command::SetBalancedDecayMs(ms) => {
+                mode::decay_units(ms).map(|_| next.balanced_decay_ms = Some(ms))
+            }
             Command::SetNoiseReduction(on) => {
                 next.mic_nr = Some(on);
                 Ok(())
@@ -213,6 +229,17 @@ impl<B: Backend> Supervisor<B> {
             }
             Command::SetSidetoneLevel(level) => {
                 patches::sidetone_level(level).map(|_| next.sidetone_level = Some(level))
+            }
+            Command::SetSurround(on) => {
+                next.surround = Some(on);
+                Ok(())
+            }
+            Command::SetSurroundLevel(level) => {
+                patches::surround_level(level).map(|_| next.surround_level = Some(level))
+            }
+            Command::Test(request) => {
+                self.test_request(request);
+                return;
             }
             Command::Reapply => {
                 if self.present {
@@ -254,6 +281,7 @@ impl<B: Backend> Supervisor<B> {
     /// left alone for [`SETTLE`] and then verified.
     pub(super) fn resumed(&mut self) {
         self.note("the computer resumed");
+        self.abort_tests("the computer went to sleep");
         if self.present {
             let now = self.now();
             self.wait_for_firmware(now);
@@ -278,18 +306,22 @@ impl<B: Backend> Supervisor<B> {
         if self.save_at.is_some_and(|at| now >= at) {
             self.save();
         }
-        if self.present {
+        if self.present && !self.tests.holds_the_dongle() {
             if self.work_at.is_some_and(|at| now >= at) {
+                self.tests.release_dongle();
                 self.work();
             } else if self.refresh && self.phase != Phase::Waiting {
+                self.tests.release_dongle();
                 self.look();
             }
         }
+        self.tick_tests(now);
         self.publish();
     }
 
     /// Writes what is still unsaved. Called when the engine stops.
     pub(super) fn finish(&mut self) {
+        self.abort_tests("the engine was stopped");
         if self.saved != self.cfg {
             self.save();
         }
@@ -348,6 +380,7 @@ impl<B: Backend> Supervisor<B> {
             self.wait_for_firmware(now);
         } else {
             self.note("the dongle disconnected");
+            self.abort_tests("the dongle was disconnected");
             self.forget_device();
             self.phase = Phase::Disconnected;
         }
@@ -438,6 +471,9 @@ impl<B: Backend> Supervisor<B> {
             self.wait_for_firmware(now);
             return Ok(Pass::Restarted);
         }
+        if !force {
+            self.follow_surround(&seen, now);
+        }
         // a setting that the dongle holds again is corrected again if it drifts again
         let held_back = seen.differences(&self.cfg);
         self.muted.retain(|name| held_back.contains(name));
@@ -510,6 +546,29 @@ impl<B: Backend> Supervisor<B> {
                 DRIFT_WINDOW.as_secs() / 60
             ));
         }
+    }
+
+    /// The dongle's own control can switch the virtual surround. A switch on a dongle that held
+    /// the chosen settings at the last pass is the user's, so the chosen setting follows it
+    /// instead of being corrected.
+    fn follow_surround(&mut self, seen: &Readback, now: Instant) {
+        let Some(chosen) = self.cfg.surround else {
+            return;
+        };
+        if chosen == seen.surround || self.synced.as_ref() != Some(&self.cfg) {
+            return;
+        }
+        self.note(format!(
+            "virtual surround was switched {} on the dongle; keeping that",
+            if seen.surround { "on" } else { "off" }
+        ));
+        self.cfg.surround = Some(seen.surround);
+        if let Some(synced) = &mut self.synced {
+            synced.surround = Some(seen.surround);
+        }
+        self.save_failures = 0;
+        let due = now + COALESCE;
+        self.save_at = Some(self.save_at.map_or(due, |at| at.min(due)));
     }
 
     /// Something changed settings on a dongle that was holding them, and the user did not ask for
@@ -626,6 +685,7 @@ impl<B: Backend> Supervisor<B> {
             save_error: self.save_error.clone(),
             device: self.device.clone(),
             error: self.error.clone().or_else(|| self.drift_error.clone()),
+            test: self.tests.state(),
         };
         if self.published.as_ref() != Some(&snapshot) {
             self.published = Some(snapshot.clone());
@@ -1328,6 +1388,179 @@ mod tests {
         assert!(rig.snapshot().in_sync());
     }
 
+    fn writes_to(rig: &Rig, addr: u16) -> Vec<Vec<u8>> {
+        rig.dev
+            .writes()
+            .into_iter()
+            .filter(|(a, _)| *a == addr)
+            .map(|(_, data)| data)
+            .collect()
+    }
+
+    #[test]
+    fn the_balanced_decay_time_is_written_in_place_and_saved() {
+        let mut rig = connected();
+        let streams = rig.dev.streams_opened();
+        rig.send(Command::SetBalancedDecayMs(300));
+        rig.run(1.0);
+        assert_eq!(writes_to(&rig, 0x1F0E), [vec![0x1E]]);
+        assert_eq!(rig.saved().balanced_decay_ms, Some(300));
+        assert_eq!(rig.snapshot().settings.balanced_decay_ms, Some(300));
+        assert_eq!(rig.snapshot().device.unwrap().balanced_decay_ms, Some(300));
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(
+            rig.dev.streams_opened(),
+            streams,
+            "no stream for an in-place change"
+        );
+        assert!(rig.errors().is_empty());
+    }
+
+    #[test]
+    fn a_burst_of_decay_commands_writes_only_the_last_value() {
+        let mut rig = connected();
+        for i in 0..=190u16 {
+            rig.send(Command::SetBalancedDecayMs(100 + 10 * i));
+        }
+        rig.run(1.0);
+        assert_eq!(writes_to(&rig, 0x1F0E), [vec![0xC8]]);
+        assert_eq!(rig.saved().balanced_decay_ms, Some(2000));
+        assert!(rig.snapshot().in_sync());
+    }
+
+    #[test]
+    fn the_decay_time_is_remembered_across_other_modes() {
+        let mut rig = connected();
+        rig.send(Command::SetBalancedDecayMs(300));
+        rig.run(1.0);
+
+        // another mode puts the routine's own time back and the decay time is not compared
+        rig.send(Command::SetMode(Mode::Quiet));
+        rig.run(3.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.snapshot().device.unwrap().balanced_decay_ms, None);
+        assert_eq!(
+            rig.dev.byte(0x1F0E),
+            FakeDevice::in_mode(Mode::Quiet).byte(0x1F0E)
+        );
+        assert_eq!(rig.saved().balanced_decay_ms, Some(300));
+
+        // balanced mode again gets the chosen time
+        rig.send(Command::SetMode(Mode::Balanced));
+        rig.run(3.0);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.dev.byte(0x1F0E), 0x1E);
+        assert_eq!(rig.snapshot().device.unwrap().balanced_decay_ms, Some(300));
+    }
+
+    #[test]
+    fn a_decay_time_changed_by_something_else_is_put_right() {
+        let mut rig = connected();
+        rig.send(Command::SetBalancedDecayMs(300));
+        rig.run(1.0);
+        rig.dev.poke(0x1F0E, &[0x20]);
+        rig.run(20.0);
+        assert_eq!(rig.dev.byte(0x1F0E), 0x1E);
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(rig.warnings().len(), 1, "{:?}", rig.warnings());
+    }
+
+    #[test]
+    fn the_surround_and_its_level_are_written_and_saved() {
+        let mut rig = connected();
+        let streams = rig.dev.streams_opened();
+        rig.send(Command::SetSurround(true));
+        rig.send(Command::SetSurroundLevel(8));
+        rig.run(1.0);
+        assert_eq!(rig.dev.byte(0x1152), 0x08);
+        assert_eq!(rig.dev.byte(0x10D3), 0x08);
+        assert_eq!(rig.saved().surround, Some(true));
+        assert_eq!(rig.saved().surround_level, Some(8));
+        let device = rig.snapshot().device.unwrap();
+        assert!(device.surround);
+        assert_eq!(device.surround_level, Some(8));
+        assert!(rig.snapshot().in_sync());
+        assert_eq!(
+            rig.dev.streams_opened(),
+            streams,
+            "no stream for the surround"
+        );
+        // the choice was not taken for a switch on the dongle and undone, now or later
+        rig.run(30.0);
+        assert_eq!(rig.snapshot().settings.surround, Some(true));
+        assert_eq!(rig.dev.byte(0x1152), 0x08);
+        assert!(rig.warnings().is_empty());
+
+        rig.send(Command::SetSurround(false));
+        rig.run(1.0);
+        assert_eq!(rig.dev.byte(0x1152), 0x00);
+        assert_eq!(rig.saved().surround, Some(false));
+        assert!(rig.snapshot().in_sync());
+    }
+
+    #[test]
+    fn a_surround_switch_on_the_dongle_itself_is_kept_and_saved() {
+        let mut rig = connected();
+        rig.send(Command::SetSurround(false));
+        rig.run(1.0);
+        let writes = rig.dev.writes().len();
+
+        // the dongle's own control
+        rig.dev.poke(0x1152, &[0x08]);
+        rig.run(20.0);
+        assert_eq!(rig.snapshot().settings.surround, Some(true));
+        assert_eq!(rig.saved().surround, Some(true));
+        assert_eq!(rig.dev.byte(0x1152), 0x08);
+        assert_eq!(rig.dev.writes().len(), writes, "not corrected");
+        assert!(rig.warnings().is_empty());
+        assert!(rig.errors().is_empty());
+        assert!(
+            rig.log()
+                .iter()
+                .any(|l| l.contains("virtual surround was switched on on the dongle"))
+        );
+        assert!(rig.snapshot().in_sync());
+
+        rig.dev.poke(0x1152, &[0x00]);
+        rig.run(20.0);
+        assert_eq!(rig.snapshot().settings.surround, Some(false));
+        assert_eq!(rig.saved().surround, Some(false));
+        assert_eq!(rig.dev.writes().len(), writes);
+    }
+
+    #[test]
+    fn a_surround_that_is_not_chosen_is_left_as_the_dongle_has_it() {
+        let mut rig = connected();
+        assert_eq!(rig.snapshot().settings.surround, None);
+        rig.dev.poke(0x1152, &[0x08]);
+        rig.run(20.0);
+        assert_eq!(rig.snapshot().settings.surround, None);
+        assert!(writes_to(&rig, 0x1152).is_empty());
+        assert!(rig.snapshot().in_sync());
+        assert!(rig.snapshot().device.unwrap().surround);
+        assert!(rig.errors().is_empty() && rig.warnings().is_empty());
+    }
+
+    #[test]
+    fn a_restarted_dongle_gets_the_chosen_surround_again_and_it_is_no_switch_on_the_dongle() {
+        let mut rig = connected();
+        rig.send(Command::SetSurround(true));
+        rig.run(1.0);
+        assert_eq!(rig.dev.byte(0x1152), 0x08);
+
+        rig.dev.replug();
+        assert_eq!(rig.dev.byte(0x1152), 0x00);
+        run_until(&mut rig, "the restart to be found", 20.0, |rig| {
+            rig.phase() == Phase::Waiting
+        });
+        assert_eq!(rig.snapshot().settings.surround, Some(true));
+        rig.run(SETTLE.as_secs_f64() + 1.0);
+        assert_eq!(rig.dev.byte(0x1152), 0x08);
+        assert_eq!(rig.snapshot().settings.surround, Some(true));
+        assert!(rig.snapshot().in_sync());
+        assert!(rig.warnings().is_empty());
+    }
+
     #[test]
     fn commands_that_cancel_out_write_nothing() {
         let mut rig = connected();
@@ -1387,6 +1620,12 @@ mod tests {
             Command::SetMinHissMs(15),
             Command::SetMinHissMs(10),
             Command::SetMinHissMs(2010),
+            Command::SetBalancedDecayMs(0),
+            Command::SetBalancedDecayMs(90),
+            Command::SetBalancedDecayMs(805),
+            Command::SetBalancedDecayMs(2010),
+            Command::SetSurroundLevel(0),
+            Command::SetSurroundLevel(11),
         ];
         for command in bad {
             rig.send(command);
@@ -1873,6 +2112,9 @@ mod tests {
         assert_eq!(device.mic_boost, Some(6));
         assert!(device.noise_reduction && !device.agc && !device.sidetone);
         assert_eq!(device.sidetone_level, 947);
+        assert_eq!(device.balanced_decay_ms, Some(800));
+        assert!(!device.surround);
+        assert_eq!(device.surround_level, Some(4));
         assert!(
             rig.log()
                 .iter()

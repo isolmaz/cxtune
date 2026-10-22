@@ -3,7 +3,7 @@
 //!
 //! - **One owner.** [`Engine::start`] takes the machine-wide device lock ([`NamedLock::device`])
 //!   and holds it until the engine stops. The worker thread is the only code that opens the HID
-//!   device or the silent playback stream.
+//!   device, the silent playback stream, the microphone and the clips of the Test tab.
 //! - **Commands in, events out.** [`Handle::send`] never blocks and can be used from any
 //!   thread. The sink given to [`Engine::start`] receives [`Event`]s on the worker thread; it
 //!   must return quickly (a user interface forwards them to its own thread).
@@ -34,19 +34,54 @@ use std::time::{Duration, Instant, SystemTime};
 
 use hidapi::HidApi;
 use supervisor::Supervisor;
-pub use types::{Command, ErrorKind, Event, Failure, Phase, Readback, Snapshot};
+pub use types::{
+    Command, ErrorKind, Event, Failure, Phase, Readback, Snapshot, TestEvent, TestKind,
+    TestOutcome, TestProgress, TestRequest, TestState, TestStep,
+};
 use watch::CallWatch;
 
 use crate::lock::NamedLock;
 use crate::log::{self, Log};
 use crate::mode::Stream;
 use crate::protocol::Transport;
-use crate::{Error, Result, audio, config, hid};
+use crate::{Error, Result, audio, capture, config, hid};
+
+/// The open microphone stream of the Test tab.
+pub trait Microphone {
+    /// What was collected since the last call; an error if the stream stopped by itself.
+    fn poll(&mut self) -> Result<capture::Poll>;
+    /// Starts or ends keeping the samples.
+    fn record(&mut self, on: bool);
+}
+
+impl Microphone for capture::Capture {
+    fn poll(&mut self) -> Result<capture::Poll> {
+        capture::Capture::poll(self)
+    }
+
+    fn record(&mut self, on: bool) {
+        capture::Capture::record(self, on);
+    }
+}
+
+/// A clip that is playing on the dongle's output.
+pub trait Clip {
+    /// True once the last sample has been played; an error if the stream stopped by itself.
+    fn is_finished(&mut self) -> Result<bool>;
+}
+
+impl Clip for audio::Playback {
+    fn is_finished(&mut self) -> Result<bool> {
+        audio::Playback::is_finished(self)
+    }
+}
 
 /// Everything the engine needs from the world around the dongle.
 pub trait Backend {
     type Dev: Transport;
     type Stream: Stream;
+    type Capture: Microphone;
+    type Playback: Clip;
 
     /// Whether the dongle is connected. Enumeration only: no device I/O.
     fn present(&mut self) -> Result<bool>;
@@ -54,6 +89,10 @@ pub trait Backend {
     fn open(&mut self) -> Result<Self::Dev>;
     /// Starts a playback stream of digital silence on the dongle's output.
     fn open_stream(&mut self) -> Result<Self::Stream>;
+    /// Opens the dongle's microphone.
+    fn open_capture(&mut self) -> Result<Self::Capture>;
+    /// Plays a mono clip (see [`audio::PLAY_RATE`]) on the dongle's output.
+    fn play(&mut self, samples: Vec<i16>) -> Result<Self::Playback>;
 }
 
 /// The real dongle: HID for the memory protocol, WASAPI for the silent stream.
@@ -70,6 +109,8 @@ impl HidBackend {
 impl Backend for HidBackend {
     type Dev = hid::HidTransport;
     type Stream = audio::SilentStream;
+    type Capture = capture::Capture;
+    type Playback = audio::Playback;
 
     fn present(&mut self) -> Result<bool> {
         hid::refresh(&mut self.api)?;
@@ -83,6 +124,14 @@ impl Backend for HidBackend {
 
     fn open_stream(&mut self) -> Result<audio::SilentStream> {
         audio::open_silence()
+    }
+
+    fn open_capture(&mut self) -> Result<capture::Capture> {
+        capture::open()
+    }
+
+    fn play(&mut self, samples: Vec<i16>) -> Result<audio::Playback> {
+        audio::play(samples)
     }
 }
 
@@ -600,7 +649,7 @@ mod tests {
                         seen.push(state);
                     }
                     Ok(Event::Error(failure)) => self.errors.borrow_mut().push(failure),
-                    Ok(Event::Warning(_)) => {}
+                    Ok(Event::Warning(_) | Event::Test(_)) => {}
                     Err(_) => panic!("timed out waiting for {what}; states seen: {seen:#?}"),
                 }
             }
@@ -615,6 +664,20 @@ mod tests {
                     Ok(Event::Error(failure)) if failure.kind == kind => return failure,
                     Ok(_) => {}
                     Err(_) => panic!("timed out waiting for an error of kind {kind}"),
+                }
+            }
+        }
+
+        /// The first event of the Test tab that `matches`, within a generous real-time limit.
+        fn wait_for_test(&self, what: &str, matches: impl Fn(&TestEvent) -> bool) -> TestEvent {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                match self.events.recv_timeout(left) {
+                    Ok(Event::Test(event)) if matches(&event) => return event,
+                    Ok(Event::Error(failure)) => self.errors.borrow_mut().push(failure),
+                    Ok(_) => {}
+                    Err(_) => panic!("timed out waiting for {what}"),
                 }
             }
         }
@@ -698,6 +761,63 @@ mod tests {
             (saved.mode, saved.mic_boost, saved.mic_nr),
             (Some(Mode::Quiet), Some(7), Some(false))
         );
+    }
+
+    #[test]
+    fn the_test_tab_is_driven_through_a_handle_and_reports_to_the_sink() {
+        let mut running = Running::start("test-tab", "mode = \"quiet\"\n", true);
+        running.in_sync();
+        let handle = running.handle();
+
+        handle.send(Command::Test(TestRequest::Meter(true)));
+        let state = running.wait_for("the meter", |s| s.test.meter);
+        assert_eq!(state.test.running, None);
+        for _ in 0..3 {
+            running.wait_for_test("a level", |e| matches!(e, TestEvent::Level(_)));
+        }
+        assert_ne!(running.dev.byte(0x13DC), 0, "the microphone is open");
+
+        handle.send(Command::Test(TestRequest::Meter(false)));
+        running.wait_for("the meter off", |s| !s.test.meter);
+        assert_eq!(running.dev.byte(0x13DC), 0, "the microphone is closed");
+
+        handle.send(Command::Test(TestRequest::NoiseFloor { seconds: 0 }));
+        let TestEvent::Failed { kind, failure } =
+            running.wait_for_test("a refusal", |e| matches!(e, TestEvent::Failed { .. }))
+        else {
+            unreachable!()
+        };
+        assert_eq!(kind, Some(TestKind::NoiseFloor));
+        assert_eq!(failure.kind, ErrorKind::Invalid);
+
+        handle.send(Command::Test(TestRequest::NoiseListen));
+        let done = running.wait_for_test("the listening test", |e| matches!(e, TestEvent::Done(_)));
+        assert!(matches!(
+            done,
+            TestEvent::Done(TestOutcome::NoiseListen { .. })
+        ));
+
+        running.stop();
+        let log = std::fs::read_to_string(running.dir.join("cxtune.log")).unwrap();
+        assert!(
+            log.contains("the microphone was opened for a test"),
+            "{log}"
+        );
+        assert!(log.contains("the microphone was closed"), "{log}");
+        assert_eq!(running.dev.byte(0x13DC), 0);
+    }
+
+    #[test]
+    fn stopping_the_engine_closes_the_microphone_of_the_test_tab() {
+        let mut running = Running::start("test-tab-stop", "mode = \"quiet\"\n", true);
+        running.in_sync();
+        running
+            .handle()
+            .send(Command::Test(TestRequest::Meter(true)));
+        running.wait_for_test("a level", |e| matches!(e, TestEvent::Level(_)));
+        assert_ne!(running.dev.byte(0x13DC), 0);
+        running.stop();
+        assert_eq!(running.dev.byte(0x13DC), 0);
     }
 
     #[test]
@@ -1052,6 +1172,7 @@ mod tests {
             save_error: None,
             device: None,
             error: None,
+            test: TestState::default(),
         }));
         (Mutex::new(hub), rx)
     }

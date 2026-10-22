@@ -7,7 +7,8 @@ use cxtune::lock::NamedLock;
 use cxtune::mode::{self, Mode, State};
 use cxtune::patches::{
     APPLIED_AGC, APPLIED_NR, DSP_AGC, DSP_NR, DSP_SIDETONE, MIXER_SIDETONE, ROM_ID, SIDETONE_MAX,
-    SIDETONE_MIN,
+    SIDETONE_MIN, SURROUND_BIT, SURROUND_LEVEL_MAX, SURROUND_LEVEL_MIN, sidetone_db,
+    sidetone_register,
 };
 use cxtune::{Error, Result, audio, dsp, hex, hid, settings};
 
@@ -16,15 +17,20 @@ usage: cxtune <command>
 
   status                  read and show the device state (read-only)
   apply <mode>            apply an output mode and remember it:
-                          stock | quiet | balanced | min-hiss
-  tune <ms>               set the min-hiss settle time (20-2000 in steps of 10) and remember it
+                          default | click-free | balanced | lowest-noise
+  soft-start <ms>         set the lowest-noise soft-start time (20-2000 in steps of 10) and
+                          remember it
+  decay <ms>              set the balanced stop decay time (100-2000 in steps of 10) and
+                          remember it
+  surround <on|off>       virtual surround (experimental, device default off) and remember it
+  surround-level <1-10>   virtual surround level (experimental, device default 4) and remember it
   mic-boost <0-7>         set analog mic boost ($1017 = 0x38 + n) and remember it
   mic-nr <on|off>         microphone noise reduction (device default on) and remember it
   mic-agc <on|off>        microphone AGC (experimental, device default off) and remember it
   sidetone <on|off>       microphone in the headphones (experimental, device default off)
                           and remember it
-  sidetone-level <1-4096> sidetone gain register (experimental, unit not measured, device
-                          default 947) and remember it; start low, sidetone can be loud
+  sidetone-level <dB>     sidetone gain, 0.0-16.0 dB (experimental, device default 3.7) and
+                          remember it; every level amplifies, only sidetone off is silent
   dump <out-dir>          read the ROM and EEPROM (read-only) into <out-dir>/rom.bin and
                           eeprom.bin (never overwrites) and compare their SHA-256 with the reference unit's
   watch                   keep the remembered settings applied across replugs; holds the
@@ -38,7 +44,14 @@ fn main() -> ExitCode {
     let result = match args.as_slice() {
         ["status"] => locked(status),
         ["apply", name] => locked(|| apply(name)),
-        ["tune", ms] => locked(|| tune(ms)),
+        ["soft-start" | "tune", ms] => locked(|| soft_start(ms)),
+        ["decay", ms] => locked(|| decay(ms)),
+        ["surround", v] => locked(|| {
+            switch("virtual surround", v, dsp::set_surround, |cfg, on| {
+                cfg.surround = Some(on)
+            })
+        }),
+        ["surround-level", v] => locked(|| surround_level(v)),
         ["mic-boost", n] => locked(|| mic_boost(n)),
         ["mic-nr", v] => locked(|| {
             switch(
@@ -123,9 +136,12 @@ fn print_state(s: &State) {
         rom_note(&s.rom)
     );
     let mode = mode_text(s);
-    match s.settle_ms() {
-        Some(ms) if s.mode() == Some(Mode::MinHiss) => {
-            println!("mode:                 {mode} (settle {ms} ms)")
+    match (s.mode(), s.settle_ms(), s.decay_ms()) {
+        (Some(Mode::MinHiss), Some(ms), _) => {
+            println!("mode:                 {mode} (soft-start {ms} ms)")
+        }
+        (Some(Mode::Balanced), _, Some(ms)) => {
+            println!("mode:                 {mode} (decay {ms} ms)")
         }
         _ => println!("mode:                 {mode}"),
     }
@@ -194,6 +210,16 @@ fn print_state(s: &State) {
         level_text(s.sidetone_level)
     );
     println!(
+        "$1152 surround:       {:#04x}  virtual surround {}",
+        s.surround,
+        on_off(s.surround & SURROUND_BIT)
+    );
+    println!(
+        "$10D3 surround level: {:#04x}  {}",
+        s.surround_level,
+        surround_level_text(s)
+    );
+    println!(
         "$00A4 applied:        {:#04x}  noise reduction {}, AGC {} (the ROM evaluates $1151 at a \
          capture stream start or NEWC)",
         s.appliers,
@@ -239,9 +265,18 @@ fn dsp_text(bits: u8) -> String {
     }
 }
 
+fn surround_level_text(s: &State) -> String {
+    match s.surround_level() {
+        Some(level) => format!("level {level} of {SURROUND_LEVEL_MAX}"),
+        None => format!(
+            "outside {SURROUND_LEVEL_MIN}..={SURROUND_LEVEL_MAX} or other bits set, cxtune will not change it"
+        ),
+    }
+}
+
 fn level_text(level: u16) -> String {
     if (SIDETONE_MIN..=SIDETONE_MAX).contains(&level) {
-        format!("{level} of {SIDETONE_MAX}")
+        format!("{:+.2} dB", sidetone_db(level))
     } else {
         format!("outside {SIDETONE_MIN}..={SIDETONE_MAX}, cxtune will not change it")
     }
@@ -250,27 +285,59 @@ fn level_text(level: u16) -> String {
 fn apply(name: &str) -> Result<()> {
     let target = Mode::parse(name).ok_or_else(|| {
         Error::Config(format!(
-            "unknown mode '{name}' (stock | quiet | balanced | min-hiss)"
+            "unknown mode '{name}' (default | click-free | balanced | lowest-noise)"
         ))
     })?;
     let mut cfg = config::load()?;
-    let n = settings::set_mode(&mut open()?, target, cfg.min_hiss_ms, audio::open_silence)?;
+    let n = settings::set_mode(&mut open()?, target, &cfg, audio::open_silence)?;
     println!("mode '{}' applied ({n} writes)", target.name());
     cfg.mode = Some(target);
     config::save(&cfg)
 }
 
-fn tune(arg: &str) -> Result<()> {
-    let ms: u16 = arg
-        .parse()
-        .map_err(|_| Error::Config(format!("settle time must be a number of ms, got '{arg}'")))?;
+fn soft_start(arg: &str) -> Result<()> {
+    let ms: u16 = arg.parse().map_err(|_| {
+        Error::Config(format!(
+            "soft-start time must be a number of ms, got '{arg}'"
+        ))
+    })?;
     let mut cfg = config::load()?;
     let written = mode::tune_min_hiss(&mut open()?, ms)?;
     println!(
-        "min-hiss settle time {ms} ms{}",
-        if written { " set" } else { " already set" }
+        "lowest-noise soft-start time {ms} ms ({})",
+        written_text(written)
     );
     cfg.min_hiss_ms = Some(ms);
+    config::save(&cfg)
+}
+
+fn decay(arg: &str) -> Result<()> {
+    let ms: u16 = arg
+        .parse()
+        .map_err(|_| Error::Config(format!("decay time must be a number of ms, got '{arg}'")))?;
+    let mut cfg = config::load()?;
+    let written = mode::tune_decay(&mut open()?, ms)?;
+    println!("balanced decay time {ms} ms ({})", written_text(written));
+    cfg.balanced_decay_ms = Some(ms);
+    config::save(&cfg)
+}
+
+fn surround_level(arg: &str) -> Result<()> {
+    let level: u8 = arg.parse().map_err(|_| {
+        Error::Config(format!(
+            "surround level must be {SURROUND_LEVEL_MIN}-{SURROUND_LEVEL_MAX}, got '{arg}'"
+        ))
+    })?;
+    let mut cfg = config::load()?;
+    let applied = dsp::set_surround_level(&mut open()?, level)?;
+    println!(
+        "surround level {level} ({})",
+        written_text(applied.writes > 0)
+    );
+    if let Some(event) = applied.stream_event {
+        eprintln!("warning: {event}");
+    }
+    cfg.surround_level = Some(level);
     config::save(&cfg)
 }
 
@@ -338,14 +405,19 @@ fn sidetone(arg: &str) -> Result<()> {
 }
 
 fn sidetone_level(arg: &str) -> Result<()> {
-    let level: u16 = arg.parse().map_err(|_| {
+    let db: f32 = arg.parse().map_err(|_| {
         Error::Config(format!(
-            "sidetone level must be {SIDETONE_MIN}-{SIDETONE_MAX}, got '{arg}'"
+            "sidetone gain must be a number of dB from 0.0 to 16.0, got '{arg}'"
         ))
     })?;
+    let level = sidetone_register(db)?;
     let mut cfg = config::load()?;
     let written = dsp::set_sidetone_level(&mut open()?, level)? > 0;
-    println!("sidetone level {level} ({})", written_text(written));
+    println!(
+        "sidetone gain {:+.2} dB, register {level} ({})",
+        sidetone_db(level),
+        written_text(written)
+    );
     cfg.sidetone_level = Some(level);
     config::save(&cfg)
 }
@@ -364,6 +436,7 @@ fn report(event: Event) {
         Event::State(state) => println!("{}", describe(&state)),
         Event::Warning(message) => eprintln!("warning: {message}"),
         Event::Error(failure) => eprintln!("error ({}): {}", failure.kind, failure.message),
+        Event::Test(_) => {}
     }
 }
 
@@ -385,7 +458,7 @@ fn describe(state: &Snapshot) -> String {
 
 #[cfg(test)]
 mod tests {
-    use cxtune::engine::Readback;
+    use cxtune::engine::{Readback, TestState};
     use cxtune::patches::{BALANCED_WINDOW, SIDETONE_DEFAULT};
 
     use super::*;
@@ -404,6 +477,8 @@ mod tests {
             refs: 0,
             dsp_enable: 0x04,
             sidetone_level: SIDETONE_DEFAULT,
+            surround: 0,
+            surround_level: 4,
             appliers: 0,
             mixer: 0,
             mic_stream: 0,
@@ -441,6 +516,7 @@ mod tests {
             save_error: None,
             device,
             error: None,
+            test: TestState::default(),
         };
         assert_eq!(
             describe(&state(Phase::Disconnected, None, None)),
@@ -495,7 +571,8 @@ mod tests {
 
     #[test]
     fn the_sidetone_level_is_judged_against_the_accepted_range() {
-        assert_eq!(level_text(947), "947 of 4096");
+        assert_eq!(level_text(947), "+3.70 dB");
+        assert_eq!(level_text(4096), "+16.00 dB");
         for bad in [0, 4097, 0x80B3] {
             assert!(level_text(bad).contains("outside"), "{bad}");
         }

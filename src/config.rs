@@ -1,5 +1,7 @@
-//! Settings in `%APPDATA%\cxtune\config.toml`: the selected mode, mic boost, min-hiss settle
-//! time and the microphone DSP settings. The file uses `key = value` lines (a TOML subset).
+//! Settings in `%APPDATA%\cxtune\config.toml`: the selected mode with the times of its routine
+//! (a custom setup is a mode with times other than the routine's defaults), mic boost, the
+//! microphone DSP settings and the virtual surround. The file uses `key = value` lines (a TOML
+//! subset).
 //! It is replaced as a whole by renaming a finished temporary file over it, so a reader or a
 //! crash never sees a half-written file.
 
@@ -15,8 +17,12 @@ pub struct Config {
     pub mode: Option<Mode>,
     /// Mic boost step 0..=7; `None` leaves $1017 untouched.
     pub mic_boost: Option<u8>,
-    /// Min-hiss settle time in ms; `None` keeps the routine's default.
+    /// Lowest-noise soft-start time in ms (key `soft_start_ms`); `None` keeps the routine's
+    /// default. Applies while the mode is lowest noise.
     pub min_hiss_ms: Option<u16>,
+    /// Balanced stop decay time in ms (key `decay_ms`); `None` keeps the routine's default.
+    /// Applies while the mode is balanced.
+    pub balanced_decay_ms: Option<u16>,
     /// Microphone noise reduction; `None` leaves it as the device has it.
     pub mic_nr: Option<bool>,
     /// Microphone AGC; `None` leaves it as the device has it.
@@ -25,6 +31,10 @@ pub struct Config {
     pub sidetone: Option<bool>,
     /// Sidetone gain register value; `None` leaves the device's.
     pub sidetone_level: Option<u16>,
+    /// Virtual surround on or off; `None` leaves it as the device has it.
+    pub surround: Option<bool>,
+    /// Virtual surround level 1-10; `None` leaves the device's.
+    pub surround_level: Option<u8>,
 }
 
 pub fn path() -> Result<PathBuf> {
@@ -89,10 +99,15 @@ fn parse(text: &str) -> Result<Config> {
                 }
                 cfg.mic_boost = Some(n);
             }
-            "min_hiss_ms" => {
+            "soft_start_ms" | "min_hiss_ms" => {
                 let ms: u16 = value.parse().map_err(|_| bad())?;
                 mode::settle_units(ms).map_err(|_| bad())?;
                 cfg.min_hiss_ms = Some(ms);
+            }
+            "decay_ms" => {
+                let ms: u16 = value.parse().map_err(|_| bad())?;
+                mode::decay_units(ms).map_err(|_| bad())?;
+                cfg.balanced_decay_ms = Some(ms);
             }
             "mic_nr" => cfg.mic_nr = Some(parse_bool(value).ok_or_else(bad)?),
             "mic_agc" => cfg.mic_agc = Some(parse_bool(value).ok_or_else(bad)?),
@@ -101,6 +116,12 @@ fn parse(text: &str) -> Result<Config> {
                 let level: u16 = value.parse().map_err(|_| bad())?;
                 patches::sidetone_level(level).map_err(|_| bad())?;
                 cfg.sidetone_level = Some(level);
+            }
+            "surround" => cfg.surround = Some(parse_bool(value).ok_or_else(bad)?),
+            "surround_level" => {
+                let level: u8 = value.parse().map_err(|_| bad())?;
+                patches::surround_level(level).map_err(|_| bad())?;
+                cfg.surround_level = Some(level);
             }
             _ => return Err(bad()),
         }
@@ -125,12 +146,16 @@ fn render(cfg: &Config) -> String {
         s += &format!("mic_boost = {n}\n");
     }
     if let Some(ms) = cfg.min_hiss_ms {
-        s += &format!("min_hiss_ms = {ms}\n");
+        s += &format!("soft_start_ms = {ms}\n");
+    }
+    if let Some(ms) = cfg.balanced_decay_ms {
+        s += &format!("decay_ms = {ms}\n");
     }
     for (key, value) in [
         ("mic_nr", cfg.mic_nr),
         ("mic_agc", cfg.mic_agc),
         ("sidetone", cfg.sidetone),
+        ("surround", cfg.surround),
     ] {
         if let Some(on) = value {
             s += &format!("{key} = {on}\n");
@@ -138,6 +163,9 @@ fn render(cfg: &Config) -> String {
     }
     if let Some(level) = cfg.sidetone_level {
         s += &format!("sidetone_level = {level}\n");
+    }
+    if let Some(level) = cfg.surround_level {
+        s += &format!("surround_level = {level}\n");
     }
     s
 }
@@ -154,10 +182,13 @@ mod tests {
                 mode: Some(mode),
                 mic_boost: Some(6),
                 min_hiss_ms: Some(300),
+                balanced_decay_ms: Some(500),
                 mic_nr: Some(false),
                 mic_agc: Some(true),
                 sidetone: Some(true),
                 sidetone_level: Some(947),
+                surround: Some(true),
+                surround_level: Some(7),
             };
             assert_eq!(parse(&render(&cfg)).unwrap(), cfg);
         }
@@ -168,15 +199,96 @@ mod tests {
     }
 
     #[test]
+    fn modes_are_written_by_their_names_and_read_by_those_and_the_older_ones() {
+        for (mode, name) in [
+            (Mode::Stock, "default"),
+            (Mode::Quiet, "click-free"),
+            (Mode::Balanced, "balanced"),
+            (Mode::MinHiss, "lowest-noise"),
+        ] {
+            let cfg = Config {
+                mode: Some(mode),
+                ..Config::default()
+            };
+            assert_eq!(render(&cfg), format!("mode = \"{name}\"\n"));
+            assert_eq!(parse(&render(&cfg)).unwrap(), cfg);
+        }
+        for (old, mode) in [
+            ("stock", Mode::Stock),
+            ("quiet", Mode::Quiet),
+            ("min-hiss", Mode::MinHiss),
+        ] {
+            assert_eq!(
+                parse(&format!("mode = \"{old}\"\n")).unwrap().mode,
+                Some(mode),
+                "{old}"
+            );
+        }
+    }
+
+    #[test]
     fn rejects_out_of_range_and_unknown_values() {
         assert!(parse("mic_boost = 8").is_err());
         assert!(parse("mode = \"loud\"").is_err());
         assert!(parse("mode = \"clamp\"").is_err());
-        assert!(parse("min_hiss_ms = 10").is_err());
-        assert!(parse("min_hiss_ms = 2010").is_err());
-        assert!(parse("min_hiss_ms = 605").is_err());
-        assert!(parse("min_hiss_ms = 20").is_ok());
-        assert!(parse("min_hiss_ms = 2000").is_ok());
+        assert!(parse("no_such_key = 1").is_err());
+        for key in ["soft_start_ms", "min_hiss_ms"] {
+            assert!(parse(&format!("{key} = 10")).is_err(), "{key}");
+            assert!(parse(&format!("{key} = 2010")).is_err(), "{key}");
+            assert!(parse(&format!("{key} = 605")).is_err(), "{key}");
+            assert!(parse(&format!("{key} = 20")).is_ok(), "{key}");
+            assert!(parse(&format!("{key} = 2000")).is_ok(), "{key}");
+        }
+        assert_eq!(
+            parse("min_hiss_ms = 300").unwrap(),
+            parse("soft_start_ms = 300").unwrap()
+        );
+        assert_eq!(
+            render(&parse("min_hiss_ms = 300").unwrap()),
+            "soft_start_ms = 300\n"
+        );
+    }
+
+    #[test]
+    fn the_decay_time_is_limited_to_the_proven_range_in_steps_of_ten() {
+        for bad in ["0", "90", "95", "105", "2010", "2100", "-100", "long", ""] {
+            assert!(parse(&format!("decay_ms = {bad}")).is_err(), "{bad}");
+        }
+        for ok in [100, 110, 800, 1990, 2000] {
+            assert_eq!(
+                parse(&format!("decay_ms = {ok}"))
+                    .unwrap()
+                    .balanced_decay_ms,
+                Some(ok)
+            );
+        }
+        assert_eq!(
+            render(&Config {
+                balanced_decay_ms: Some(800),
+                ..Config::default()
+            }),
+            "decay_ms = 800\n"
+        );
+    }
+
+    #[test]
+    fn the_surround_accepts_only_booleans_and_levels_of_one_to_ten() {
+        assert_eq!(parse("surround = true").unwrap().surround, Some(true));
+        assert_eq!(parse("surround = false").unwrap().surround, Some(false));
+        for bad in ["on", "1", "\"maybe\"", "True", ""] {
+            assert!(parse(&format!("surround = {bad}")).is_err(), "{bad}");
+        }
+        for ok in 1..=10u8 {
+            assert_eq!(
+                parse(&format!("surround_level = {ok}"))
+                    .unwrap()
+                    .surround_level,
+                Some(ok)
+            );
+        }
+        for bad in ["0", "11", "255", "256", "-1", "loud", ""] {
+            assert!(parse(&format!("surround_level = {bad}")).is_err(), "{bad}");
+        }
     }
 
     #[test]
@@ -206,6 +318,11 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(render(&cfg), "mic_nr = false\n");
+        let cfg = Config {
+            surround_level: Some(6),
+            ..Config::default()
+        };
+        assert_eq!(render(&cfg), "surround_level = 6\n");
     }
 
     fn sample() -> Config {
@@ -213,10 +330,13 @@ mod tests {
             mode: Some(Mode::MinHiss),
             mic_boost: Some(6),
             min_hiss_ms: Some(300),
+            balanced_decay_ms: Some(400),
             mic_nr: Some(true),
             mic_agc: Some(false),
             sidetone: Some(false),
             sidetone_level: Some(500),
+            surround: Some(false),
+            surround_level: Some(5),
         }
     }
 

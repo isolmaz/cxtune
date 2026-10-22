@@ -1,6 +1,6 @@
 # cxtune
 
-**Silence the hiss of the HyperX Cloud II USB sound card. No firmware flashing, nothing permanent.**
+**Lower the noise floor of the HyperX Cloud II USB sound card. No firmware flashing, nothing permanent.**
 
 Unofficial, use at your own risk. Changes are RAM-only and a replug undoes them; see
 [Disclaimer](#disclaimer).
@@ -8,8 +8,8 @@ Unofficial, use at your own risk. Changes are RAM-only and a replug undoes them;
 ## The problem
 
 The USB sound card of the HyperX Cloud II keeps its headphone driver powered at all times. With
-sensitive in-ear monitors (IEMs) that is a constant hiss, even when nothing is playing. Turning the
-driver down trades the hiss for pops when audio starts and stops. The vendor mic boost is low
+sensitive in-ear monitors (IEMs) that is a constant noise floor, even when nothing is playing.
+Turning the driver down trades the noise for clicks when audio starts and stops. The vendor mic boost is low
 as well: speech sits around -57 dBFS in our test.
 
 ## What cxtune does
@@ -17,26 +17,38 @@ as well: speech sits around -57 dBFS in our test.
 cxtune is a small Windows 11 program (Rust) for the dongle's CX20773 codec: a command-line tool
 and a tray application.
 
-- **Output modes** with an explicit trade-off between idle hiss and the noise when a stream
-  starts (`stock`, `quiet`, `balanced`, `min-hiss`; details below).
+- **Output modes** with an explicit trade-off between idle noise and the click when a stream
+  starts (`default`, `click-free`, `balanced`, `lowest-noise`; details below), and two times to
+  tune: the lowest-noise soft-start time and the balanced stop decay time.
 - **Mic boost** in eight analog steps (boost 6 gave 12.6 dB speech-to-noise against 8 dB at the
   vendor setting in a single measurement; see `docs/firmware-notes.md`).
 - **Mic noise reduction** switch. Measured on the device: stationary noise 11.9 dB lower with it
   on. Speech quality was not measured.
-- **Mic AGC and sidetone** (experimental): the firmware applies them, but their effect is not
-  fully measured.
+- **Mic AGC, sidetone and virtual surround** (experimental): the firmware applies them, but their
+  effect is not fully measured.
 - **Automatic re-apply** (`cxtune watch`): the settings are applied again when the dongle is
   replugged or the computer wakes from sleep.
+- **Test helpers** in the engine (`docs/engine.md`): microphone level, noise floor, noise
+  reduction comparison, recording and playback, a click test and noise listening, for the
+  application's Test tab.
 - **Tray application** (English and Turkish): a window and a notification-area icon for all of
   the above and for the Windows volume of the dongle; see
   [The tray application](#the-tray-application).
 
 | Mode | Idle | Stream start | Cost |
 |---|---|---|---|
-| `stock` | Vendor behaviour: driver always on. Constant hiss. | No pops. | None. |
-| `quiet` | ROM default idle power-down. Some hiss. | Low pop. | None. |
-| `balanced` | Driver clamped, analog references off. | Follows the ROM power-up order. | The first 600 ms of audio after idle are muted; opening the microphone from full idle gives 1.26 s of silence and a click. |
-| `min-hiss` | Driver clamped. | Loud pop. | Audio is muted for the settle time (default 600 ms) plus 100 ms. |
+| `default` | Vendor behaviour: driver always on. Constant noise floor. | No clicks. | None. |
+| `click-free` | ROM default idle power-down. Some noise. | Low click. | None. |
+| `balanced` | Driver clamped, analog references off. | Follows the ROM power-up order. | The first 600 ms of audio after idle are muted; opening the microphone from full idle gives a stretch of digital silence and a click first. The driver stays open for the decay time (default 800 ms) after a stream or capture ends. |
+| `lowest-noise` | Driver clamped. | Loud click. | Audio is muted for the soft-start time (default 600 ms) plus 100 ms. |
+
+The former names `stock`, `quiet` and `min-hiss` are accepted by the command line and the
+settings file.
+
+Two times can be tuned. The lowest-noise soft-start time (20-2000 ms) and the balanced stop
+decay time (100-2000 ms) are single bytes of the routines, written in place. The 600 ms that
+balanced mode waits at a start is set by the ROM and cannot be tuned. Whether a tuned time is
+audible was not listened to.
 
 ## How it works
 
@@ -72,13 +84,18 @@ it.
 
 ```
 cxtune status                   read and show the device state and detected mode
-cxtune apply <mode>             apply stock | quiet | balanced | min-hiss and remember it
-cxtune tune <ms>                set the min-hiss settle time (20-2000 ms in steps of 10)
+cxtune apply <mode>             apply default | click-free | balanced | lowest-noise and
+                                remember it
+cxtune soft-start <ms>          set the lowest-noise soft-start time (20-2000 ms in steps of 10)
+cxtune decay <ms>               set the balanced stop decay time (100-2000 ms in steps of 10)
 cxtune mic-boost <0-7>          set mic boost (vendor value 4; 6 had the best SNR in our measurement)
 cxtune mic-nr <on|off>          set microphone noise reduction
 cxtune mic-agc <on|off>         set microphone AGC (experimental)
 cxtune sidetone <on|off>        set sidetone (experimental)
-cxtune sidetone-level <1-4096>  set the sidetone gain register (experimental; start low)
+cxtune sidetone-level <dB>      set the sidetone gain, 0.0-16.0 dB (experimental; every level
+                                amplifies, only sidetone off is silent)
+cxtune surround <on|off>        set the virtual surround (experimental)
+cxtune surround-level <1-10>    set the virtual surround level (experimental)
 cxtune dump <out-dir>           read the ROM and EEPROM (read-only) into rom.bin and eeprom.bin
                                 and compare their SHA-256 with the reference unit's
 cxtune watch                    keep the remembered settings applied across replugs and
@@ -143,13 +160,16 @@ The file is written to a temporary file and renamed over the old one. A file wit
 keys is rejected with an error that names the file, before anything is written to the device.
 
 ```toml
-mode = "balanced"
+mode = "balanced"      # default | click-free | balanced | lowest-noise
 mic_boost = 6
-min_hiss_ms = 600
+soft_start_ms = 600    # lowest-noise soft-start time (the former key min_hiss_ms is read too)
+decay_ms = 800         # balanced stop decay time
 mic_nr = true
 mic_agc = false
 sidetone = false
-sidetone_level = 947
+sidetone_level = 947   # register in 1/256 dB: +3.7 dB
+surround = false
+surround_level = 4
 ```
 
 ### Safety design
@@ -171,6 +191,9 @@ sidetone_level = 947
   last.
 - Routine changes are made while a playback stream of digital silence is open on the dongle,
   so the headphone driver does not switch at the moment the hook is off.
+- The only sound cxtune plays is digital silence (for the mode changes), a 1 kHz tone at
+  -40 dBFS (the click test) and, on request, the user's own recording scaled to at most
+  -12 dBFS peak.
 - Only one cxtune process controls the dongle at a time (machine-wide mutex
   `Global\cxtune-device`), because the read protocol has no request tag. The lock does not keep
   other programs that read codec memory over HID away.
@@ -179,14 +202,23 @@ sidetone_level = 947
 
 - When another program has an audio session on the dongle's output, the silent stream is a
   shared-mode stream, and Windows sometimes keeps the output active after it closes. Until it
-  releases, the codec still sees playback and the idle hiss reduction has not started.
+  releases, the codec still sees playback and the idle noise reduction has not started.
 - Patch RAM that does not match a known mode (for example from another tool) is refused;
   replugging the dongle restores the vendor patch.
-- Mic AGC and sidetone are experimental; their effect on speech and loudness was not measured.
-  Sidetone can be loud in IEMs.
+- Mic AGC, sidetone and virtual surround are experimental; their effect on speech and loudness
+  was not measured. The surround setting was checked on the device only at register level (the
+  codec reports it applied while a stream plays); what it sounds like was not listened to.
+  The sidetone gain register counts in 1/256 dB, from 0 to +16 dB, with +3.7 dB (947) as the
+  vendor value: every setting amplifies and there is no quiet end, so a low value is not a
+  quiet one and only sidetone off is silent. The unit comes from the ROM and was not listened
+  to. Sidetone can be loud in IEMs.
 - Noise reduction was measured on stationary noise only.
-- A click in the headphones when a noise reduction or AGC change reloads the running stream
-  while audio plays has not been measured.
+- The Test tab of the engine was checked on the device for function only (streams, registers,
+  timing of the idle state). Its acoustic results (noise floor, noise reduction comparison, the
+  start-up of the microphone) were not taken in a quiet room and are left to an attended test.
+- A click in the headphones when a noise reduction, AGC or surround level change reloads the
+  running stream while audio plays has not been measured, and neither has the click test tone
+  or the playback of a recording been listened to.
 - Re-apply after a physical replug or a real sleep and resume has only been tested with
   simulated restarts and absences, not on hardware.
 - The mic boost comparison is a single take per value, with mains hum dominating the noise.
