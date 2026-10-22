@@ -104,8 +104,8 @@ export global Texts {
         if kind == Hint.reapply-retry {
             return @tr("ui" => "Press Re-apply to try again.");
         }
-        if kind == Hint.free-disk {
-            return @tr("ui" => "Make sure the disk is not full.");
+        if kind == Hint.check-file {
+            return @tr("ui" => "Check that the file is not locked or read-only.");
         }
         if kind == Hint.see-log {
             return @tr("ui" => "Something unusual happened. See the log.");
@@ -121,9 +121,9 @@ export global Texts {
             return @tr("ui" => "Some idle hiss. A low pop when audio starts; nothing is muted.");
         }
         if mode == 2 {
-            return @tr("ui" => "Cuts the idle hiss. The first 600 ms of audio after idle are muted; opening the microphone from full idle gives 1.26 s of silence and a click.");
+            return @tr("ui" => "Reduces the idle hiss. The first 600 ms of audio after idle are muted; opening the microphone from full idle gives 1.26 s of silence and a click.");
         }
-        return @tr("ui" => "Cuts the idle hiss. A loud pop when audio starts, and audio is muted for the start delay plus 100 ms.");
+        return @tr("ui" => "Reduces the idle hiss. A loud pop when audio starts, and audio is muted for the start delay plus 100 ms.");
     }
 
     public pure function hiss(kind: Hiss) -> string {

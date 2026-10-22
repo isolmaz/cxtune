@@ -44,9 +44,12 @@ impl Problem {
     }
 }
 
-/// The problem that stopped the engine from starting.
-pub fn start_problem(error: &Error) -> Problem {
+/// The problem that stopped the engine from starting. A refused device lock while a worker of
+/// this program is stuck in a call to the dongle (`worker_left_behind`) is that call, not
+/// another program: the dongle does not answer.
+pub fn start_problem(error: &Error, worker_left_behind: bool) -> Problem {
     match error {
+        Error::Busy(_) if worker_left_behind => Problem::Unresponsive,
         Error::Busy(_) => Problem::Busy,
         Error::Config(_) => Problem::BadSettingsFile,
         _ => Problem::StartFailed,
@@ -129,7 +132,7 @@ pub fn status(snapshot: Option<&Snapshot>, start: Option<Problem>, warned: bool)
     let save_failed = snapshot.save_error.is_some();
     let (title, hint) = match problem {
         Some(problem) => problem.lines(),
-        None if save_failed => (Title::SaveFailed, Hint::FreeDisk),
+        None if save_failed => (Title::SaveFailed, Hint::CheckFile),
         None if warned => (state, Hint::SeeLog),
         None if snapshot.settings_saved => (state, Hint::Saved),
         None => (state, Hint::Saving),
@@ -247,11 +250,24 @@ mod tests {
                 Hint::ReapplyRetry,
             ),
         ] {
-            let status = status(None, Some(start_problem(&error)), false);
+            let status = status(None, Some(start_problem(&error, false)), false);
             assert_eq!((status.title, status.hint), (title, hint), "{error}");
             assert_eq!(status.tone, Tone::Critical);
             assert!(status.details && status.reapply && !status.controls);
         }
+    }
+
+    #[test]
+    fn a_refused_lock_that_a_stuck_worker_of_this_program_holds_asks_for_a_replug() {
+        let busy = Error::Busy("previous engine".into());
+        let status = status(None, Some(start_problem(&busy, true)), false);
+        assert_eq!(
+            (status.title, status.hint),
+            (Title::Unresponsive, Hint::ReplugIt)
+        );
+        // only a lock problem is explained by the stuck worker
+        let other = Error::Config("bad".into());
+        assert_eq!(start_problem(&other, true), Problem::BadSettingsFile);
     }
 
     #[test]
@@ -343,7 +359,7 @@ mod tests {
         // stays in the title of a success, the failure takes the line
         assert_eq!(
             (failing.title, failing.hint, failing.tone),
-            (Title::SaveFailed, Hint::FreeDisk, Tone::Caution)
+            (Title::SaveFailed, Hint::CheckFile, Tone::Caution)
         );
     }
 
@@ -370,7 +386,7 @@ mod tests {
 
         let mut failing = state;
         failing.save_error = Some(failure(ErrorKind::Config));
-        assert_eq!(status(Some(&failing), None, true).hint, Hint::FreeDisk);
+        assert_eq!(status(Some(&failing), None, true).hint, Hint::CheckFile);
     }
 
     #[test]

@@ -110,7 +110,7 @@ export component OutputTab inherits Tab {
                 alignment: center;
                 horizontal-stretch: 0;
                 Help {
-                    explanation: @tr("ui" => "Balanced mode, microphone boost 6 (the best signal-to-noise ratio measured), noise reduction on (about 12 dB less steady noise), AGC and sidetone off.");
+                    explanation: @tr("ui" => "Balanced mode, microphone boost 6 (the best signal-to-noise ratio in a single measurement), noise reduction on (about 12 dB less steady noise), AGC and sidetone off.");
                 }
             }
         }
@@ -120,7 +120,7 @@ export component OutputTab inherits Tab {
 export component MicrophoneTab inherits Tab {
     Row {
         label: @tr("ui" => "Microphone boost");
-        help: @tr("ui" => "The gain compared with the vendor setting (step 4), 6 dB per step. Step 6 gave the best signal-to-noise ratio in the measurements.");
+        help: @tr("ui" => "The gain compared with the vendor setting (step 4), 6 dB per step. Step 6 gave the best signal-to-noise ratio in a single measurement, so the ranking is only indicative.");
         HorizontalLayout {
             spacing: 8px;
             Slider {

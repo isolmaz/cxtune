@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use cxtune::config;
-use cxtune::engine::{Command, Engine, ErrorKind, Event, Handle, Snapshot};
+use cxtune::engine::{self, Command, Engine, ErrorKind, Event, Handle, Snapshot};
 use cxtune::mode::Mode;
 use cxtune::volume::Side;
 use slint::{CloseRequestResponse, ComponentHandle, Timer, TimerMode, Weak};
@@ -217,7 +217,8 @@ impl App {
                 self.handle = None;
                 self.engine = None;
                 log(&format!("could not start the engine: {error}"));
-                self.start_problem = Some(status::start_problem(&error));
+                self.start_problem =
+                    Some(status::start_problem(&error, engine::worker_left_behind()));
             }
         }
         self.render();

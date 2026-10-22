@@ -120,16 +120,16 @@ msgid "Apply recommended"
 msgstr "Önerileni uygula"
 
 msgctxt "ui"
-msgid "Balanced mode, microphone boost 6 (the best signal-to-noise ratio measured), noise reduction on (about 12 dB less steady noise), AGC and sidetone off."
-msgstr "Dengeli mod, mikrofon yükseltme 6 (ölçülen en iyi sinyal/gürültü oranı), gürültü azaltma açık (sabit gürültü yaklaşık 12 dB daha az), AGC ve yan ton kapalı."
+msgid "Balanced mode, microphone boost 6 (the best signal-to-noise ratio in a single measurement), noise reduction on (about 12 dB less steady noise), AGC and sidetone off."
+msgstr "Dengeli mod, mikrofon yükseltme 6 (tek bir ölçümde en iyi sinyal/gürültü oranı), gürültü azaltma açık (sabit gürültü yaklaşık 12 dB daha az), AGC ve yan ton kapalı."
 
 msgctxt "ui"
 msgid "Microphone boost"
 msgstr "Mikrofon yükseltme"
 
 msgctxt "ui"
-msgid "The gain compared with the vendor setting (step 4), 6 dB per step. Step 6 gave the best signal-to-noise ratio in the measurements."
-msgstr "Üretici ayarına (4. adım) göre kazanç, adım başına 6 dB. Ölçümlerde en iyi sinyal/gürültü oranını 6. adım verdi."
+msgid "The gain compared with the vendor setting (step 4), 6 dB per step. Step 6 gave the best signal-to-noise ratio in a single measurement, so the ranking is only indicative."
+msgstr "Üretici ayarına (4. adım) göre kazanç, adım başına 6 dB. En iyi sinyal/gürültü oranını tek bir ölçümde 6. adım verdi; sıralama yalnızca fikir verir."
 
 msgctxt "ui"
 msgid "A higher boost also raises the noise: from step 6 to 7 it rose by 6 dB."
@@ -352,8 +352,8 @@ msgid "Press Re-apply to try again."
 msgstr "Yeniden denemek için Yeniden uygula'ya basın."
 
 msgctxt "ui"
-msgid "Make sure the disk is not full."
-msgstr "Diskin dolu olmadığından emin olun."
+msgid "Check that the file is not locked or read-only."
+msgstr "Dosyanın kilitli veya salt okunur olmadığına bakın."
 
 msgctxt "ui"
 msgid "Something unusual happened. See the log."
@@ -368,11 +368,11 @@ msgid "Some idle hiss. A low pop when audio starts; nothing is muted."
 msgstr "Boşta biraz tıslama olur. Ses başlarken hafif bir patlama sesi duyulur; hiçbir şey susturulmaz."
 
 msgctxt "ui"
-msgid "Cuts the idle hiss. The first 600 ms of audio after idle are muted; opening the microphone from full idle gives 1.26 s of silence and a click."
+msgid "Reduces the idle hiss. The first 600 ms of audio after idle are muted; opening the microphone from full idle gives 1.26 s of silence and a click."
 msgstr "Boştaki tıslamayı azaltır. Boştan sonra sesin ilk 600 ms'si susturulur; mikrofonu tam boştan açmak 1,26 sn sessizlik ve bir tık sesi verir."
 
 msgctxt "ui"
-msgid "Cuts the idle hiss. A loud pop when audio starts, and audio is muted for the start delay plus 100 ms."
+msgid "Reduces the idle hiss. A loud pop when audio starts, and audio is muted for the start delay plus 100 ms."
 msgstr "Boştaki tıslamayı azaltır. Ses başlarken yüksek bir patlama sesi duyulur; ses, başlangıç gecikmesi artı 100 ms boyunca susturulur."
 
 msgctxt "ui"

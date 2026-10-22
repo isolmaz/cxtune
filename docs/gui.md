@@ -69,8 +69,8 @@ with the last value always sent when the slider is released.
   balanced mode was not measured and says so.
 - **Microphone boost** 0-7 shows the gain compared with the vendor's step 4, 6 dB per step. The
   gain of step 0 itself is not documented, so no absolute gain is shown. Step 6 is marked
-  recommended (best signal-to-noise ratio in the measurements); a hint says that the step from 6
-  to 7 raised the noise by 6 dB.
+  recommended (best signal-to-noise ratio, in a single measurement, so only indicative); a hint
+  says that the step from 6 to 7 raised the noise by 6 dB.
 - **Noise reduction** (measured: about 12 dB less steady noise) and **AGC** (experimental: no
   effect on steady noise could be measured, speech not tested).
 - **Sidetone** is experimental and its loudness was never measured. Switching it on while the
@@ -96,8 +96,12 @@ status lines. Only the most important problem is shown; the order is:
 
 1. a problem of the engine, most specific first (`communication`, `audio`, `refused`,
    unsupported firmware, `verify`, `drift`, `unresponsive`, `fatal`; busy, an unreadable settings
-   file or a failed start when the engine could not start), each with its action;
-2. the settings file that cannot be saved;
+   file or a failed start when the engine could not start), each with its action. A refused
+   device lock is `busy` unless a worker of this program is still stuck in a call to the dongle
+   (`engine::worker_left_behind`): that is the `unresponsive` problem, and the dongle has to be
+   replugged;
+2. the settings file that cannot be saved (the hint is to check that the file is not locked or
+   read-only);
 3. something unusual that the engine reported (a warning), which stays until Re-apply and
    points to the log;
 4. the state of the dongle (not connected, waiting for its firmware, applying, reading, in sync,

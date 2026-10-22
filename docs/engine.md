@@ -164,6 +164,7 @@ silent stream) is marked while it runs, and the watchdog thread checks the mark 
   lock until its call returns or the process ends. A new `Engine::start` in the same process is
   refused with `Error::Busy` and a message that names that engine ("the previous engine of this
   program is still waiting for the dongle to answer"), not another cxtune process.
+  `worker_left_behind()` tells a user interface which of the two it is.
 - When the call returns, the worker that was left behind finishes its pass and ends. It may call
   the sink once or more after `stop` has returned, so a sink must cope with events after `stop`;
   a user interface that has dropped its receiver ignores them.

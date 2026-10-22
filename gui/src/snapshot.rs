@@ -120,7 +120,7 @@ fn simulate(window: &MainWindow, scene: Scene) {
         }
         Scene::SaveFailed => {
             model.set_title(Title::SaveFailed);
-            model.set_hint(Hint::FreeDisk);
+            model.set_hint(Hint::CheckFile);
             model.set_tone(Tone::Caution);
             model.set_details(true);
         }
