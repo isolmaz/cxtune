@@ -193,7 +193,7 @@ surround_level = 4
   so the headphone driver does not switch at the moment the hook is off.
 - The only sound cxtune plays is digital silence (for the mode changes), a 1 kHz tone at
   -40 dBFS (the click test) and, on request, the user's own recording scaled to at most
-  -12 dBFS peak.
+  -12 dBFS peak. `audio::play` enforces that peak for every clip, whoever calls it.
 - Only one cxtune process controls the dongle at a time (machine-wide mutex
   `Global\cxtune-device`), because the read protocol has no request tag. The lock does not keep
   other programs that read codec memory over HID away.

@@ -33,9 +33,9 @@ use windows::Win32::System::Com::{
 };
 use windows::core::Interface;
 
-use crate::mode;
 use crate::protocol::{PID, VID};
 use crate::{Error, Result};
+use crate::{clip, mode};
 
 /// Shared-mode buffer length in 100 ns units.
 const BUFFER_100NS: i64 = 2_000_000;
@@ -126,7 +126,8 @@ impl Playback {
 }
 
 /// Plays `samples` (mono, [`PLAY_RATE`]) on the dongle's playback endpoint and returns once
-/// Windows is running the stream.
+/// Windows is running the stream. A clip whose peak is above [`clip::PLAYBACK_PEAK_DBFS`] is
+/// scaled down as a whole, whoever calls.
 pub fn play(samples: Vec<i16>) -> Result<Playback> {
     start(Source::Clip(samples)).map(Playback)
 }
@@ -205,7 +206,10 @@ impl Feed {
     fn new(source: Source) -> Feed {
         let (clip, is_clip) = match source {
             Source::Silence => (Vec::new(), false),
-            Source::Clip(clip) => (clip, true),
+            Source::Clip(mut clip) => {
+                clip::limit_peak(&mut clip, clip::PLAYBACK_PEAK_DBFS);
+                (clip, true)
+            }
         };
         Feed {
             clip,
@@ -504,6 +508,16 @@ mod tests {
         );
         assert_eq!(flags, 0);
         assert_eq!((feed.cursor, feed.queued), (3, 5));
+    }
+
+    #[test]
+    fn a_clip_is_never_played_louder_than_minus_12_dbfs() {
+        let mut feed = Feed::new(Source::Clip(vec![i16::MAX, i16::MIN, 16384, -100]));
+        let mut bytes = [0u8; 4 * 4];
+        pack(&mut bytes, 4, &mut feed);
+        // -12 dBFS is 8231 of 32768; the whole clip is scaled, so the shape is kept
+        let played: Vec<i16> = frames_of(&bytes).iter().map(|f| f.0).collect();
+        assert_eq!(played, [8231, -8231, 4115, -25]);
     }
 
     #[test]
