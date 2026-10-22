@@ -42,22 +42,23 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
   mode traits 12 px. The font is Segoe UI, not Segoe UI Variable: its digits are all the same
   width and Slint cannot switch on the tabular figures of the variable font.
 - **Grid** (`Grid` in `theme.slint`; 4 px base). The navigation is 160 px wide, the header 64 px
-  and the footer 60 px (12 px above and below a 32 px button and the status). The page has 24 px
-  at its sides and 16 px above and below, so everything on it is 512 px wide: the title (32 px
-  high, at y = 16 of the page), the rows, the info bars and the mode cards. The title and the
-  groups are 12 px apart, the cards of a group 4 px, the mode cards 8 px. A card has 12 px of
-  padding and an info bar of one line is 32 px high. A row is 48 px high and has a 20 px glyph column, 12 px, the label (it starts 44 px
-  from the left edge of the row on every page) and at the right edge, 12 px inside it, the
-  control: a slider is 200 px wide and is followed by 8 px and a 64 px right-aligned value, a switch
-  has the word for its state on its left, a combo box or a button is 160 px wide. The snapshot
-  pictures in `grid` have a guide line at each of these x positions.
+  and the footer 60 px (12 px above and below the two-line status, 14 px above and below the
+  32 px button). The page has 24 px at its sides and 16 px above and below, so everything on it
+  is 512 px wide: the title (32 px high, at y = 16 of the page), the rows, the info bars and the
+  mode cards. The title and the groups are 12 px apart, the cards of a group 4 px, the mode cards
+  8 px. A card has 12 px of padding and an info bar of one line is 32 px high. A row is 48 px high
+  and has a 20 px glyph column, 12 px, the label (it starts 44 px from the left edge of the row
+  on every page, as does the text of an info bar) and at the right edge, 12 px inside it, the
+  control: a slider is 200 px wide and is followed by 8 px and a 64 px right-aligned value, a
+  switch has the word for its state on its left, a combo box or a button is 160 px wide. The
+  snapshot pictures in `grid` have a guide line at each of these x positions.
 - **Icon.** The icon (`gui/assets/app.ico`, `tray.png` and `window.png`, a blue rounded square
   with a white headphone) is the project's own work, drawn from plain shapes. Nothing in it is
   taken from an icon set or another program.
 - **Status.** The pill in the header is the state of the dongle. The band at the bottom adds
   what is going on and what needs an action, in two lines with a coloured dot (what is wrong or
-  what is being done, and what to do about it) and an "Open log" link when the log holds technical
-  details; while all is well it holds only the Re-apply button.
+  what is being done, and what to do about it) and an "Open log" link (a stop of Tab) when the
+  log holds technical details; while all is well it holds only the Re-apply button.
 - **Closing** the window hides it; the application keeps running in the notification area.
   The icon's menu has Show, the four modes (the chosen one marked with a filled circle; the
   Windows menu of Slint 1.18.1 has no check marks), Re-apply, About and Quit. A click on the
@@ -78,7 +79,7 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
 
   | English | Turkish | Meaning |
   |---|---|---|
-  | Noise floor (Noise) | Gürültü tabanı (Gürültü) | the hiss of the headphone driver at idle |
+  | Noise floor | Gürültü tabanı | the hiss of the headphone driver at idle |
   | Click | Tık | the pop when audio starts |
   | Mute delay | Açılış gecikmesi | how long the start of audio is muted |
   | Soft-start time | Yumuşak açılış süresi | the settle time of Lowest noise |
@@ -127,11 +128,12 @@ with the last value always sent when the slider is released.
   a single measurement, so only indicative) and that step 7 raised the noise by 6 dB. In
   balanced mode a note says that opening the microphone from idle gives 1.26 s of silence and a
   click.
-- **Noise reduction** (measured: about 12 dB less steady noise) and **AGC** (experimental: no
-  effect on steady noise could be measured, speech not tested).
+- **Noise reduction** (measured: about 12 dB less steady noise) and **AGC** (experimental: a
+  measurement found no effect on steady noise, speech not tested).
 - **Sidetone** is experimental and its loudness was never listened to. The level is shown in dB:
-  the register is shown as 0 to +16 dB, which is how the USB audio control reports it (units of
-  1/256 dB), and the vendor's untouched value 947 is +3.7 dB. What the DSP makes of the register
+  the register is shown as 0 to +16 dB in the units of the ROM's USB audio request handler
+  (1/256 dB), which this dongle does not expose to Windows (its descriptor declares no feature
+  unit 11), and the vendor's untouched value 947 is +3.7 dB. What the DSP makes of the register
   and how loud sidetone is were not measured, so nothing says that a low value is quiet. Only the
   window divides the register by 256. Switching sidetone on while the level is still the vendor's
   untouched 947 first sets 200. The level slider is linear in the register, so linear in dB: it
@@ -227,8 +229,9 @@ forwards the click.)
 window to PNG files (every page in both languages and both colour schemes, the other modes, muted
 volumes, sidetone on, the meters with made-up levels and the status line of every problem) and
 quits. The folder `grid` has the same pictures with the guide lines, and the folder `focus`
-the English pages with the keyboard focus on each control that Tab reaches, one after the other. Every state in those pictures is simulated: the engine is not started and the dongle is
-never read or written. A simulated engine state goes through the same code as a real one
+the English pages with the keyboard focus on each control that Tab reaches, one after the other.
+Every state in those pictures is simulated: the engine is not started and the dongle is never read
+or written. A simulated engine state goes through the same code as a real one
 (`status::status` and the controls); the volumes and the meter levels are set directly.
 `SLINT_SCALE_FACTOR=1` makes the pictures 720 x 480 pixels, the size of the window at 100 %. The
 release profile uses `lto` and `strip`, and `panic` stays `unwind`: the engine relies on

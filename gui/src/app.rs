@@ -161,7 +161,7 @@ fn connect(window: &MainWindow, tray: &Tray) {
     model.on_noise_reduction_toggled(|on| with_app(|app| app.noise_reduction_toggled(on)));
     model.on_agc_toggled(|on| with_app(|app| app.agc_toggled(on)));
     model.on_sidetone_toggled(|on| with_app(|app| app.sidetone_toggled(on)));
-    model.on_level_changed(|position| with_app(|app| app.level_changed(position)));
+    model.on_level_changed(|value| with_app(|app| app.level_changed(value)));
     model.on_slider_released(|| with_app(App::flush_all));
     model.on_autostart_toggled(|on| with_app(|app| app.autostart_toggled(on)));
     model.on_language_selected(|index| with_app(|app| app.language_selected(index)));

@@ -108,7 +108,8 @@ cxtune watch                    keep the remembered settings applied across repl
 `target\release\cxtune-gui.exe` is a small window and notification-area icon on top of the same
 engine (Windows 11, Turkish and English). It follows the light or dark scheme of Windows, has no
 console window and closes to the notification area. A list of pages on the left leads to the
-four below, and a header shows the dongle, its state and the level meters.
+four below, and a header shows the dongle and its state (it also has level meters, which
+show nothing yet).
 
 - **Output**: the four modes (Default, Low click, Balanced, Lowest noise) as cards with Noise
   floor, Click and Mute delay indicators that show only what was measured (and say so when

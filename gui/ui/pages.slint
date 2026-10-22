@@ -82,7 +82,7 @@ export component OutputPage inherits Page {
             }
         }
 
-        Row {
+        soft-start-row := Row {
             icon: "\u{E916}";
             title: @tr("ui" => "Soft-start time");
             help: @tr("ui" => "Used only by Lowest noise. After audio starts it stays muted for this time plus 100 ms.");
@@ -97,6 +97,7 @@ export component OutputPage inherits Page {
                 value <=> Model.settle-ms;
                 enabled: Model.delay-enabled;
                 label: @tr("ui" => "Soft-start time");
+                description: soft-start-row.help;
                 changed(value) => {
                     self.value = Math.round(value / Model.settle-step) * Model.settle-step;
                     Model.settle-changed(Math.round(self.value));
@@ -144,7 +145,7 @@ export component MicrophonePage inherits Page {
             }
         }
 
-        Row {
+        boost-row := Row {
             icon: "\u{E9E9}";
             title: @tr("ui" => "Microphone boost");
             help: @tr("ui" => "Relative to the vendor setting, step 4; a step is 6 dB. Step 6 had the best signal-to-noise ratio in one take, step 7 added 6 dB of noise.");
@@ -159,6 +160,7 @@ export component MicrophonePage inherits Page {
                 value <=> Model.boost;
                 enabled: Model.controls-enabled;
                 label: @tr("ui" => "Microphone boost");
+                description: boost-row.help;
                 changed(value) => {
                     self.value = Math.round(value);
                     Model.boost-changed(Math.round(value));
@@ -169,7 +171,7 @@ export component MicrophonePage inherits Page {
             }
         }
 
-        Row {
+        noise-reduction-row := Row {
             icon: "\u{E9D2}";
             title: @tr("ui" => "Noise reduction");
             help: @tr("ui" => "Suppresses steady background noise. Measured: about 12 dB less. The effect on speech was not measured.");
@@ -177,6 +179,7 @@ export component MicrophonePage inherits Page {
 
             SwitchControl {
                 label: @tr("ui" => "Noise reduction");
+                description: noise-reduction-row.help;
                 checked <=> Model.noise-reduction;
                 enabled: Model.controls-enabled;
                 toggled(on) => {
@@ -189,14 +192,15 @@ export component MicrophonePage inherits Page {
     Group {
         ExperimentalTag { }
 
-        Row {
+        agc-row := Row {
             icon: "\u{E9D9}";
             title: @tr("ui" => "AGC");
-            help: @tr("ui" => "Automatic gain control. The firmware applies it; no effect on steady noise was measured and speech was not tested.");
+            help: @tr("ui" => "Automatic gain control. The firmware applies it; a measurement found no effect on steady noise, and speech was not tested.");
             disabled: !Model.controls-enabled;
 
             SwitchControl {
                 label: @tr("ui" => "AGC");
+                description: agc-row.help;
                 checked <=> Model.agc;
                 enabled: Model.controls-enabled;
                 toggled(on) => {
@@ -219,7 +223,7 @@ export component SidetonePage inherits Page {
     Group {
         ExperimentalTag { }
 
-        Row {
+        sidetone-row := Row {
             icon: "\u{E95B}";
             title: @tr("ui" => "Sidetone");
             help: @tr("ui" => "Plays your microphone in the headphones while a microphone and playback are open.");
@@ -227,6 +231,7 @@ export component SidetonePage inherits Page {
 
             SwitchControl {
                 label: @tr("ui" => "Sidetone");
+                description: sidetone-row.help;
                 checked <=> Model.sidetone;
                 enabled: Model.controls-enabled;
                 toggled(on) => {
@@ -235,10 +240,10 @@ export component SidetonePage inherits Page {
             }
         }
 
-        Row {
+        level-row := Row {
             icon: "\u{E767}";
             title: @tr("ui" => "Sidetone level");
-            help: @tr("ui" => "0 to +16 dB as the USB audio control reports it. The loudness was never measured. Vendor default: +3.7 dB.");
+            help: @tr("ui" => "In dB as the ROM counts it (USB audio class, 1/256 dB; 0 to +16 dB). The dongle does not expose this control to Windows, and the loudness was never measured. Vendor default: +3.7 dB.");
             value-column: true;
             value: Texts.level-db(Math.round(Model.level));
             disabled: !Model.controls-enabled;
@@ -250,6 +255,7 @@ export component SidetonePage inherits Page {
                 value <=> Model.level;
                 enabled: Model.controls-enabled;
                 label: @tr("ui" => "Sidetone level");
+                description: level-row.help;
                 changed(value) => {
                     Model.level-changed(value);
                 }
@@ -332,13 +338,14 @@ export component GeneralPage inherits Page {
     }
 
     Group {
-        Row {
+        autostart-row := Row {
             icon: "\u{E7E8}";
             title: @tr("ui" => "Start with Windows");
             help: @tr("ui" => "Starts minimized in the notification area when you sign in; nothing is installed.");
 
             SwitchControl {
                 label: @tr("ui" => "Start with Windows");
+                description: autostart-row.help;
                 checked <=> Model.autostart;
                 toggled(on) => {
                     Model.autostart-toggled(on);

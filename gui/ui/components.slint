@@ -1,5 +1,5 @@
-import { ComboBox, Palette, Slider, Switch } from "std-widgets.slint";
-import { Delay, Hiss, Model, ModeIndicators, Pop, Title, Tone } from "contract.slint";
+import { Slider, Switch } from "std-widgets.slint";
+import { Model, ModeIndicators, Pop } from "contract.slint";
 import { Grid, Signal, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
@@ -232,6 +232,7 @@ export component LinkText inherits Rectangle {
     in property <string> text;
     in property <length> font-size: Type.caption;
     callback clicked();
+    forward-focus: keys;
     accessible-role: button;
     accessible-label: root.text;
     accessible-action-default => {
@@ -248,10 +249,31 @@ export component LinkText inherits Rectangle {
         vertical-alignment: center;
     }
 
+    if keys.has-focus: Rectangle {
+        x: -4px;
+        y: -2px;
+        width: parent.width + 8px;
+        height: parent.height + 4px;
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: Surface.text;
+    }
+
     TouchArea {
         mouse-cursor: pointer;
         clicked => {
             root.clicked();
+        }
+    }
+
+    keys := FocusScope {
+        width: 0px;
+        key-pressed(event) => {
+            if event.text == Key.Space || event.text == Key.Return {
+                root.clicked();
+                return accept;
+            }
+            return reject;
         }
     }
 }
@@ -273,14 +295,14 @@ export component InfoBar inherits Rectangle {
     Icon {
         x: Grid.pad;
         y: (parent.height - self.height) / 2;
-        width: 16px;
-        height: 16px;
+        width: Grid.row-icon;
+        height: Grid.row-icon;
         text: root.icon;
         color: root.tone;
     }
 
     message := Caption {
-        x: Grid.pad + 16px + 8px;
+        x: Grid.pad + Grid.row-icon + Grid.row-gap;
         y: 8px;
         width: root.width - self.x - Grid.pad;
         height: root.height - 16px;
@@ -302,7 +324,7 @@ export component FluentButton inherits Rectangle {
     callback clicked();
     height: root.button-height;
     border-radius: 4px;
-    background: !root.enabled ? (root.subtle ? transparent : Surface.control.with-alpha(0.4)) : touch.pressed ? Surface.stroke : touch.has-hover ? Surface.card-hover : root.subtle ? transparent : Surface.control;
+    background: !root.enabled ? (root.subtle ? transparent : Surface.control-disabled) : touch.pressed ? Surface.stroke : touch.has-hover ? Surface.card-hover : root.subtle ? transparent : Surface.control;
     border-width: 1px;
     border-color: root.enabled ? Surface.control-stroke : Surface.stroke;
     forward-focus: keys;
@@ -626,6 +648,7 @@ export component AppSlider inherits Rectangle {
 // A switch with the word for its state on its left, as in the settings of Windows 11.
 export component SwitchControl inherits HorizontalLayout {
     in property <string> label;
+    in property <string> description;
     in property <bool> enabled: true;
     in-out property <bool> checked;
     callback toggled(bool);
@@ -645,6 +668,7 @@ export component SwitchControl inherits HorizontalLayout {
             checked <=> root.checked;
             enabled: root.enabled;
             accessible-label: root.label;
+            accessible-description: root.description;
             toggled => {
                 root.toggled(self.checked);
             }
@@ -759,7 +783,7 @@ component ModeCard inherits Rectangle {
     accessible-checkable: true;
     accessible-checked: root.selected;
     accessible-enabled: root.enabled;
-    accessible-description: @tr("ui" => "{}: {}, {}: {}, {}: {}", @tr("ui" => "Noise floor"), Texts.hiss(root.indicators.hiss), @tr("ui" => "Click"), Texts.pop(root.indicators.pop), @tr("ui" => "Mute delay"), Texts.delay(root.indicators.delay, root.indicators.delay-ms));
+    accessible-description: @tr("ui" => "{}: {}, {}: {}, {}: {}", @tr("ui" => "Noise floor"), Texts.hiss(root.indicators.hiss), @tr("ui" => "Click"), Texts.pop-spoken(root.indicators.pop), @tr("ui" => "Mute delay"), Texts.delay(root.indicators.delay, root.indicators.delay-ms));
     accessible-action-default => {
         root.clicked();
     }

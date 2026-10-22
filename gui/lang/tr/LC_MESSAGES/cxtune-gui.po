@@ -153,7 +153,7 @@ msgstr "Mikrofon yükseltme"
 
 msgctxt "ui"
 msgid "Relative to the vendor setting, step 4; a step is 6 dB. Step 6 had the best signal-to-noise ratio in one take, step 7 added 6 dB of noise."
-msgstr "Üretici ayarına (Kademe 4) göre; her kademe 6 dB'dir. En iyi sinyal/gürültü oranı tek bir ölçümde 6. kademede çıktı, 7. kademe gürültüyü 6 dB artırdı."
+msgstr "Üretici ayarına (kademe 4) göre; her kademe 6 dB'dir. En iyi sinyal/gürültü oranı tek bir ölçümde 6. kademede çıktı, 7. kademe gürültüyü 6 dB artırdı."
 
 msgctxt "ui"
 msgid "Noise reduction"
@@ -168,8 +168,8 @@ msgid "AGC"
 msgstr "AGC"
 
 msgctxt "ui"
-msgid "Automatic gain control. The firmware applies it; no effect on steady noise was measured and speech was not tested."
-msgstr "Otomatik kazanç denetimi. Bellenim bunu uygular; sabit gürültü üzerinde etkisi ölçülemedi, konuşma denenmedi."
+msgid "Automatic gain control. The firmware applies it; a measurement found no effect on steady noise, and speech was not tested."
+msgstr "Otomatik kazanç denetimi. Bellenim bunu uygular; sabit gürültüde ölçülen etkisi yok, konuşma denenmedi."
 
 msgctxt "ui"
 msgid "Balanced: opening the microphone from idle gives 1.26 s of silence and a click."
@@ -184,8 +184,8 @@ msgid "Sidetone level"
 msgstr "Sidetone düzeyi"
 
 msgctxt "ui"
-msgid "0 to +16 dB as the USB audio control reports it. The loudness was never measured. Vendor default: +3.7 dB."
-msgstr "USB ses denetiminin bildirdiği gibi 0 ile +16 dB. Ses yüksekliği hiç ölçülmedi. Üretici varsayılanı: +3,7 dB."
+msgid "In dB as the ROM counts it (USB audio class, 1/256 dB; 0 to +16 dB). The dongle does not expose this control to Windows, and the loudness was never measured. Vendor default: +3.7 dB."
+msgstr "ROM'un saydığı gibi dB olarak (USB ses sınıfı, 1/256 dB; 0 ile +16 dB). Cihaz bu denetimi Windows'a açmaz; ses yüksekliği hiç ölçülmedi. Üretici varsayılanı: +3,7 dB."
 
 msgctxt "ui"
 msgid "Keep Windows' \"Listen to this device\" off for the microphone: it would echo."
@@ -430,6 +430,10 @@ msgstr "Düşük"
 msgctxt "ui"
 msgid "Loud"
 msgstr "Yüksek"
+
+msgctxt "ui"
+msgid "Not measured"
+msgstr "Ölçülmedi"
 
 msgctxt "ui"
 msgid "Noise floor: the hiss in the headphones while nothing plays."

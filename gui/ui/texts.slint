@@ -178,6 +178,11 @@ export global Texts {
         return @tr("ui" => "Loud");
     }
 
+    // the value of the click as a screen reader says it
+    public pure function pop-spoken(kind: Pop) -> string {
+        return kind == Pop.not-measured ? @tr("ui" => "Not measured") : pop(kind);
+    }
+
     // what the legend says about a trait of the modes, by position on the cards
     public pure function trait-tip(position: int) -> string {
         if position == 0 {
@@ -259,8 +264,8 @@ export global Texts {
         return @tr("ui" => "Use at your own risk. The authors accept no liability.");
     }
 
-    // the sidetone gain register is in 1/256 dB (UAC); the tenths are formatted separately so that
-    // the Turkish text can use a decimal comma
+    // the sidetone gain register counts 1/256 dB, as the ROM's USB audio code does; the tenths are
+    // formatted separately so that the Turkish text can use a decimal comma
     public pure function level-db(register: int) -> string {
         let tenths = Math.round(register / 25.6);
         if tenths <= 0 {

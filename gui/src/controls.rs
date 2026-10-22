@@ -63,8 +63,8 @@ pub fn level_before_sidetone(level: u16, chosen: bool) -> Option<u16> {
     (!chosen && level == SIDETONE_DEFAULT).then_some(SIDETONE_START)
 }
 
-/// A key press moves the sidetone slider by this much: half a dB, as the USB audio control counts
-/// (256 to the dB).
+/// A key press moves the sidetone slider by this much: half a dB, counting 256 to the dB as the
+/// ROM's USB audio code does.
 pub const LEVEL_STEP: u16 = 128;
 
 /// Every value a control shows.
