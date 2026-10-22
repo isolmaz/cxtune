@@ -1,16 +1,18 @@
 //! Core of cxtune: HID memory access to the CX20773 codec in the HyperX Cloud II
-//! USB dongle, the allow-listed volatile patch-RAM writes, and output modes
-//! built from those writes.
+//! USB dongle, the allow-listed volatile patch-RAM writes, and the output modes and
+//! microphone DSP settings built from those writes.
 //!
 //! All writes go through [`patches::apply_patch`]; there is no API that writes an
 //! arbitrary address. Nothing here touches EEPROM or DSP memory.
 
 pub mod audio;
 pub mod config;
+pub mod dsp;
 pub mod hid;
 pub mod mode;
 pub mod patches;
 pub mod protocol;
+pub mod settings;
 
 #[cfg(test)]
 mod fake;

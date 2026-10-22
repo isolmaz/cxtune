@@ -6,6 +6,10 @@
 //! and guard bytes or bits elsewhere in memory that must hold. All addresses are CPU-space
 //! patch RAM, which the dongle reloads from EEPROM on every replug or USB reset.
 
+use std::fmt;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
 use crate::protocol::{OutReport, Transport, read_mem};
 use crate::{Error, Result, hex};
 
@@ -52,6 +56,41 @@ pub const DAC_HOLD_OFF: u8 = 0x00;
 
 pub const MIC_MIN: u8 = 0x38;
 pub const MIC_MAX: u8 = 0x3F;
+
+/// DSP processing enable bits. The only bits cxtune ever changes are the three below; the
+/// byte must hold nothing else before or after.
+pub const DSP_ENABLE: u16 = 0x1151;
+pub const DSP_NR: u8 = 0x04;
+pub const DSP_AGC: u8 = 0x10;
+pub const DSP_SIDETONE: u8 = 0x80;
+const DSP_BITS: u8 = DSP_NR | DSP_AGC | DSP_SIDETONE;
+/// New-configuration request: the ROM reloads the DSP settings and clears bit 0 within a pass.
+/// The other bits of the byte are stream state owned by the ROM.
+pub const NEWC_ADDR: u16 = 0x1154;
+pub const NEWC: u8 = 0x01;
+/// Sidetone gain, little endian. The unit is not known; the register accepts 0x0001..=0x1000.
+pub const SIDETONE_LEVEL_ADDR: u16 = 0x1276;
+pub const SIDETONE_MIN: u16 = 0x0001;
+pub const SIDETONE_MAX: u16 = 0x1000;
+pub const SIDETONE_DEFAULT: u16 = 0x03B3;
+/// Alternate setting of the microphone capture interface: non-zero while a capture stream is open.
+pub const MIC_STREAM: u16 = 0x13DC;
+/// Applier flags of the ROM, read-only: bit 7 is set while noise reduction is applied and bit 5
+/// while AGC is applied. They follow `$1151` only at the stream-open reload or a NEWC pass, and
+/// only while the microphone gate is satisfied.
+pub const APPLIERS: u16 = 0x00A4;
+pub const APPLIED_NR: u8 = 0x80;
+pub const APPLIED_AGC: u8 = 0x20;
+/// Mixer flags of the ROM, read-only: bit 3 is set while the sidetone path runs.
+pub const MIXER: u16 = 0x00A8;
+pub const MIXER_SIDETONE: u8 = 0x08;
+/// Bit 7 is set only on older chip ids, where the DSP settings below do not apply.
+const CHIP_MODE: u16 = 0x1000;
+/// Bit 0 is set while the DSP is bypassed.
+const DSP_BYPASS: u16 = 0x00A6;
+/// A NEWC request is normally consumed within one main-loop pass (a few milliseconds).
+pub const NEWC_TIMEOUT: Duration = Duration::from_millis(500);
+const NEWC_POLL: Duration = Duration::from_millis(5);
 
 const VENDOR_TAIL: [u8; 3] = [0x1B, 0x1F, 0x4C];
 const WINDOW_TAIL: [u8; 3] = [0xFC, 0x1E, 0x4C];
@@ -139,12 +178,15 @@ impl Part {
 
 /// Address ranges (start, length) that may ever be written. Checked on every write as a
 /// second line of defence behind the patch constructors.
-const WRITABLE: [(u16, usize); 5] = [
+const WRITABLE: [(u16, usize); 8] = [
     (HOOK, 3),
     (DAC_A, 1),
     (DAC_B, 1),
     (WINDOW, WINDOW_LEN),
     (MIC_CONTROL, 1),
+    (DSP_ENABLE, 1),
+    (NEWC_ADDR, 1),
+    (SIDETONE_LEVEL_ADDR, 2),
 ];
 
 #[derive(Clone, Debug)]
@@ -153,6 +195,8 @@ enum Guard {
     Bytes { addr: u16, bytes: &'static [u8] },
     /// Every bit of `mask` must be set in the byte at `addr`.
     BitsSet { addr: u16, mask: u8 },
+    /// Every bit of `mask` must be clear in the byte at `addr`.
+    BitsClear { addr: u16, mask: u8 },
     /// The byte at `addr` must be in `lo..=hi`.
     ByteIn { addr: u16, lo: u8, hi: u8 },
 }
@@ -166,6 +210,25 @@ enum Change {
     },
     /// Replaces any byte in `lo..=hi` with `value`, which is in the same range.
     Byte { lo: u8, hi: u8, value: u8 },
+    /// Sets the bits of `mask` to `value` and keeps the other bits of the byte. Refused unless
+    /// the bits of `forbidden` are clear in the byte that is read, so the byte holds nothing
+    /// outside the bits this change is allowed to know about.
+    Bits { mask: u8, value: u8, forbidden: u8 },
+    /// Replaces a little-endian 16-bit value in `lo..=hi` with `value`, which is in the same range.
+    Word { lo: u16, hi: u16, value: u16 },
+    /// Sets [`NEWC`] in a byte whose other bits belong to the ROM. A request that is already
+    /// pending counts as done.
+    Newc,
+}
+
+/// What a patch does to the bytes that were read from its address.
+enum Step {
+    /// They already hold the new value.
+    Done,
+    /// They are an accepted before-value; these are the bytes to write.
+    Write(Vec<u8>),
+    /// They are not a value this patch may replace.
+    Refuse,
 }
 
 #[derive(Clone, Debug)]
@@ -186,10 +249,12 @@ impl Patch {
         self.addr
     }
 
-    pub fn after(&self) -> &[u8] {
+    /// Number of bytes the patch reads and writes.
+    pub(crate) fn len(&self) -> usize {
         match &self.change {
-            Change::Swap { after, .. } => after,
-            Change::Byte { value, .. } => std::slice::from_ref(value),
+            Change::Swap { after, .. } => after.len(),
+            Change::Byte { .. } | Change::Bits { .. } | Change::Newc => 1,
+            Change::Word { .. } => 2,
         }
     }
 
@@ -200,10 +265,51 @@ impl Patch {
         self.needs_stream
     }
 
-    fn accepts(&self, current: &[u8]) -> bool {
+    /// True for changes of a byte that something else in the device also changes: the byte is
+    /// read again after the guards, right before the write, to keep the window for a lost
+    /// update as short as the protocol allows.
+    fn is_read_modify_write(&self) -> bool {
+        matches!(self.change, Change::Bits { .. } | Change::Newc)
+    }
+
+    fn step(&self, current: &[u8]) -> Step {
         match &self.change {
-            Change::Swap { before, .. } => *before == current,
-            Change::Byte { lo, hi, .. } => current.len() == 1 && (*lo..=*hi).contains(&current[0]),
+            Change::Swap { before, after } => {
+                if current == *after {
+                    Step::Done
+                } else if current == *before {
+                    Step::Write(after.to_vec())
+                } else {
+                    Step::Refuse
+                }
+            }
+            Change::Byte { lo, hi, value } => match current {
+                [b] if b == value => Step::Done,
+                [b] if (*lo..=*hi).contains(b) => Step::Write(vec![*value]),
+                _ => Step::Refuse,
+            },
+            Change::Bits {
+                mask,
+                value,
+                forbidden,
+            } => match current {
+                [b] if b & forbidden != 0 => Step::Refuse,
+                [b] if b & mask == *value => Step::Done,
+                [b] => Step::Write(vec![(b & !mask) | value]),
+                _ => Step::Refuse,
+            },
+            Change::Word { lo, hi, value } => match <[u8; 2]>::try_from(current) {
+                Ok(b) if u16::from_le_bytes(b) == *value => Step::Done,
+                Ok(b) if (*lo..=*hi).contains(&u16::from_le_bytes(b)) => {
+                    Step::Write(value.to_le_bytes().to_vec())
+                }
+                _ => Step::Refuse,
+            },
+            Change::Newc => match current {
+                [b] if b & NEWC != 0 => Step::Done,
+                [b] => Step::Write(vec![b | NEWC]),
+                _ => Step::Refuse,
+            },
         }
     }
 
@@ -211,6 +317,13 @@ impl Patch {
         match &self.change {
             Change::Swap { before, after } => before.len() == after.len() && before != after,
             Change::Byte { lo, hi, value } => lo <= value && value <= hi,
+            Change::Bits {
+                mask,
+                value,
+                forbidden,
+            } => *mask != 0 && value & !mask == 0 && forbidden & mask == 0,
+            Change::Word { lo, hi, value } => lo <= value && value <= hi,
+            Change::Newc => true,
         }
     }
 }
@@ -420,19 +533,130 @@ pub fn mic_boost(step: u8) -> Result<Patch> {
     })
 }
 
+fn dsp_guards() -> Vec<Guard> {
+    vec![
+        Guard::BitsClear {
+            addr: CHIP_MODE,
+            mask: 0x80,
+        },
+        Guard::BitsClear {
+            addr: DSP_BYPASS,
+            mask: 0x01,
+        },
+    ]
+}
+
+fn dsp_bit(bit: u8, on: bool, name: &str) -> Patch {
+    Patch {
+        name: format!("{name} {} ($1151 bit {})", on_off(on), bit.trailing_zeros()),
+        addr: DSP_ENABLE,
+        change: Change::Bits {
+            mask: bit,
+            value: if on { bit } else { 0 },
+            forbidden: !DSP_BITS,
+        },
+        guards: dsp_guards(),
+        needs_stream: false,
+    }
+}
+
+fn on_off(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
+
+/// Microphone noise reduction on or off. The ROM applies it at the next [`newc`] pass or the
+/// next time the capture stream opens.
+pub fn noise_reduction(on: bool) -> Patch {
+    dsp_bit(DSP_NR, on, "mic noise reduction")
+}
+
+/// Microphone automatic gain control on or off; applied like [`noise_reduction`].
+pub fn agc(on: bool) -> Patch {
+    dsp_bit(DSP_AGC, on, "mic AGC")
+}
+
+/// Sidetone (microphone mixed into the headphones) on or off. The ROM applies it within one
+/// main-loop pass, while a playback and a capture stream are both open.
+pub fn sidetone(on: bool) -> Patch {
+    dsp_bit(DSP_SIDETONE, on, "sidetone")
+}
+
+/// Sets the sidetone gain register to `level`, `SIDETONE_MIN..=SIDETONE_MAX`.
+pub fn sidetone_level(level: u16) -> Result<Patch> {
+    if !(SIDETONE_MIN..=SIDETONE_MAX).contains(&level) {
+        return Err(Error::Refused(format!(
+            "sidetone level {level} is outside {SIDETONE_MIN}..={SIDETONE_MAX}"
+        )));
+    }
+    Ok(Patch {
+        name: format!("sidetone level ($1276) = {level:#06x}"),
+        addr: SIDETONE_LEVEL_ADDR,
+        change: Change::Word {
+            lo: SIDETONE_MIN,
+            hi: SIDETONE_MAX,
+            value: level,
+        },
+        guards: dsp_guards(),
+        needs_stream: false,
+    })
+}
+
+/// Asks the ROM to reload the DSP settings now. If the ROM already has a request pending, that
+/// reload comes after every write made so far, so it is waited for instead of repeated. The ROM
+/// must clear the request within [`NEWC_TIMEOUT`]; if the other bits of the byte then differ
+/// from what was read, the outcome is [`Outcome::StreamEvent`].
+pub fn newc() -> Patch {
+    Patch {
+        name: "NEWC request ($1154 bit 0)".into(),
+        addr: NEWC_ADDR,
+        change: Change::Newc,
+        guards: dsp_guards(),
+        needs_stream: false,
+    }
+}
+
+/// The other bits of `$1154` (stream state owned by the ROM) were not the same after a NEWC
+/// request as before it: a stream event happened near the request. The request may have
+/// overwritten the ROM's own update of that byte, which cannot be told apart from an update
+/// that came after it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StreamEvent {
+    pub before: u8,
+    pub after: u8,
+}
+
+impl fmt::Display for StreamEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "a stream event changed ${NEWC_ADDR:04X} from {:#04x} to {:#04x} while the DSP reload \
+             was requested; the reload was done, but the request may have overwritten the ROM's \
+             own update of that byte (this cannot be detected)",
+            self.before, self.after
+        )
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
     Written,
     AlreadySet,
+    /// A NEWC request was made and consumed, and a stream event happened near it.
+    StreamEvent(StreamEvent),
 }
 
 /// The only function in the app that writes to the device.
 ///
 /// Reads the target bytes; returns `AlreadySet` if they already hold the new value;
 /// refuses unless they hold an accepted before-value, the ROM identity matches and every guard
-/// holds; writes; reads back and fails if the device does not hold the new bytes.
+/// holds; writes; reads back and fails if the device does not hold the new bytes. A byte that
+/// the ROM also changes is read once more after the guards, immediately before the write.
 pub fn apply_patch<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<Outcome> {
-    let len = p.after().len();
+    apply(t, p, NEWC_TIMEOUT)
+}
+
+fn apply<T: Transport + ?Sized>(t: &mut T, p: &Patch, newc_timeout: Duration) -> Result<Outcome> {
+    let len = p.len();
     let in_region = WRITABLE
         .iter()
         .any(|&(start, n)| p.addr >= start && p.addr as usize + len <= start as usize + n);
@@ -443,18 +667,60 @@ pub fn apply_patch<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<Outcom
         )));
     }
 
-    let current = read_mem(t, p.addr, len)?;
-    if current == p.after() {
-        return Ok(Outcome::AlreadySet);
+    let resolve = |t: &mut T| -> Result<(Vec<u8>, Option<Vec<u8>>)> {
+        let current = read_mem(t, p.addr, len)?;
+        match p.step(&current) {
+            Step::Done => Ok((current, None)),
+            Step::Write(bytes) => Ok((current, Some(bytes))),
+            Step::Refuse => Err(Error::Refused(format!(
+                "'{}': ${:04X} holds {}, not an expected value",
+                p.name,
+                p.addr,
+                hex(&current)
+            ))),
+        }
+    };
+
+    let first = resolve(t)?;
+    if first.1.is_none() {
+        return nothing_to_write(t, p, newc_timeout);
     }
-    if !p.accepts(&current) {
-        return Err(Error::Refused(format!(
-            "'{}': ${:04X} holds {}, not an expected value",
-            p.name,
-            p.addr,
-            hex(&current)
-        )));
+    check_guards(t, p)?;
+    let (before, bytes) = if p.is_read_modify_write() {
+        resolve(t)?
+    } else {
+        first
+    };
+    let Some(bytes) = bytes else {
+        return nothing_to_write(t, p, newc_timeout);
+    };
+
+    t.send(&OutReport::write(p, &bytes))?;
+
+    if matches!(p.change, Change::Newc) {
+        let after = wait_for_newc_clear(t, p, newc_timeout)?;
+        return Ok(if after == before[0] {
+            Outcome::Written
+        } else {
+            Outcome::StreamEvent(StreamEvent {
+                before: before[0],
+                after,
+            })
+        });
     }
+    let got = read_mem(t, p.addr, len)?;
+    if got != bytes {
+        return Err(Error::Readback {
+            patch: p.name.clone(),
+            addr: p.addr,
+            expected: bytes,
+            got,
+        });
+    }
+    Ok(Outcome::Written)
+}
+
+fn check_guards<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<()> {
     let rom = bytes_at(ROM_ID_ADDR, &ROM_ID);
     for g in std::iter::once(&rom).chain(&p.guards) {
         match *g {
@@ -478,6 +744,15 @@ pub fn apply_patch<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<Outcom
                     )));
                 }
             }
+            Guard::BitsClear { addr, mask } => {
+                let got = read_mem(t, addr, 1)?[0];
+                if got & mask != 0 {
+                    return Err(Error::Refused(format!(
+                        "'{}': ${addr:04X} holds {got:#04x}, bits {mask:#04x} must be clear",
+                        p.name
+                    )));
+                }
+            }
             Guard::ByteIn { addr, lo, hi } => {
                 let got = read_mem(t, addr, 1)?[0];
                 if !(lo..=hi).contains(&got) {
@@ -489,19 +764,44 @@ pub fn apply_patch<T: Transport + ?Sized>(t: &mut T, p: &Patch) -> Result<Outcom
             }
         }
     }
+    Ok(())
+}
 
-    t.send(&OutReport::write(p))?;
-
-    let got = read_mem(t, p.addr, len)?;
-    if got != p.after() {
-        return Err(Error::Readback {
-            patch: p.name.clone(),
-            addr: p.addr,
-            expected: p.after().to_vec(),
-            got,
-        });
+/// The bytes already hold the new value. A NEWC request that is already pending counts as
+/// that: the ROM reloads the settings after every write made so far, so it is waited for like
+/// a request of our own.
+fn nothing_to_write<T: Transport + ?Sized>(
+    t: &mut T,
+    p: &Patch,
+    newc_timeout: Duration,
+) -> Result<Outcome> {
+    if matches!(p.change, Change::Newc) {
+        wait_for_newc_clear(t, p, newc_timeout)?;
     }
-    Ok(Outcome::Written)
+    Ok(Outcome::AlreadySet)
+}
+
+/// Waits for the ROM to consume the NEWC request and returns the byte it left.
+fn wait_for_newc_clear<T: Transport + ?Sized>(
+    t: &mut T,
+    p: &Patch,
+    timeout: Duration,
+) -> Result<u8> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let got = read_mem(t, p.addr, 1)?[0];
+        if got & NEWC == 0 {
+            return Ok(got);
+        }
+        if Instant::now() >= deadline {
+            return Err(Error::Device(format!(
+                "the ROM did not consume the NEWC request at ${:04X} within {} ms (byte {got:#04x})",
+                p.addr,
+                timeout.as_millis()
+            )));
+        }
+        sleep(NEWC_POLL);
+    }
 }
 
 #[cfg(test)]
@@ -539,7 +839,36 @@ mod tests {
         for step in 0..=7 {
             v.push(mic_boost(step).unwrap());
         }
+        for on in [false, true] {
+            v.push(noise_reduction(on));
+            v.push(agc(on));
+            v.push(sidetone(on));
+        }
+        for level in [SIDETONE_MIN, SIDETONE_DEFAULT, SIDETONE_MAX] {
+            v.push(sidetone_level(level).unwrap());
+        }
+        v.push(newc());
         v
+    }
+
+    /// Bytes a patch accepts as its before-value, different from what it writes.
+    fn current_for(p: &Patch) -> Vec<u8> {
+        match &p.change {
+            Change::Swap { before, .. } => before.to_vec(),
+            Change::Byte { lo, hi, value } => vec![if value == lo { *hi } else { *lo }],
+            Change::Bits { mask, value, .. } => vec![if value == mask { 0 } else { *mask }],
+            Change::Word { lo, hi, value } => {
+                (if value == lo { *hi } else { *lo }).to_le_bytes().to_vec()
+            }
+            Change::Newc => vec![0x02],
+        }
+    }
+
+    fn written_by(p: &Patch) -> Vec<u8> {
+        match p.step(&current_for(p)) {
+            Step::Write(bytes) => bytes,
+            _ => panic!("{} does not write over its own before-value", p.name()),
+        }
     }
 
     fn apply(dev: &FakeDevice, p: &Patch) -> Result<Outcome> {
@@ -559,7 +888,7 @@ mod tests {
 
     #[test]
     fn write_reports_are_cpu_ram_writes_to_allowed_addresses() {
-        let allowed: [(u16, usize); 8] = [
+        let allowed: [(u16, usize); 11] = [
             (0x14B1, 1),
             (0x14B2, 2),
             (0x16CF, 1),
@@ -568,10 +897,14 @@ mod tests {
             (0x1F1C, 11),
             (0x1F15, 1),
             (0x1017, 1),
+            (0x1151, 1),
+            (0x1154, 1),
+            (0x1276, 2),
         ];
         for p in all_patches() {
             assert!(p.is_consistent(), "{}", p.name());
-            let r = OutReport::write(&p);
+            let after = written_by(&p);
+            let r = OutReport::write(&p, &after);
             let b = r.as_bytes();
             assert_eq!(b[0], 0x04, "{}", p.name());
             assert_eq!(b[1], 0x40, "{}", p.name());
@@ -582,8 +915,24 @@ mod tests {
                 "{} -> ${addr:04X}/{len}",
                 p.name()
             );
-            assert_eq!(&b[5..5 + len], p.after());
+            assert_eq!(&b[5..5 + len], after);
             assert!(b[5 + len..].iter().all(|&x| x == 0));
+        }
+    }
+
+    #[test]
+    fn a_write_report_has_exactly_the_length_of_its_patch() {
+        for p in all_patches() {
+            let n = p.len();
+            assert_eq!(p.len(), written_by(&p).len(), "{}", p.name());
+            for wrong in [n - 1, n + 1, 32] {
+                if wrong == 0 || wrong == n {
+                    continue;
+                }
+                let data = vec![0x11; wrong];
+                let built = std::panic::catch_unwind(|| OutReport::write(&p, &data));
+                assert!(built.is_err(), "{}: {wrong} bytes", p.name());
+            }
         }
     }
 
@@ -696,10 +1045,16 @@ mod tests {
         // an unrelated register, the byte after the hook operands, and writes that run past
         // either end of the window
         for p in [
-            rogue(0x1151, &[0x00], &[0x10]),
+            rogue(0x1150, &[0x00], &[0x10]),
             rogue(0x14B4, &[0x4C], &[0x60]),
             rogue(0x1F26, &[0x60, 0x00], &[0x00, 0x00]),
             rogue(0x1EFB, &[0x60, 0x2F], &[0x00, 0x00]),
+            rogue(0x1152, &[0x00], &[0x02]),
+            rogue(0x1153, &[0x00], &[0x80]),
+            rogue(0x1155, &[0x00], &[0x01]),
+            rogue(0x1275, &[0x00], &[0x01]),
+            rogue(0x1277, &[0x03, 0x00], &[0x00, 0x00]),
+            rogue(0x040A, &[0x00], &[0x80]),
         ] {
             let dev = FakeDevice::stock();
             dev.poke(0x1151, &[0x00]);
@@ -874,6 +1229,9 @@ mod tests {
                 (Mode::Stock, dac_hold(0, false)),
                 (Mode::Stock, mic_boost(6).unwrap()),
                 (Mode::MinHiss, settle_time(0x20).unwrap()),
+                (Mode::Stock, noise_reduction(false)),
+                (Mode::Stock, sidetone_level(0x0200).unwrap()),
+                (Mode::Stock, newc()),
             ] {
                 let dev = FakeDevice::in_mode(mode);
                 dev.poke(addr, &[dev.byte(addr) ^ 0x01]);
@@ -951,5 +1309,263 @@ mod tests {
             dev.poke(SETTLE_ADDR, &[0x3C]);
             assert_refused(&dev, &settle_time(0x20).unwrap());
         }
+    }
+
+    type Event = Box<dyn FnOnce(&FakeDevice)>;
+
+    /// A device that runs `event` once, just before the `at`th read request reaches it.
+    struct Meddle {
+        dev: FakeDevice,
+        reads: usize,
+        at: usize,
+        event: Option<Event>,
+    }
+
+    impl Meddle {
+        fn new(dev: &FakeDevice, at: usize, event: impl FnOnce(&FakeDevice) + 'static) -> Self {
+            Self {
+                dev: dev.clone(),
+                reads: 0,
+                at,
+                event: Some(Box::new(event)),
+            }
+        }
+    }
+
+    impl Transport for Meddle {
+        fn send(&mut self, report: &OutReport) -> Result<()> {
+            if !report.is_write() {
+                self.reads += 1;
+                if self.reads == self.at
+                    && let Some(event) = self.event.take()
+                {
+                    event(&self.dev);
+                }
+            }
+            self.dev.send(report)
+        }
+
+        fn receive(&mut self) -> Result<Vec<u8>> {
+            self.dev.receive()
+        }
+    }
+
+    /// The read request after the target read and the three guard reads of a DSP patch.
+    const READ_AFTER_GUARDS: usize = 5;
+
+    fn dsp_patches() -> Vec<Patch> {
+        let mut v = vec![sidetone_level(0x0200).unwrap(), newc()];
+        for on in [false, true] {
+            v.extend([noise_reduction(on), agc(on), sidetone(on)]);
+        }
+        v
+    }
+
+    /// A device on which `p` has something to write.
+    fn needing(p: &Patch) -> FakeDevice {
+        let dev = FakeDevice::stock();
+        dev.poke(p.addr(), &current_for(p));
+        dev
+    }
+
+    #[test]
+    fn dsp_bits_change_only_their_own_bit() {
+        for (patch, start, end) in [
+            (noise_reduction(false), 0x94, 0x90),
+            (noise_reduction(true), 0x90, 0x94),
+            (agc(true), 0x04, 0x14),
+            (agc(false), 0x94, 0x84),
+            (sidetone(true), 0x14, 0x94),
+            (sidetone(false), 0x94, 0x14),
+        ] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x1151, &[start]);
+            assert_eq!(apply(&dev, &patch).unwrap(), Outcome::Written);
+            assert_eq!(dev.writes(), vec![(0x1151, vec![end])], "{}", patch.name());
+        }
+    }
+
+    #[test]
+    fn dsp_bits_that_are_already_set_are_not_rewritten() {
+        for (patch, state) in [
+            (noise_reduction(true), 0x04),
+            (noise_reduction(false), 0x90),
+            (agc(true), 0x14),
+            (agc(false), 0x04),
+            (sidetone(true), 0x84),
+            (sidetone(false), 0x04),
+        ] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x1151, &[state]);
+            assert_eq!(apply(&dev, &patch).unwrap(), Outcome::AlreadySet);
+            assert!(dev.writes().is_empty(), "{}", patch.name());
+        }
+    }
+
+    #[test]
+    fn dsp_bits_are_refused_when_the_byte_holds_any_other_bit() {
+        for other in [0x01, 0x02, 0x08, 0x20, 0x40] {
+            for on in [false, true] {
+                for p in [noise_reduction(on), agc(on), sidetone(on)] {
+                    let dev = FakeDevice::stock();
+                    dev.poke(0x1151, &[0x04 | other]);
+                    assert_refused(&dev, &p);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dsp_patches_need_their_preconditions() {
+        // chip-mode flag, DSP bypass flag and chip id
+        for p in dsp_patches() {
+            for (addr, bad) in [(0x1000, 0x81), (0x00A6, 0x01), (0x1005, 0x02)] {
+                let dev = needing(&p);
+                dev.poke(addr, &[bad]);
+                assert_refused(&dev, &p);
+            }
+        }
+    }
+
+    #[test]
+    fn a_bit_that_appears_while_the_guards_are_read_stops_the_write() {
+        for p in [noise_reduction(false), agc(true), sidetone(true)] {
+            let dev = needing(&p);
+            let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, |d| d.poke(0x1151, &[0x0C]));
+            let err = apply_patch(&mut meddled, &p).unwrap_err();
+            assert!(matches!(err, Error::Refused(_)), "{}: {err}", p.name());
+            assert!(dev.writes().is_empty(), "{}", p.name());
+        }
+    }
+
+    #[test]
+    fn a_dsp_bit_set_by_the_rom_meanwhile_is_kept() {
+        // the target is read again after the guards, so a change made in between is not lost
+        let p = agc(true);
+        let dev = needing(&p);
+        dev.poke(0x1151, &[0x00]);
+        let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, |d| d.poke(0x1151, &[0x80]));
+        assert_eq!(apply_patch(&mut meddled, &p).unwrap(), Outcome::Written);
+        assert_eq!(dev.writes(), vec![(0x1151, vec![0x90])]);
+    }
+
+    #[test]
+    fn sidetone_level_is_limited_to_its_range() {
+        for bad in [0, 0x1001, 0x7FFF, 0x8000, 0x80B3, 0x8100, 0xFFFF] {
+            assert!(
+                matches!(sidetone_level(bad), Err(Error::Refused(_))),
+                "{bad:#06x}"
+            );
+        }
+        for ok in [SIDETONE_MIN, SIDETONE_DEFAULT, SIDETONE_MAX] {
+            assert!(sidetone_level(ok).is_ok(), "{ok:#06x}");
+        }
+        // a device value outside the range is not replaced
+        for bad in [0x0000u16, 0x1001, 0x8001, 0x80B3] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x1276, &bad.to_le_bytes());
+            assert_refused(&dev, &sidetone_level(0x0200).unwrap());
+        }
+    }
+
+    #[test]
+    fn sidetone_level_is_written_little_endian_and_only_when_it_differs() {
+        let dev = FakeDevice::stock();
+        let p = sidetone_level(0x0200).unwrap();
+        assert_eq!(apply(&dev, &p).unwrap(), Outcome::Written);
+        assert_eq!(dev.writes(), vec![(0x1276, vec![0x00, 0x02])]);
+        assert_eq!(apply(&dev, &p).unwrap(), Outcome::AlreadySet);
+        assert_eq!(dev.writes().len(), 1);
+    }
+
+    #[test]
+    fn a_newc_the_rom_has_pending_is_waited_for_and_not_repeated() {
+        // the request is consumed at the `reads`th read, so the first read still sees it
+        for (start, reads) in [(0x01, 2), (0x01, 4), (0x03, 3)] {
+            let dev = FakeDevice::stock();
+            dev.poke(0x1154, &[start]);
+            dev.raise_newc(reads);
+            assert_eq!(apply(&dev, &newc()).unwrap(), Outcome::AlreadySet);
+            assert!(dev.writes().is_empty(), "{start:#04x}/{reads}");
+            assert_eq!(dev.byte(0x1154), start & !0x01);
+            assert_eq!(dev.newc_consumed(), 1);
+        }
+    }
+
+    #[test]
+    fn a_newc_that_appears_while_the_guards_are_read_is_waited_for() {
+        let dev = FakeDevice::stock();
+        let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, |d| d.raise_newc(3));
+        assert_eq!(
+            apply_patch(&mut meddled, &newc()).unwrap(),
+            Outcome::AlreadySet
+        );
+        assert!(dev.writes().is_empty());
+        assert_eq!(dev.byte(0x1154), 0x00);
+        assert_eq!(dev.newc_consumed(), 1);
+    }
+
+    #[test]
+    fn a_pending_newc_that_is_never_consumed_is_an_error() {
+        let dev = FakeDevice::stock();
+        dev.poke(0x1154, &[0x01]);
+        dev.never_consume_newc();
+        let err = super::apply(&mut dev.clone(), &newc(), Duration::from_millis(30)).unwrap_err();
+        assert!(matches!(err, Error::Device(_)), "{err}");
+        assert!(dev.writes().is_empty());
+    }
+
+    #[test]
+    fn newc_leaves_the_stream_bits_alone_and_waits_for_the_rom() {
+        for reads in [1, 3] {
+            let dev = FakeDevice::stock();
+            let _mic = dev.open_mic();
+            assert_eq!(dev.byte(0x1154), 0x02);
+            dev.consume_newc_after_reads(reads);
+            assert_eq!(apply(&dev, &newc()).unwrap(), Outcome::Written);
+            assert_eq!(dev.writes(), vec![(0x1154, vec![0x03])]);
+            assert_eq!(dev.byte(0x1154), 0x02);
+            assert_eq!(dev.newc_consumed(), 1);
+        }
+    }
+
+    #[test]
+    fn a_newc_that_is_never_consumed_is_an_error() {
+        let dev = FakeDevice::stock();
+        dev.never_consume_newc();
+        let err = super::apply(&mut dev.clone(), &newc(), Duration::from_millis(30)).unwrap_err();
+        assert!(matches!(err, Error::Device(_)), "{err}");
+        assert!(err.to_string().contains("NEWC"), "{err}");
+        assert_eq!(dev.writes().len(), 1);
+    }
+
+    #[test]
+    fn a_stream_event_during_newc_is_reported_as_an_outcome_and_not_an_error() {
+        let dev = FakeDevice::stock();
+        let _mic = dev.open_mic();
+        dev.flip_on_newc(0x10);
+        let event = StreamEvent {
+            before: 0x02,
+            after: 0x12,
+        };
+        assert_eq!(apply(&dev, &newc()).unwrap(), Outcome::StreamEvent(event));
+        assert_eq!(dev.writes(), vec![(0x1154, vec![0x03])]);
+        assert_eq!(dev.newc_consumed(), 1);
+        let text = event.to_string();
+        assert!(text.contains("$1154") && text.contains("0x02") && text.contains("0x12"));
+        assert!(!text.contains("eplug"), "{text}");
+    }
+
+    #[test]
+    fn newc_reads_the_stream_bits_again_right_before_writing() {
+        // a capture stream opens while the guards are read: its bit must survive the request
+        let dev = FakeDevice::stock();
+        let mut meddled = Meddle::new(&dev, READ_AFTER_GUARDS, |d| d.poke(0x1154, &[0x02]));
+        assert_eq!(
+            apply_patch(&mut meddled, &newc()).unwrap(),
+            Outcome::Written
+        );
+        assert_eq!(dev.writes(), vec![(0x1154, vec![0x03])]);
+        assert_eq!(dev.byte(0x1154), 0x02);
     }
 }

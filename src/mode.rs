@@ -107,6 +107,16 @@ pub struct State {
     pub reg_0f2c: u8,
     /// $0F3E analog references (read-only).
     pub refs: u8,
+    /// $1151 DSP enable bits.
+    pub dsp_enable: u8,
+    /// $1276 sidetone gain.
+    pub sidetone_level: u16,
+    /// $00A4 applier flags (read-only).
+    pub appliers: u8,
+    /// $00A8 mixer flags (read-only).
+    pub mixer: u8,
+    /// $13DC capture interface alternate setting (read-only).
+    pub mic_stream: u8,
 }
 
 pub fn read_state<T: Transport + ?Sized>(t: &mut T) -> Result<State> {
@@ -121,6 +131,11 @@ pub fn read_state<T: Transport + ?Sized>(t: &mut T) -> Result<State> {
     let hp = r(HP_DRIVER, 2)?;
     let reg_0f2c = r(0x0F2C, 1)?;
     let refs = r(patches::REFS, 1)?;
+    let dsp_enable = r(patches::DSP_ENABLE, 1)?;
+    let sidetone_level = r(patches::SIDETONE_LEVEL_ADDR, 2)?;
+    let appliers = r(patches::APPLIERS, 1)?;
+    let mixer = r(patches::MIXER, 1)?;
+    let mic_stream = r(patches::MIC_STREAM, 1)?;
     Ok(State {
         rom: rom.try_into().unwrap(),
         hook: hook.try_into().unwrap(),
@@ -132,6 +147,11 @@ pub fn read_state<T: Transport + ?Sized>(t: &mut T) -> Result<State> {
         reg_0f1b: hp[1],
         reg_0f2c: reg_0f2c[0],
         refs: refs[0],
+        dsp_enable: dsp_enable[0],
+        sidetone_level: u16::from_le_bytes([sidetone_level[0], sidetone_level[1]]),
+        appliers: appliers[0],
+        mixer: mixer[0],
+        mic_stream: mic_stream[0],
     })
 }
 

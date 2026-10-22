@@ -7,6 +7,11 @@
 //! A stream is seen by the codec only after a few reads, as on the real device, where the
 //! endpoint takes a moment to start the USB stream after Windows says it runs.
 //!
+//! The microphone side models the DSP settings: a capture stream makes the ROM evaluate the
+//! noise-reduction and AGC bits of `$1151` (as the stream-open reload does), a NEWC request in
+//! `$1154` does the same when it is consumed, and sidetone follows its bit within a pass while
+//! a capture and a playback stream are both open.
+//!
 //! Every write is checked as it arrives, and a violation panics, so a planner or guard bug fails
 //! the test that triggers it:
 //! - only the allowed regions are written;
@@ -14,7 +19,10 @@
 //!   stream and the device is fully active, and the routine and operands only while the hook
 //!   is RTS;
 //! - the hook never leaves a live state to RTS while the analog references are off;
-//! - a live hook always runs a whole known routine.
+//! - a live hook always runs a whole known routine;
+//! - `$1151` holds only the noise-reduction, AGC and sidetone bits, `$1154` is only ever written
+//!   with its NEWC bit added to the byte it holds, the sidetone level stays in its range, and
+//!   none of the three is written while the chip-mode or DSP-bypass flags are set.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -48,6 +56,13 @@ const ENABLE: usize = 0x0F18;
 const DRIVER: usize = 0x0F1A;
 const DRIVER2: usize = 0x0F1B;
 const REFS: usize = 0x0F3E;
+const DSP_ENABLE: usize = 0x1151;
+const NEWC: usize = 0x1154;
+const SIDETONE_LEVEL: usize = 0x1276;
+const MIC_STREAM: usize = 0x13DC;
+const PLAYBACK_STREAM: usize = 0x13DD;
+const APPLIERS: usize = 0x00A4;
+const MIXER: usize = 0x00A8;
 
 /// Reads between a stream opening and the codec showing it.
 const STREAM_DELAY_READS: usize = 10;
@@ -80,6 +95,17 @@ struct Inner {
     early_writes: usize,
     streams_opened: usize,
     pending: Option<Vec<u8>>,
+    /// A capture stream is open.
+    mic_open: bool,
+    /// Reads until the ROM consumes a NEWC request; `None` when none is pending.
+    newc_reads: Option<usize>,
+    /// Reads the ROM takes to consume a NEWC request.
+    newc_delay: usize,
+    /// The ROM never consumes NEWC requests.
+    newc_stuck: bool,
+    /// Bits of `$1154` the ROM flips when it consumes a request, as a stream event would.
+    newc_flip: u8,
+    newc_consumed: usize,
 }
 
 /// A handle to the fake dongle; clones share the same device.
@@ -88,6 +114,21 @@ pub struct FakeDevice(Rc<RefCell<Inner>>);
 
 /// An open silent stream. Dropping it closes the stream.
 pub struct FakeStream(FakeDevice);
+
+/// An open microphone capture stream. Dropping it closes the stream.
+pub struct FakeMic(FakeDevice);
+
+impl Drop for FakeMic {
+    fn drop(&mut self) {
+        let mut d = self.0.0.borrow_mut();
+        d.mic_open = false;
+        d.mem[NEWC] &= !0x02;
+        d.evaluate();
+        if !std::thread::panicking() {
+            d.settle();
+        }
+    }
+}
 
 impl Drop for FakeStream {
     fn drop(&mut self) {
@@ -146,6 +187,44 @@ impl Inner {
     /// Brings the playback registers to what the firmware would show for the current routine,
     /// hook and stream state.
     fn settle(&mut self) {
+        self.mem[MIC_STREAM] = u8::from(self.mic_open);
+        self.mem[PLAYBACK_STREAM] = u8::from(self.stream_seen);
+        let sidetone = self.mic_open && self.stream_seen && self.mem[DSP_ENABLE] & 0x80 != 0;
+        self.mem[MIXER] = (u8::from(self.mic_open) << 5)
+            | (u8::from(self.stream_seen) << 4)
+            | (u8::from(sidetone) << 3);
+        self.settle_playback();
+    }
+
+    /// The ROM evaluates the noise-reduction and AGC bits while a capture stream is open: at
+    /// the stream's own reload and when it consumes a NEWC request.
+    fn evaluate(&mut self) {
+        let bits = self.mem[DSP_ENABLE];
+        self.mem[APPLIERS] = if self.mic_open {
+            ((bits & 0x04) << 5) | ((bits & 0x10) << 1)
+        } else {
+            0
+        };
+    }
+
+    fn consume_newc(&mut self) {
+        let Some(reads) = self.newc_reads else {
+            return;
+        };
+        if self.newc_stuck {
+            return;
+        }
+        if reads > 1 {
+            self.newc_reads = Some(reads - 1);
+            return;
+        }
+        self.newc_reads = None;
+        self.mem[NEWC] = (self.mem[NEWC] & !0x01) ^ self.newc_flip;
+        self.newc_consumed += 1;
+        self.evaluate();
+    }
+
+    fn settle_playback(&mut self) {
         let running = self.running();
         if self.stream_seen {
             self.mem[ENABLE] |= 0x03;
@@ -185,9 +264,51 @@ impl Inner {
                 || inside(DAC_A, DAC_A)
                 || inside(DAC_B, DAC_B)
                 || inside(WINDOW, WINDOW_END)
-                || inside(MIC, MIC),
+                || inside(MIC, MIC)
+                || inside(DSP_ENABLE, DSP_ENABLE)
+                || inside(NEWC, NEWC)
+                || inside(SIDETONE_LEVEL, SIDETONE_LEVEL + 1),
             "write of {data:02x?} to ${addr:04X} is outside the allowed regions"
         );
+        if inside(DSP_ENABLE, DSP_ENABLE)
+            || inside(NEWC, NEWC)
+            || inside(SIDETONE_LEVEL, SIDETONE_LEVEL + 1)
+        {
+            assert_eq!(
+                self.mem[0x1000] & 0x80,
+                0,
+                "DSP write with the chip-mode flag set"
+            );
+            assert_eq!(
+                self.mem[0x00A6] & 0x01,
+                0,
+                "DSP write while the DSP is bypassed"
+            );
+            assert_eq!(self.mem[0x1005], 0x03, "DSP write on an unknown chip id");
+        }
+        if inside(DSP_ENABLE, DSP_ENABLE) {
+            let allowed = 0x04 | 0x10 | 0x80;
+            assert_eq!(self.mem[DSP_ENABLE] & !allowed, 0, "$1151 holds other bits");
+            assert_eq!(
+                data[0] & !allowed,
+                0,
+                "write of {data:02x?} to $1151 sets other bits"
+            );
+        }
+        if inside(NEWC, NEWC) {
+            let current = self.mem[NEWC];
+            assert_eq!(current & 0x01, 0, "NEWC requested while one is pending");
+            assert_eq!(
+                data[0],
+                current | 0x01,
+                "$1154 written with more than the NEWC bit"
+            );
+        }
+        if inside(SIDETONE_LEVEL, SIDETONE_LEVEL + 1) {
+            assert_eq!(data.len(), 2, "partial sidetone level write");
+            let level = u16::from_le_bytes([data[0], data[1]]);
+            assert!((1..=0x1000).contains(&level), "sidetone level {level:#06x}");
+        }
         let touches_hook = addr <= HOOK + 2 && end > HOOK;
         let touches_window = addr <= WINDOW_END && end > WINDOW;
         let settle_only = addr == SETTLE && data.len() == 1;
@@ -244,6 +365,9 @@ impl FakeDevice {
         put(0x1001, &[0x15, 0x00, 0x00, 0x00, 0x03]);
         put(MIC, &[0x3C]);
         put(REFS, &[0x02]);
+        put(0x1000, &[0x01]);
+        put(DSP_ENABLE, &[0x04]);
+        put(SIDETONE_LEVEL, &[0xB3, 0x03]);
         let dev = Self(Rc::new(RefCell::new(Inner {
             mem,
             writes: Vec::new(),
@@ -258,9 +382,64 @@ impl FakeDevice {
             early_writes: 0,
             streams_opened: 0,
             pending: None,
+            mic_open: false,
+            newc_reads: None,
+            newc_delay: 1,
+            newc_stuck: false,
+            newc_flip: 0,
+            newc_consumed: 0,
         })));
         dev.0.borrow_mut().settle();
         dev
+    }
+
+    /// Opens a capture stream: the ROM reloads the DSP settings for it.
+    pub fn open_mic(&self) -> FakeMic {
+        let mut d = self.0.borrow_mut();
+        d.mic_open = true;
+        d.mem[NEWC] |= 0x02;
+        d.evaluate();
+        d.settle();
+        FakeMic(self.clone())
+    }
+
+    /// Flag bits of the noise-reduction, AGC and sidetone appliers as the ROM last evaluated them.
+    pub fn appliers(&self) -> u8 {
+        self.byte(APPLIERS as u16)
+    }
+
+    /// Bit 3 of the mixer flags: the sidetone path is running.
+    pub fn sidetone_running(&self) -> bool {
+        self.byte(MIXER as u16) & 0x08 != 0
+    }
+
+    /// NEWC requests the ROM has consumed.
+    pub fn newc_consumed(&self) -> usize {
+        self.0.borrow().newc_consumed
+    }
+
+    /// The ROM takes `reads` reads to consume a NEWC request (default 1).
+    pub fn consume_newc_after_reads(&self, reads: usize) {
+        self.0.borrow_mut().newc_delay = reads;
+    }
+
+    /// The ROM never consumes a NEWC request.
+    pub fn never_consume_newc(&self) {
+        self.0.borrow_mut().newc_stuck = true;
+    }
+
+    /// The ROM raises a NEWC request of its own, as it does on a stream event, and consumes it
+    /// at the `reads`th read request from now.
+    pub fn raise_newc(&self, reads: usize) {
+        let mut d = self.0.borrow_mut();
+        d.mem[NEWC] |= 0x01;
+        d.newc_reads = Some(reads);
+    }
+
+    /// The ROM flips these bits of `$1154` when it consumes a request, as a stream event
+    /// arriving at that moment would.
+    pub fn flip_on_newc(&self, bits: u8) {
+        self.0.borrow_mut().newc_flip = bits;
     }
 
     pub fn mem(&self) -> Vec<u8> {
@@ -375,6 +554,7 @@ impl Transport for FakeDevice {
         match b[1] {
             0x00 => {
                 assert!(b[5..].iter().all(|&x| x == 0), "data in read request");
+                d.consume_newc();
                 d.pending = Some(d.mem[addr..addr + len].to_vec());
             }
             0x40 => {
@@ -388,6 +568,9 @@ impl Transport for FakeDevice {
                 }
                 if !d.ignore_writes {
                     d.mem[addr..addr + len].copy_from_slice(&data);
+                    if addr == NEWC && data[0] & 0x01 != 0 {
+                        d.newc_reads = Some(d.newc_delay);
+                    }
                     d.settle();
                 }
                 d.writes.push((addr as u16, data));

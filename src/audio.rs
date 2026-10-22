@@ -4,12 +4,13 @@
 //! driver fully on. Changing the hook or the routine it runs with such a stream open means the
 //! driver does not change state during the moment the hook is off.
 //!
-//! The stream is opened in WASAPI exclusive mode when no program has an audio session on the
-//! output: closing it ends the USB stream at once, so the codec returns to idle. Taking the
+//! The stream is opened in WASAPI exclusive mode when no other program has an audio session on
+//! the output: closing it ends the USB stream at once, so the codec returns to idle. Taking the
 //! output exclusively would stop other programs' sessions for good, so when one has a session,
-//! or exclusive mode is not available, the stream is opened in shared mode instead. After a
-//! shared-mode stream closes, Windows often keeps the USB stream running for a long time (see
-//! docs/firmware-notes.md).
+//! or exclusive mode is not available, the stream is opened in shared mode instead. A program
+//! that opens a session after the session check but before the exclusive `Initialize` returns
+//! is still cut off. After a shared-mode stream closes, Windows often keeps the USB stream
+//! running for a long time (see docs/firmware-notes.md).
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -38,6 +39,8 @@ const BUFFER_100NS: i64 = 2_000_000;
 const REFILL: Duration = Duration::from_millis(20);
 /// Sample rates tried for the exclusive stream, as 16-bit stereo PCM.
 const EXCLUSIVE_RATES: [u32; 3] = [48_000, 44_100, 96_000];
+/// The exclusive buffer holds this many device periods, so a late refill does not underrun.
+const EXCLUSIVE_PERIODS: i64 = 4;
 
 /// The open stream. Dropping it stops the stream.
 pub struct SilentStream {
@@ -152,10 +155,10 @@ fn run(
         out.client.Start().map_err(audio_err)?;
         let _ = started.send(Ok(out.exclusive));
         let ended = refill(&out, stop);
-        let _ = out.client.Stop();
         if let Err(e) = ended {
             *failure.lock().unwrap_or_else(|e| e.into_inner()) = Some(e.to_string());
         }
+        let _ = out.client.Stop();
         Ok(())
     }
 }
@@ -175,9 +178,7 @@ unsafe fn refill(out: &Output, stop: &Receiver<()>) -> Result<()> {
 
 unsafe fn open_output(device: &IMMDevice) -> Result<Output> {
     unsafe {
-        if !has_other_sessions(device).unwrap_or(true)
-            && let Some(out) = open_exclusive(device)
-        {
+        if let Some(out) = open_exclusive(device) {
             return Ok(out);
         }
         open_shared(device)
@@ -196,7 +197,9 @@ fn pcm16_stereo(rate: u32) -> WAVEFORMATEX {
     }
 }
 
-/// An exclusive-mode stream, or `None` if the endpoint does not offer one.
+/// An exclusive-mode stream, or `None` if the endpoint does not offer one or another program
+/// has an audio session on it. The format and period are probed first so that the session
+/// check runs immediately before `Initialize`.
 unsafe fn open_exclusive(device: &IMMDevice) -> Option<Output> {
     unsafe {
         let client: IAudioClient = device.Activate(CLSCTX_ALL, None).ok()?;
@@ -208,11 +211,14 @@ unsafe fn open_exclusive(device: &IMMDevice) -> Option<Output> {
         })?;
         let mut period = 0;
         client.GetDevicePeriod(Some(&mut period), None).ok()?;
+        if has_other_sessions(device).unwrap_or(true) {
+            return None;
+        }
         client
             .Initialize(
                 AUDCLNT_SHAREMODE_EXCLUSIVE,
                 0,
-                period,
+                period * EXCLUSIVE_PERIODS,
                 period,
                 &format,
                 None,
@@ -257,8 +263,8 @@ unsafe fn silence(out: &Output, frames: u32) -> Result<()> {
     }
 }
 
-/// True if a program other than the system sounds has an audio session on the endpoint,
-/// playing or not.
+/// True if a program other than the system sounds and this process has an audio session on the
+/// endpoint, playing or not.
 unsafe fn has_other_sessions(device: &IMMDevice) -> windows::core::Result<bool> {
     unsafe {
         let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None)?;
@@ -267,7 +273,8 @@ unsafe fn has_other_sessions(device: &IMMDevice) -> windows::core::Result<bool> 
             let session: IAudioSessionControl2 = sessions.GetSession(i)?.cast()?;
             let system = session.IsSystemSoundsSession().0 == 0;
             let expired = session.GetState()? == AudioSessionStateExpired;
-            if !system && !expired {
+            let own = session.GetProcessId()? == std::process::id();
+            if !system && !expired && !own {
                 return Ok(true);
             }
         }

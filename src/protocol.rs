@@ -46,10 +46,17 @@ impl OutReport {
         Self::new(FLAG_READ, addr, len, &[])
     }
 
-    /// Builds the write request for an allow-listed patch. Only [`crate::patches::apply_patch`]
-    /// calls this, after its checks have passed.
-    pub(crate) fn write(patch: &Patch) -> Self {
-        Self::new(FLAG_WRITE, patch.addr(), patch.after().len(), patch.after())
+    /// Builds the write request of `data` for an allow-listed patch. Only
+    /// [`crate::patches::apply_patch`] calls this, after its checks have passed.
+    pub(crate) fn write(patch: &Patch, data: &[u8]) -> Self {
+        assert_eq!(
+            data.len(),
+            patch.len(),
+            "write of {} bytes for a patch of {}",
+            data.len(),
+            patch.len()
+        );
+        Self::new(FLAG_WRITE, patch.addr(), data.len(), data)
     }
 
     pub fn as_bytes(&self) -> &[u8; OUT_LEN] {
