@@ -25,7 +25,7 @@ EEPROM; `img 0xxxxx` is an offset in the EEPROM image (same numbers as EEPROM of
 ### Safety policy
 
 cxtune changes volatile state only. It sends HID memory requests with flags `0x00` (read CPU
-memory) and `0x40` (write CPU memory) and never `0x20` (EEPROM), `0x80` (DSP memory) or `0x10`
+memory) and `0x40` (write CPU memory) and never `0x20` (EEPROM access), `0x80` (DSP memory) or `0x10`
 (address at or above 64 KiB). Every write passes one guarded function (see
 [Safety design](../README.md#safety-design) and [Writable regions](firmware-notes.md#writable-regions)).
 Reasons:
@@ -33,7 +33,7 @@ Reasons:
 - A replug reloads patch RAM from the EEPROM, so a bad RAM write is undone. An EEPROM write is
   not, and the recovery behaviour of a damaged EEPROM is not established (section 5.4).
 - The device-side handler of the memory protocol has no access control: it performs a write to
-  any CPU address, and an EEPROM write when flag `0x20` is set (section 4). Nothing in the
+  any CPU address, and an EEPROM write when flags `0x20` and `0x40` are set (section 4). Nothing in the
   protocol protects the EEPROM header or the patch.
 - The update method used by fwupd for this chip family has no rollback and no checksum
   (section 5.3).
@@ -51,7 +51,7 @@ Contributions should keep to the same rule (section 9).
 | CPU | 8-bit core, 65C02 plus Rockwell bit instructions plus Conexant extensions (section 3) | PROVEN |
 | ROM | 36864 bytes at `$7000..$FFFF`, mask ROM, read with ordinary HID reads | PROVEN |
 | EEPROM | 16 KiB serial EEPROM on a bit-banged I2C bus (device address `0xA0`), holds patch, config, USB descriptors | PROVEN (contents), INFERRED (bus) |
-| RAM | Config RAM `$1000..$11E7` and patch RAM `$1450..$2253` are loaded from the EEPROM at boot; the rest is working RAM | PROVEN |
+| RAM | Config RAM `$1000..$11E8` and patch RAM `$1460..$2253` are loaded from the EEPROM at boot; the rest is working RAM | PROVEN |
 | DSP | Voice/audio DSP behind two mailbox ports, program/data memory loaded from the EEPROM patch | INFERRED |
 
 The ROM contains complete default behaviour (USB device descriptor `0572:1430` at `$E395`, a
@@ -66,8 +66,8 @@ That the ROM defaults are used when no usable EEPROM is present follows from the
 As modelled in our Ghidra project (only the ROM boundary is certain, the rest are working
 assumptions): zero page and stack `$0000..$01FF`; UART ring buffer `$0200..$023F`
 (indices `$0240`/`$0241`); loader scratch `$0300`; hardware registers `$0400..$04xx`, `$0B00`,
-`$0C00..$0D0x` (DSP mailboxes, USB), `$0F00..$0F7F` (codec); config RAM `$1000..$11E7`; working
-variables `$1200..$13FF`; patch hook table and patch RAM `$1457..$2253`; I/O `$3000..$30FF`;
+`$0C00..$0D0x` (DSP mailboxes, USB), `$0F00..$0F7F` (codec); config RAM `$1000..$11E8`; working
+variables `$1200..$13FF`; patch hook table and patch RAM `$1457..$2253` (the EEPROM loads from `$1460`); I/O `$3000..$30FF`;
 ROM `$7000..$FFFF`.
 
 ### 2.3 ROM layout
@@ -77,7 +77,7 @@ ROM `$7000..$FFFF`.
 | `$7000` | Reset code; `$7003` is both the IRQ vector and the start of the boot sequence | PROVEN |
 | `$E24B..$E354` | `(C) CONEXANT`, UART download strings, `CATP_V00.15.00.00` at `$E320`, `DSP LOCKUP` | PROVEN |
 | `$E395`, `$E56A`, `$E8C4..` | default device descriptor, default HID report descriptor, USB audio class request table | PROVEN |
-| `$F117..$F368` | default configuration: 80 B for zero page `$4C`, 25 B for `$0F50`, 488 B for `$1000` | PROVEN |
+| `$F117..$F368` | default configuration: 80 B for zero page `$4C`, 25 B for `$0F50`, 489 B for `$1000` | PROVEN |
 | `$F369..$FFDB` | pseudo-random fill, see below | PROVEN |
 | `$FFDC..$FFDF` | 4 bytes `db a2 2f 67`, not the output of the fill generator | UNKNOWN |
 | `$FFE0..$FFFF` | extended vector table and the 6502 vectors | PROVEN |
@@ -100,39 +100,46 @@ INFERRED from the static disassembly, with addresses in the ROM listing.
    `$7003`: stack, hardware init, `$1000 = 0`, the hook table `$1460..$155E` is filled with `RTS`
    (`$70B8`).
 2. EEPROM probe: `$7DC8` clears the bus, `$7B4F` addresses device `0xA0` (`$A1` bit 0 = EEPROM
-   present). `$7C15` determines the addressing mode and size (section 5.2); `$8072` initialises a
-   missing header; `$7B9C` checks whether EEPROM `0x02..0x0E` holds the string
+   present). `$7C15` determines the addressing mode and size (section 5.2); `$8072` checks the
+   header and rewrites it where it does not match (on every boot with an EEPROM, section 5.2);
+   `$7B9C` checks whether EEPROM `0x02..0x0E` holds the string
    `(C) CONEXANT` and, if so, takes a different path (`$7BB8`) that copies a code record from
    the EEPROM into RAM and jumps to it. This path is not used by the Cloud II image.
 3. Both DSP ports are started and awaited with a timeout (`$704C..$7093`).
 4. `$7A11`: if the EEPROM is present, its size is known and EEPROM `0x14` is `'P'` (`0x50`), the
    patch stream at the address in EEPROM `0x15..0x16` is loaded (`$82FC`, section 2.5).
-5. `$7A50` calls hook 3, then `$8BB7` copies the ROM defaults into zero page, `$0F50` and
-   `$1000..$11E7` and calls hook 23. `$8C09` calls `$8CFD`, which overlays the EEPROM
-   configuration if EEPROM `0x11` is exactly `0x81` (config RAM address = EEPROM offset
-   `+ 0x0E29`), writes the version bytes, sets `NEWC` (`$1154` bit 0) and `$1000 = 1`.
+5. `$7A50` calls hook 3, then `$8BB7`, which first calls hook 23 and then copies the ROM
+   defaults into zero page, `$0F50` and `$1000..$11E8`. `$8C09` calls `$8CFD`, which overlays the
+   EEPROM configuration if EEPROM `0x11` is exactly `0x81` (config RAM address = EEPROM offset
+   `+ 0x0E29`); back in `$8C09` the version bytes are written, `NEWC` (`$1154` bit 0) is set and
+   `$1000 = 1`.
 6. Main loop `$7A84` (section 3.4).
 
-Hook 23 of the vendor patch (`$1EA3`) arms two patch slots that post-process the loaded
-configuration: `$8D66 -> $1EC7` reads 81 further EEPROM bytes (`0x3BF..0x40F`) into `$1581..$15D1`,
-and `$8C74 -> $1EBA` seeds the sidetone gain `$1276/7` from zero-page `$87/$88` (the stored
-default `0x03B3`) instead of the ROM's `$81/$82` (the minimum). Hook 25 (`$1EDA`) arms
-`$8E55 -> $1EE1`, which writes `$1581..` back when the ROM saves its configuration.
+Hook 23 of the vendor patch (`$1EA3`) runs before the defaults and the configuration are loaded.
+It arms two patch slots that fire later, inside the load, and adjust it: `$8D66 -> $1EC7`
+(at the end of the EEPROM config copy) reads 81 further EEPROM bytes (`0x3C0..0x410`) into
+`$1581..$15D1`, and `$8C74 -> $1EBA` seeds the sidetone gain `$1276/7` from zero-page `$87/$88`
+(the stored default `0x03B3`) instead of the ROM's `$81/$82` (the minimum). Hook 25 (`$1EDA`)
+arms `$8E55 -> $1EE1`, which writes `$1581..` back when the ROM saves its configuration.
 
 ### 2.5 The EEPROM patch stream
 
 The stream starts at the address in EEPROM `0x15..0x16` (`0x05BF`). Segments are parsed by the
 state machine at `$82FC` (jump table `$830F`). In the code segment, CPU address = image offset
 `+ 0x0E91`; in the hook table segment it is `+ 0x0E95` (the 5-byte segment header sits in
-between). Format as implemented by our image parser (`cximg.py`, which agrees with the loader's
-use of the bytes; PROVEN for this image):
+between). In the loader (`$8327`) flag bit 7 selects DSP or CPU memory and bit 6 selects "run
+after loading"; other bits are not tested. Layouts as implemented by our image parser
+(`cximg.py`; PROVEN for this image):
 
 | Flag | Layout | Meaning |
 |---|---|---|
 | `0x00` | `flag, startLo, startHi, endLo, endHi, data[end-start+1]` | load into CPU RAM |
 | `0x40` | same | load into CPU RAM, then run it |
 | `0x80` | `flag, bank, dstLo, dstHi, ?, endLo, endHi, data[end-dst]` | load into DSP memory (bank `01`) |
-| other bits | | end of stream |
+
+There is no end-of-stream flag: the driver loop (`$8300`) parses segments until a run segment
+leaves the loader. (`cximg.py` stops at a flag with other bits set; that is the parser's
+convention, not the loader's.)
 
 This unit's stream (image offsets):
 
@@ -144,7 +151,9 @@ This unit's stream (image offsets):
 | `0x13C3..0x1593` | `0x80` | DSP bank 01 `$8000..$8B48` (5 segments) | 2812 | DSP program/data |
 | `0x1EE2` | `0x40` | RAM `$0300..$0302` | 3 | `JMP $8530`, run; `$8530` ends the serial read and unwinds the loader |
 
-The patch name string follows at `0x1EEA`. No checksum or length field covers the stream.
+The stream ends only because its last segment is a run segment whose code (`JMP $8530`) unwinds
+the loader. The patch name string follows at `0x1EEA`; it would be parsed as a CPU segment if
+the loader ever got there. No checksum or length field covers the stream.
 
 ### 2.6 Patch mechanisms
 
@@ -156,13 +165,14 @@ The patch name string follows at `0x1EEA`. No checksum or length field covers th
 - **`PATCH` slots (INFERRED).** `6B slot from to` redirects execution of the ROM address `from` to
   `to`. Targets are either `from + N` (skip N bytes: hook 30's `PATCH #0, $D4BA -> $D4BF` skips
   the ROM's 5-byte store of the idle-park value `0x33` to `$0F1A`) or patch code (for example
-  `$947B -> $1F62`). The vendor patch uses slot numbers 0..11 and reuses a number for several
-  routines. The number of hardware slots, and what rearming a slot does, are UNKNOWN.
+  `$947B -> $1F62`). The vendor patch uses slot numbers 0, 1 and 6 to 11 and reuses a number for
+  several routines. The number of hardware slots, and what rearming a slot does, are UNKNOWN.
 - **RAM trampolines and pointer slots (PROVEN as code).** The ROM keeps `JMP` trampolines in RAM
   (`$12EA`, `$11EF`) whose operands code stores at run time, and callback pointers (`$11EA`,
   `$11F0`, `$12E2`, `$1205`, `$11FC`, `$11FF`); the patch overwrites some of these.
-- **Config overlay (PROVEN).** The EEPROM configuration replaces ROM defaults before the patch's
-  hook 23 runs, so a patch can adjust values the configuration sets.
+- **Config overlay (PROVEN).** Hook 23 runs first in `$8BB7`, before the ROM defaults and the
+  EEPROM configuration are copied. A patch adjusts the loaded values by arming `PATCH` slots
+  there that fire inside the load (section 2.4).
 
 ## 3. The CPU
 
@@ -259,7 +269,9 @@ flag. Flag bits stay set until cleared by code.
 5. **park test:** if `$1000` bit 7 is set the loop restarts here (`$7AA2`). This is the "run only
    the basic functionality" state fwupd uses while writing the EEPROM. Everything below is
    skipped, including the configuration apply.
-6. hook `$14A8` if `$9C` bit 6; then `$BC5B`, `$E1BD`, `$D7E8`, `$D8B3`, hook `$154A` if `$9C`
+6. if `$9C` bit 6 is set the loop runs hook `$14A8` and the RAM slot `$11F8`, then branches back
+   to `$7A84` (`$7AAA..$7AB0`); everything below, including the configuration apply, is skipped
+   in that state too. Otherwise: `$BC5B`, `$E1BD`, `$D7E8`, `$D8B3`, hook `$154A` if `$9C`
    bit 1, `$D906`, `$D9D7`, **`$8E6D` (apply configuration: NEWC reload, then the per-pass
    updates, [firmware-notes](firmware-notes.md#mechanism))**, `$E081`, `$DCF4`; repeat.
 
@@ -291,13 +303,16 @@ protocol works with ours, the reason is not established.
 ### 5.1 Map
 
 PROVEN from the dump, from fwupd's structure definitions and from the ROM code that reads each
-field. The dump differs from the vendor update image only in `0x00..0x01` (section 5.2).
+field. The vendor update image (the S-record file of the Cloud II updater) has no record below
+`0x02`; it covers 7774 of the 7979 bytes in `0x02..0x1F2C` (the gaps are `0xA2..0x16D` and
+`0x411`) and equals the dump wherever it covers. `0x00..0x01` were therefore written by the
+ROM (section 5.2).
 
 | EEPROM | Content |
 |---|---|
 | `0x00` | `0x4C` (`'L'`), validity signature |
 | `0x01` | `0x06`, size code: size = `1 << (code + 8)` = 16 KiB |
-| `0x02` | `0x28`, checked by the ROM next to `'L'`; meaning unknown |
+| `0x02` | `0x28` (`'('`), checked by the ROM next to `'L'`; `$7B9C` also compares from here against `(C) CONEXANT` |
 | `0x03..0x04` | `A3 02`, unexplained |
 | `0x05..0x06` | storage size 0; fwupd's storage area at `size - 0 - 4` = `0x3FFC` is empty |
 | `0x07..0x10` | zero |
@@ -309,15 +324,15 @@ field. The dump differs from the vendor update image only in `0x00..0x01` (secti
 | `0x3A..0x41` | zero |
 | `0x42..0xA1` | three USB string descriptors (`length, 0x03, UTF-16LE`): serial `00000000` at `0x42`, `Kingston` at `0x54`, `HyperX Virtual Surround Sound` at `0x66` |
 | `0xA2..0x16D` | free (204 bytes, `0xFF`) |
-| `0x16E..0x3BE` | configuration block, 593 bytes: `0x16E..0x1BD` to zero page `$4C..$9B`, `0x1BE..0x1D6` to `$0F50..$0F68`, `0x1D7..0x3BE` to `$1000..$11E7` |
-| `0x3BF..0x40F` | 81 bytes mirrored at `$1581..$15D1` by the vendor patch (INFERRED) |
-| `0x410..0x411` | `05 FF`, unexplained |
+| `0x16E..0x3BF` | configuration block, 594 bytes: `0x16E..0x1BD` to zero page `$4C..$9B`, `0x1BE..0x1D6` to `$0F50..$0F68`, `0x1D7..0x3BF` to `$1000..$11E8` |
+| `0x3C0..0x410` | 81 bytes mirrored at `$1581..$15D1` by the vendor patch (INFERRED); `0x410` is `05` |
+| `0x411` | `FF`, unexplained |
 | `0x412..0x50A` | USB configuration descriptor (249 bytes, 4 interfaces) |
 | `0x50B..0x5BE` | HID report descriptor (180 bytes) |
 | `0x5BF..0x1EE9` | patch stream (section 2.5) |
 | `0x1EEA` | `Foreshot_HyperX_Patch_23-4E-0A_Rev_0010_NVM-CATP_dp_00.02.05.00` |
 | `0x1F2A..0x1F2C` | `CX3`, device-kind tag (CX2077x in fwupd) |
-| `0x1F2D..0x3FFC` | free (about 8.3 KB, `0xFF`) except `0x1FFD = 0x06` and `0x3FFD = 0x07` |
+| `0x1F2D..0x3FFF` | free (about 8.3 KB, `0xFF`) except `0x1FFD = 0x06` and `0x3FFD = 0x07` |
 
 There is no USB device descriptor in the EEPROM; the identity comes from the vendor info block,
 and the ROM supplies the rest.
@@ -330,28 +345,39 @@ was exercised, because that needs a damaged EEPROM):
 - **Signature.** `$7B7E` accepts the EEPROM only if byte `0x00` is `0x4C` and byte `0x02` is
   `0x28`. `$7C15` tries both addressing modes (two address bytes, then one), several times each,
   and then reads byte `0x01`: a value `4..8` belongs to two-byte addressing, `0..3` to one-byte.
-- **Header initialisation.** If the signature fails and the size probe found an EEPROM,
-  `$8072` writes `4C`, the size code and `28` to `0x00..0x02`, zeroes `0x03..0x28`, and, if
-  `0x29..0x2A` are not `'S' 04`, writes them and zeroes `0x2B..0x41`. This matches `0x29..0x2A`
-  reading `'S' 04` (layout version 4) and `0x3A..0x41` being zero.
-  **A corrupted byte 0 or 2 would therefore make the ROM overwrite the config marker and
-  pointer (`0x11..0x13`), the patch pointer (`0x14..0x16`) and the vendor info block**, and the
-  size probe below also writes single bytes inside the patch stream (`0x0FFD`).
-- **Size probe.** With no usable signature the ROM writes marker bytes `9, 8, 7, 6, 5` to
-  `0xFFFD, 0x7FFD, 0x3FFD, 0x1FFD, 0x0FFD` (in that order; addresses past the real size alias
-  downwards), reads `0x0FFD` back and then the others upwards, and takes the first marker that
-  does not read back as the size code (`0x1FFD` wrong: 4; `0x3FFD`: 5; `0x7FFD`: 6; `0xFFFD`: 7;
-  all right: 8). On a 16 KiB part this leaves `0x1FFD = 06` and `0x3FFD = 07`, and `0x0FFD = 05`,
-  which the patch later overwrote. That matches the dump byte for byte, so the stray bytes are
-  the ROM's own size-probe markers from when the part was blank. The vendor update image has
-  `FF FF` at `0x00..0x01` where the device has `4C 06`: those two bytes were written by the ROM,
-  not by the update (consistent with the header initialisation above).
+- **Header check and rewrite.** `$8072` returns early only when `$123B == 0xFF` (no EEPROM
+  found). Otherwise, including with a valid signature, it branches to `$80BF`, so the checks
+  below run on every boot with an EEPROM. It writes `4C`, the size code and `28` to
+  `0x00..0x02` and zeroes `0x03..0x28` when the signature does not match, and it writes `'S' 04`
+  to `0x29..0x2A` and zeroes `0x2B..0x41` when those two bytes do not already read `'S' 04`.
+  This matches `0x29..0x2A` reading `'S' 04` (layout version 4) and `0x3A..0x41` being zero.
+  **A corrupt `0x29` or `0x2A` alone would make the ROM write `'S' 04` and zero `0x2B..0x41`**
+  (application status, VID/PID/revision and the string pointers). **A corrupt byte 0 or 2 would
+  make it zero `0x03..0x28`**: the config marker and pointer (`0x11..0x13`), the patch pointer
+  (`0x14..0x16`) and `0x20..0x28` of the vendor info. `0x2B..0x41` survive if `0x29..0x2A` still
+  read `'S' 04`. The size probe below also writes single bytes, one of them inside the patch
+  stream (`0x0FFD`).
+- **Boot hang (INFERRED; whether a watchdog resets it is UNKNOWN).** In `$7C17..$7C64` the retry
+  counter in `Y` decrements only when both signature checks fail. A valid signature with
+  byte `0x01` outside `4..8` loops forever (`$7C64 BNE $7C17`, `$7C47 BRA $7C17`), so a damaged
+  size code can hang the boot instead of triggering a re-initialisation.
+- **Size probe (`$7C6D..$7DBE`; the two-byte part is `$7D03..$7DB0`).** With no usable signature
+  the ROM first writes a test byte `0x5A` to `0x0FFD` (to `0x00FD` in one-byte mode) and then
+  the marker bytes `9, 8, 7, 6, 5` to `0xFFFD, 0x7FFD, 0x3FFD, 0x1FFD, 0x0FFD` (in that order;
+  addresses past the real size alias downwards), reads `0x0FFD` back and then the others upwards,
+  and takes the first marker that does not read back as the size code (`0x1FFD` wrong: 4;
+  `0x3FFD`: 5; `0x7FFD`: 6; `0xFFFD`: 7; all right: 8). On a 16 KiB part this leaves
+  `0x1FFD = 06` and `0x3FFD = 07`, and `0x0FFD = 05`, which the patch later overwrote. That
+  matches the dump byte for byte, so the stray bytes are the ROM's own size-probe markers from
+  when the part was blank. The one-byte attempt on a two-byte part is not analysed.
 - **Config load.** `$8CFD` (called from `$8C09`) requires `0x11 == 0x81`, then reads the config
-  pointer from `0x12..0x13` and copies 80 + 25 + 488 bytes. No checksum.
+  pointer from `0x12..0x13` and copies 80 + 25 + 489 bytes. No checksum.
 - **Patch load.** `$7A11` requires `0x14 == 'P'` (`0x50`), reads the address from `0x15..0x16`
   and starts the segment loader. No checksum, no length check beyond the segment headers. A
   wrong address or a damaged segment header makes the loader write RAM at addresses taken from
-  the stream (PROVEN as code; effect untested).
+  the stream (PROVEN as code; effect untested). There is no end-of-stream marker (section 2.5):
+  a stream that loses its final run segment keeps being parsed, and writes RAM at addresses
+  taken from whatever follows it.
 - **ROM-initiated writes.** Besides the header initialisation, the main loop handles a save
   request in `$040A` (`$8D77..$8E6B`): bit 7 is the request. With bit 6 set and the low nibble
   `1` the ROM writes the live zero page, `$0F50` and `$1000` areas back to `0x16E..`, writes
@@ -386,6 +412,11 @@ during such an update should leave a device that boots without its patch, not on
 half-written patch. This is INFERRED from the ROM code and the file order; it is not a
 property fwupd enforces.
 
+The guard covers the patch only, not the configuration. In the same file, record 2 follows
+right after `0x14 = 0` and writes `0x02..0x13`, including `0x11 = 0x81` and the config pointer;
+the config block itself comes later (records 9 to 27) and nothing checksums it. A power loss in
+between can leave a valid marker over a partly written configuration, which the ROM loads as is.
+
 ### 5.4 Recovery: what is open
 
 Not established, and the reason cxtune never writes the EEPROM:
@@ -395,8 +426,11 @@ Not established, and the reason cxtune never writes the EEPROM:
   reports `0x04`/`0x05` (usage page `0x0C`), which suggests it does; whether those descriptors
   are used when the EEPROM is present but its patch is invalid is UNKNOWN.
 - What the ROM does when the patch stream is present (`0x14 == 'P'`) and corrupt (UNKNOWN; no
-  checksum was found, so it is probably not detected). Whether a watchdog resets a hung loader
-  is UNKNOWN.
+  checksum was found, so it is probably not detected). The loader has no end-of-stream flag: a
+  stream that loses its final run segment keeps being parsed and writes RAM at addresses taken
+  from whatever follows it (section 2.5). Whether a watchdog resets a hung loader is UNKNOWN.
+- A valid signature with a size code (`0x01`) outside `4..8` appears to hang the boot in the
+  retry loop at `$7C17..$7C64` (section 5.2; INFERRED, watchdog UNKNOWN).
 - Whether another Cloud II unit with different firmware revisions behaves the same.
 
 A contributor with a spare unit can help here (section 9); an EEPROM test must never be run on
@@ -408,7 +442,7 @@ The mechanism (NEWC, appliers, gates) is documented with measurements in
 [firmware-notes.md](firmware-notes.md#microphone-dsp-settings); the static analysis behind it
 is summarised here with its labels.
 
-**Config RAM.** `$1000..$11E7` is loaded from EEPROM `0x1D7..0x3BE` (section 5.1). Writes to it
+**Config RAM.** `$1000..$11E8` is loaded from EEPROM `0x1D7..0x3BF` (section 5.1). Writes to it
 are RAM-only. Parts used by the DSP appliers: `$1151` (DSP enables), `$1152` (second enable
 set, bits 1:0 EQ preset), `$1153`, `$1154` (NEWC), `$1156..$115A` (rate gates), `$1104..$110E`
 (AGC parameters), `$10F6..$10FA`, `$1197`, `$1199` (noise reduction), `$1112..$1129` (12-word
@@ -465,7 +499,7 @@ in which case small register values are not necessarily quiet.
 All analysis was static unless stated. No dump is published (section 9).
 
 **Disassembly.** `romdis.py` is a recursive-descent disassembler for the ROM
-(`$7000..$FFFF`) and the patch (`$1450`). It seeds from the vectors, the populated hook entries,
+(`$7000..$FFFF`) and the patch (RAM from `$1460`). It seeds from the vectors, the populated hook entries,
 `JMP (table,X)` tables and code pointers stored into RAM slots, and writes a listing, data
 cross-references, a call graph and the jump tables (about 11,000 instructions decoded; the
 remaining gaps are data tables and the fill). `cxdis.py` decodes the EEPROM patch image with the
@@ -499,32 +533,39 @@ with the same tools
 (configuration blocks, hook tables, USB descriptors, request tables) and compared with ours. The
 30 images (with ours) fall into 15 distinct configuration blocks. Ours (Kingston, `0951:16A4`
 rev `0010`) and the HP one (`03F0:0B92` rev `4103`) share one; the two Cloud II patches differ
-in identity strings, pointers and in one code immediate (`MOVI #$B4,$44` against `MOVI #$47,$44`
-at `$204D`, which looks like the HID report descriptor length, 180 against 71 bytes). The Jabra
+in identity strings, pointers, a few bytes of the USB configuration descriptor, the patch
+version byte (image `0x06CC`), the HID report descriptor (ours has an extra 109-byte
+telephony/LED collection with reports `0x08`, `0x09` and `0x17`) and one code immediate
+(`MOVI #$B4,$44` against `MOVI #$47,$44` at `$204D`, which looks like the HID report descriptor
+length, 180 against 71 bytes). The Jabra
 patches use the same ROM hook sites with different assignments, so they are the
 same ROM family; their ROM version is unknown. Useful because they expose controls our unit's
 descriptor hides (sidetone feature unit 11, default `$1151 = 0x81`).
 
 **Other sources.** fwupd `plugins/synaptics-cxaudio` (LGPL) for the memory protocol and the EEPROM
 structures; the Linux `cx2070x` codec driver for register names and the NEWC procedure; the
-record order of the Cloud II update file and the strings of a sibling product's updater
-("invalidating header", "validating header") for the write discipline.
+record order of the Cloud II update file for the write discipline. The strings "invalidating
+header" and "validating header" are also in the HP-branded Cloud II (rev `4103`)
+`DEVICEFIRMWAREUPGRADE-32.EXE`; the updater for rev `0010` was not examined here.
 
 ## 8. Open questions, ranked by where help is most valuable
 
 1. **EEPROM boot validation and recovery.** Section 5.2 answers part of it from the code; what
-   remains is behaviour: corrupted patch stream, corrupted byte 0 or 2, descriptor selection
-   without a valid patch. It needs a sacrificial unit and is the main obstacle to ever
+   remains is behaviour: corrupted patch stream, corrupted byte 0, 2, `0x29` or `0x2A`, a size
+   code outside `4..8` (a likely boot hang, section 5.2), an interrupted update (section 5.3),
+   descriptor selection without a valid patch. It needs a sacrificial unit and is the main obstacle to ever
    offering a persistent (EEPROM) mode.
-2. **Sidetone gain unit.** Evidence for USB audio class 1/256 dB units: zero page `$81..$88` is
-   the same four-word layout (minimum, maximum, resolution, default) as the speaker and
-   microphone volume ranges the ROM serves to the host (`$0081` and following for feature unit
-   11), decoding as 0 to +16 dB in 1/256 dB steps with default `+3.70 dB` (`0x03B3`); the Jabra
-   units declare it as a host-visible volume control; `$D173` treats a high byte of `0x80` as
-   mute, which is the class's "silence" code. The alternative reading is linear Q12 with `0x1000`
-   as unity; nothing direct argues against the dB reading. If it holds, small register values
-   would not mean a quiet sidetone (`0x0001` would be about 0 dB of gain) and `0x1000` would be
-   +16 dB. Not measured, and the conversion between the register and the DSP is not known. A
+2. **Sidetone gain unit.** The host-facing unit is a fact of the ROM code (PROVEN): its request
+   table serves the feature unit 11 GET_CUR from `$1276` itself (`$EA84`) and MIN/MAX/RES from
+   `$0081`, `$0083` and `$0085`, so the host sees USB audio class 1/256 dB units, 0 to +16 dB
+   in 1/256 dB steps, with default `+3.70 dB` (`0x03B3`). Further evidence: zero page `$81..$88`
+   is the same four-word layout (minimum, maximum, resolution, default) as the speaker and
+   microphone volume ranges; the Jabra patches set the defaults `0x0A00` (+10 dB) and `0x0600`
+   (+6 dB); `$D173` treats a high byte of `0x80` as mute, which is the class's "silence" code.
+   What the DSP does with the value (`$112A` to DSP `$2634`) is not measured. The one point for
+   the linear Q12 reading (`0x1000` as unity) is a resolution of 1. If the dB reading holds,
+   small register values would not mean a quiet sidetone (`0x0001` would be about 0 dB of
+   gain) and `0x1000` would be +16 dB, the top of the range. A
    measurement settles it: with sidetone on, a fixed input and the output measured at the
    headphone jack (headset not worn, or a loopback), the level difference between `0x0800` and
    `0x1000` is 6 dB if linear and 8 dB if dB; start at the default and move in small steps.
@@ -544,8 +585,10 @@ record order of the Cloud II update file and the strings of a sibling product's 
    the source of the tick; the `$2073` request records and the `$1E34` handler table.
 8. **Other firmware revisions and units.** Please send the `cxtune status` output (section 9) of
    units with a different `Rev`, a different variant (for example the HP-branded `03F0:0B92`),
-   or a different ROM version. Differences in
-   `$1001..$1005`, `$1017`, `$1151/$1152` and the hook bytes are the useful part.
+   or a different ROM version. It prints the `$1001` ROM identity, the mode, hook 30 (`$14B1`),
+   the DAC holds (`$16C9`, `$17CA`), the window routine (`$1EFC`) and `$1017`, `$0F18`, `$0F1A`,
+   `$0F1B`, `$0F2C`, `$0F3E`, `$1151`, `$1276`, `$00A4`, `$00A8` and `$13DC`; differences in
+   those are the useful part. It does not print `$1152` or the other hooks.
 9. **Sleep, replug and real-use behaviour** of `cxtune watch` on more hardware (not verified on
    hardware beyond simulated restarts; see README).
 
@@ -554,7 +597,7 @@ record order of the Cloud II update file and the strings of a sibling product's 
 **Never share firmware dumps.** Do not attach, paste or link ROM or EEPROM dumps, full
 disassembly listings, or vendor update files in issues, pull requests or discussions, and do not
 add them to the repository. Why: the firmware is the vendor's copyrighted work; a disclaimer
-does not give anyone the right to distribute it; a takedown request usually removes the whole
+does not give anyone the right to distribute it; a takedown request can disable the whole
 repository, not one file; and emulator and firmware-research projects commonly work the same
 way, asking contributors to dump their own device. This is a practical rule, not legal advice.
 
@@ -563,20 +606,25 @@ measurements, and our own annotations (address maps, register names, tooling).
 
 **Compare your unit against ours, without exchanging dumps.** Read your own device and compare
 SHA-256 values with ours. A read-only `cxtune dump` command is planned; it does not exist yet.
-Until it does, `cxtune status` (reads only) is what we ask for. Reference values:
+It is meant to read the ROM with flag `0x00` and the EEPROM with flag `0x20` as a read only.
+Until it exists, `cxtune status` (reads only) is what we ask for. Reference values:
 
 | Item | Range read | Size | SHA-256 |
 |---|---|---|---|
 | ROM | CPU `$7000..$FFFF` | 36864 | `07029dfb4676ce28c1ece6252d45e298a1140b092cbf981b071a30372f08438a` |
 | EEPROM | `0x0000..0x3FFF` | 16384 | `f5d9ce77bc35db8c9e9df7f03e3b2eaf1d5f03cb2b9fa01d95fe25301a2b781c` |
 | EEPROM from byte 2 to the end of the patch name area | `0x0002..0x1F2C` | 7979 | `20a7e010ccdb0a3221dd09ca200125b8abb4c8e6bb533cde512e00d3a1fad8d3` |
-| Patch stream | `0x05BF..0x1F2C` | 6510 | `b7fe5e12a17804ff84417368d9a66a7c007a4f9fc402419124985e14e4c4b864` |
+| Patch stream with the name string and the `CX3` tag | `0x05BF..0x1F2C` | 6510 | `b7fe5e12a17804ff84417368d9a66a7c007a4f9fc402419124985e14e4c4b864` |
+| Patch stream only | `0x05BF..0x1EE9` | 6443 | `bd386d7e51090be1cdf3b9e3458c64a36fdfbf4169e33ec80fd7ac53f90788fc` |
 
-The ROM was read with ordinary CPU-space reads and four ranges were re-read and compared; the
-EEPROM was read through the EEPROM flag. A matching ROM hash plus a matching patch-stream hash
-means the same firmware as ours. The free areas, the size-probe bytes and `0x00..0x01` depend on
-the individual EEPROM part and may legitimately differ, so a full-EEPROM mismatch alone does not
-mean different firmware; if only those differ, say so in the report.
+The ROM was read with ordinary CPU-space reads and four ranges were re-read and compared. The
+reference EEPROM hash was read during research with flag `0x20` (EEPROM read; `0x20` without
+`0x40` is a read, and an EEPROM write is `0x20|0x40`). cxtune itself never uses `0x20` and never
+sends an EEPROM write. A matching ROM hash plus a matching patch-stream hash means the same
+firmware as ours. The free areas, the size-probe bytes, `0x00..0x01`, the serial string and the
+config block (the ROM's save request rewrites it) may legitimately differ per unit, so a
+full-EEPROM mismatch alone does not mean different firmware; if only those differ, say so in the
+report.
 
 **Shareable tooling.** The disassemblers, the address and register maps and the Ghidra SLEIGH
 CPU specification will be added under `tools/` in a later pull request. They contain no
@@ -587,9 +635,9 @@ firmware bytes.
 - Read first. Do not write anything until the same value has been read twice and the address
   appears in this document or in firmware-notes.
 - One program talks to the dongle at a time. Stop `cxtune watch` before using another tool.
-- Never write the EEPROM (`0x20`), DSP memory (`0x80`) or `$040A`, and never write outside patch
-  RAM and the registers named in firmware-notes. A replug restores the vendor state; the EEPROM
-  has no undo.
+- Never write the EEPROM (flag `0x20|0x40`), DSP memory (`0x80`) or `$040A`, and never write
+  outside the writable regions listed in firmware-notes. A replug restores the vendor state; the
+  EEPROM has no undo.
 - Use digital silence for playback tests. Do not play audible signals; keep headphones or IEMs
   off your ears for any test that could be loud (sidetone in particular).
 - If the device stops responding, stop and replug. Do not retry in a loop.
