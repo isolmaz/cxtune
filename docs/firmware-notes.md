@@ -349,13 +349,15 @@ Observed on the device:
   another program.
 
 **The dongle's own control (inferred, not tested).** The vendor patch has code at
-`$18BA..$18C5` that toggles `$1152` bit 3 (found in the cross-references of the patch by a
-reviewer). That a control on the dongle switches the virtual surround is inferred from that code
-and was not tested: no button press was made on the device. ROM `$DA30` (an entry of the jump
-tables at `$F083` and `$1885`) also toggles bit 3 and flips `$10D3` bit 4 with it (a reading of
-the ROM by a reviewer); which physical control, if any, calls either routine is not known. The
-engine follows a surround switch that it did not make (the chosen setting takes the value the
-dongle holds) when the dongle held the chosen settings at the last pass.
+`$18BA..$18C5` that toggles `$1152` bit 3 and does not touch `$10D3` (found in the
+cross-references of the patch by a reviewer). That a control on the dongle switches the virtual
+surround is inferred from that code and was not tested: no button press was made on the device.
+ROM `$DA30` (entry 17 of the jump tables at `$F083` and `$1885`) steps through three states, each
+followed by a NEWC request: from off it sets bit 3 and clears `$10D3` bit 4; the next call sets
+`$10D3` bit 4 as well; the call after that clears both (a reading of the ROM by a reviewer). Which
+physical control, if any, calls either routine is not known. The engine follows a surround switch
+that it did not make (the chosen setting takes the value the dongle holds) when the dongle held
+the chosen settings at the last pass.
 
 Not measured: what it sounds like (nothing but digital silence was played, and nothing was
 listened to), whether the NEWC reload clicks while audio plays, and the effect on loudness. The
