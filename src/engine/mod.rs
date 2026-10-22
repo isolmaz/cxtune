@@ -145,6 +145,34 @@ fn emit(hub: &Mutex<Hub>, event: Event) {
         .emit(event);
 }
 
+/// Workers that [`Engine::stop`] did not wait for because they were stuck in a call into the
+/// dongle. Each keeps the device lock until its call returns.
+static LEFT_BEHIND: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
+
+/// Whether one of the `workers` is still alive.
+fn any_alive(workers: &Mutex<Vec<JoinHandle<()>>>) -> bool {
+    let mut workers = workers.lock().unwrap_or_else(PoisonError::into_inner);
+    workers.retain(|worker| !worker.is_finished());
+    !workers.is_empty()
+}
+
+/// Takes the lock for a new engine. If it is refused while a worker of this program is still
+/// stuck holding it, that worker is the reason, and the message says so instead of blaming
+/// another process.
+fn take_lock(
+    acquire: impl FnOnce() -> Result<NamedLock>,
+    left_behind: &Mutex<Vec<JoinHandle<()>>>,
+) -> Result<NamedLock> {
+    acquire().map_err(|error| match error {
+        Error::Busy(_) if any_alive(left_behind) => Error::Busy(
+            "the previous engine of this program is still waiting for the dongle to answer; \
+             unplug and replug the dongle, or restart the program"
+                .into(),
+        ),
+        other => other,
+    })
+}
+
 /// A running engine. Dropping it stops it: the worker finishes what it is doing, saves the
 /// settings and releases the device lock.
 pub struct Engine {
@@ -159,7 +187,8 @@ impl Engine {
     /// Starts the engine on the real dongle, with the settings from `%APPDATA%\cxtune` and a
     /// diagnostic log in `%LOCALAPPDATA%\cxtune`.
     ///
-    /// Fails with [`Error::Busy`] if another cxtune process controls the dongle, and with
+    /// Fails with [`Error::Busy`] if another cxtune process controls the dongle (or an engine of
+    /// this process that [`Engine::stop`] left stuck behind), and with
     /// [`Error::Config`] if the settings file cannot be read. Nothing has touched the dongle
     /// by then. The first [`Event::State`] follows the first enumeration of the devices.
     pub fn start(sink: impl FnMut(Event) + Send + 'static) -> Result<Engine> {
@@ -175,7 +204,7 @@ impl Engine {
         make_backend: impl FnOnce() -> Result<B> + Send + 'static,
         sink: impl FnMut(Event) + Send + 'static,
     ) -> Result<Engine> {
-        let lock = NamedLock::device()?;
+        let lock = take_lock(NamedLock::device, &LEFT_BEHIND)?;
         let log = log_path.map(|path| Log::open(path, log::DEFAULT_LIMIT));
         Engine::launch(
             lock,
@@ -301,8 +330,12 @@ impl Engine {
     /// Stops the engine: the worker finishes what it is doing, saves the settings and releases
     /// the device lock. Waits for that for at most 20 s, and not at all while a call into the
     /// device is stuck; the worker is then left behind, still holding the lock, until the
-    /// process ends or the call returns. A user interface calls this off its own thread, because
-    /// finishing a mode change takes seconds.
+    /// process ends or the call returns, and a new engine cannot start before that (the start
+    /// fails with [`Error::Busy`] and says why). A worker left behind goes on to its end when its
+    /// call returns and may still call the sink after `stop` has returned, so a sink must cope
+    /// with events after `stop`; a user interface that has dropped its receiver ignores them. A
+    /// user interface calls this off its own thread, because finishing a mode change takes
+    /// seconds.
     pub fn stop(mut self) {
         self.shutdown();
     }
@@ -319,6 +352,11 @@ impl Engine {
             }
             if worker.is_finished() {
                 let _ = worker.join();
+            } else {
+                LEFT_BEHIND
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(worker);
             }
         }
         if let Some((stop, watchdog)) = self.watchdog.take() {
@@ -346,23 +384,32 @@ fn panic_text(payload: &(dyn Any + Send)) -> String {
 fn watchdog(watch: &CallWatch, hub: &Mutex<Hub>, limit: Duration, stop: &Receiver<()>) {
     let tick = (limit / 4).clamp(Duration::from_millis(5), Duration::from_millis(500));
     while stop.recv_timeout(tick) == Err(RecvTimeoutError::Timeout) {
-        let Some((what, running)) = watch.stuck(limit) else {
-            continue;
-        };
-        let failure = Failure {
-            kind: ErrorKind::Unresponsive,
-            message: format!(
-                "the dongle does not answer: {what} has not returned for {} s. Unplug and \
-                 replug the dongle; the engine goes on by itself once the request ends",
-                running.as_secs()
-            ),
-        };
-        let mut hub = hub.lock().unwrap_or_else(PoisonError::into_inner);
-        hub.emit(Event::Error(failure.clone()));
-        if let Some(mut state) = hub.last.clone() {
-            state.error = Some(failure);
-            hub.emit(Event::State(state));
+        if let Some((what, running)) = watch.stuck(limit) {
+            report_stuck(watch, hub, what, running);
         }
+    }
+}
+
+/// Publishes the report of a call that was found stuck, unless it has returned since. The worker
+/// publishes a fresh state when a call that was reported returns; a report that came after it
+/// would put the old problem back on screen until the next change.
+fn report_stuck(watch: &CallWatch, hub: &Mutex<Hub>, what: &str, running: Duration) {
+    let mut hub = hub.lock().unwrap_or_else(PoisonError::into_inner);
+    if !watch.is_stuck() {
+        return;
+    }
+    let failure = Failure {
+        kind: ErrorKind::Unresponsive,
+        message: format!(
+            "the dongle does not answer: {what} has not returned for {} s. Unplug and replug \
+             the dongle; the engine goes on by itself once the request ends",
+            running.as_secs()
+        ),
+    };
+    hub.emit(Event::Error(failure.clone()));
+    if let Some(mut state) = hub.last.clone() {
+        state.error = Some(failure);
+        hub.emit(Event::State(state));
     }
 }
 
@@ -926,10 +973,113 @@ mod tests {
         running.stop();
         assert!(started.elapsed() < Duration::from_secs(5));
 
-        // the call ends later; the worker, which was asked to stop, lets go of the lock
-        release.send(()).unwrap();
+        // the worker stays behind with the lock, and a new engine is refused for that reason
         let name = lock_name("stall-stop");
+        assert!(any_alive(&LEFT_BEHIND));
+        let Err(Error::Busy(message)) = take_lock(|| NamedLock::acquire(&name), &LEFT_BEHIND)
+        else {
+            panic!("the lock should be refused");
+        };
+        assert!(message.contains("previous engine"), "{message}");
+        assert!(!message.contains("another"), "{message}");
+
+        // the call ends later; the worker, which was asked to stop, goes on to its end (and
+        // still calls the sink) and lets go of the lock
+        while running.events.try_recv().is_ok() {}
+        release.send(()).unwrap();
+        running
+            .events
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the worker that was left behind still publishes");
         eventually("the lock", || NamedLock::acquire(&name).is_ok());
+    }
+
+    #[test]
+    fn a_refused_lock_is_blamed_on_a_worker_left_behind_only_while_one_is_alive() {
+        let name = lock_name("blame");
+        let _held = NamedLock::acquire(&name).unwrap();
+        let refusal = |registry: &Mutex<Vec<JoinHandle<()>>>| match take_lock(
+            || NamedLock::acquire(&name),
+            registry,
+        ) {
+            Err(Error::Busy(message)) => message,
+            other => panic!("the lock should be refused: {other:?}"),
+        };
+
+        let none = Mutex::new(Vec::new());
+        assert!(refusal(&none).contains("held by another process"));
+
+        let ended = thread::spawn(|| {});
+        eventually("the thread to end", || ended.is_finished());
+        let finished = Mutex::new(vec![ended]);
+        assert!(refusal(&finished).contains("held by another process"));
+        assert!(
+            finished.lock().unwrap().is_empty(),
+            "ended workers are forgotten"
+        );
+
+        let (release, hold) = mpsc::channel::<()>();
+        let alive = Mutex::new(vec![thread::spawn(move || {
+            let _ = hold.recv_timeout(Duration::from_secs(30));
+        })]);
+        assert!(refusal(&alive).contains("previous engine"));
+        // a failure that is not a refusal is passed on as it is
+        let other = take_lock(|| Err(Error::Device("no mutex".into())), &alive);
+        assert!(matches!(other, Err(Error::Device(_))), "{other:?}");
+        release.send(()).unwrap();
+    }
+
+    fn hub_with_a_state() -> (Mutex<Hub>, Receiver<Event>) {
+        let (tx, rx) = mpsc::channel();
+        let mut hub = Hub {
+            sink: Box::new(move |event| {
+                let _ = tx.send(event);
+            }),
+            last: None,
+        };
+        hub.emit(Event::State(Snapshot {
+            phase: Phase::Applying,
+            settings: Config::default(),
+            settings_saved: true,
+            save_error: None,
+            device: None,
+            error: None,
+        }));
+        (Mutex::new(hub), rx)
+    }
+
+    #[test]
+    fn a_stuck_call_is_reported_as_an_error_and_as_the_last_state_with_that_error() {
+        let (hub, events) = hub_with_a_state();
+        let watch = CallWatch::default();
+        let _call = watch.enter("a request");
+        let (what, running) = watch.stuck(Duration::ZERO).unwrap();
+        events.try_iter().for_each(drop);
+
+        report_stuck(&watch, &hub, what, running);
+        let events: Vec<Event> = events.try_iter().collect();
+        let [Event::Error(error), Event::State(state)] = &events[..] else {
+            panic!("an error and a state were expected: {events:?}");
+        };
+        assert_eq!(error.kind, ErrorKind::Unresponsive);
+        assert!(error.message.contains("a request"), "{}", error.message);
+        assert_eq!(state.phase, Phase::Applying);
+        assert_eq!(state.error.as_ref(), Some(error));
+    }
+
+    #[test]
+    fn a_report_that_comes_after_the_call_has_returned_is_not_published() {
+        let (hub, events) = hub_with_a_state();
+        let watch = CallWatch::default();
+        let call = watch.enter("a request");
+        let (what, running) = watch.stuck(Duration::ZERO).unwrap();
+        events.try_iter().for_each(drop);
+
+        // the call returns while the watchdog waits for the hub
+        drop(call);
+        report_stuck(&watch, &hub, what, running);
+        let events: Vec<Event> = events.try_iter().collect();
+        assert!(events.is_empty(), "{events:?}");
     }
 
     #[test]

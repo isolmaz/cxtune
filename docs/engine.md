@@ -158,7 +158,18 @@ silent stream) is marked while it runs, and the watchdog thread checks the mark 
   goes on as after any disconnect.
 - `Engine::stop` does not wait for a stuck call. It waits for the worker for at most `STOP_WAIT`
   otherwise, and leaves the worker behind when it does not finish. The worker keeps the device
-  lock until its call returns or the process ends.
+  lock until its call returns or the process ends. A new `Engine::start` in the same process is
+  refused with `Error::Busy` and a message that names that engine ("the previous engine of this
+  program is still waiting for the dongle to answer"), not another cxtune process.
+- When the call returns, the worker that was left behind finishes its pass and ends. It may call
+  the sink once or more after `stop` has returned, so a sink must cope with events after `stop`;
+  a user interface that has dropped its receiver ignores them.
+- The watchdog checks the mark again after it has the sink to itself, so that a report is not
+  published after the call has returned and the worker has published the state without the error.
+
+The marks cover the dongle, not everything the worker does: dropping the silent stream (it joins
+the audio thread), the sink and the write of the settings file are not marked. A hang there is
+not reported, but `Engine::stop` is still bounded by `STOP_WAIT`.
 
 Cancelling the request instead (own Win32 code with overlapped I/O) would replace the transport
 that was verified on the real dongle for a situation that can only be reproduced with a faulty

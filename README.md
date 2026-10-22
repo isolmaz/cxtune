@@ -197,8 +197,9 @@ all HID and audio-stream access, and it holds the device lock for as long as it 
   is tried again with growing pauses and once more when the engine stops.
 - **Failure of the engine.** A request to the dongle that never returns (hidapi has no time
   limit and cannot cancel it) is reported after 10 s as an error that asks for a replug, and
-  stopping the engine does not wait for it. A panic ends the engine with a last error state;
-  the user interface can ask whether the engine is still running.
+  stopping the engine does not wait for it (the stuck engine keeps the device lock, so a new one
+  cannot start until the request ends). A panic ends the engine with a last error state; the
+  user interface can ask whether the engine is still running.
 
 Applying is idempotent: if the device already matches, nothing is written and no stream is
 opened. A stream event near a DSP reload request is printed as a warning and does not stop
