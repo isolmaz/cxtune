@@ -1216,6 +1216,45 @@ fn a_sleep_before_the_put_back_does_not_lose_it() {
     }
 }
 
+/// A rig whose comparison was ended by a sleep in its second half: noise reduction is off, the
+/// setting was not chosen, and the put-back is pending.
+fn rig_with_a_pending_put_back() -> Rig {
+    let cfg = Config {
+        mode: Some(Mode::Quiet),
+        ..Config::default()
+    };
+    let mut rig = Rig::with_device(FakeDevice::in_mode(Mode::Quiet), cfg, true);
+    rig.run(5.0);
+    test(&mut rig, TestRequest::NoiseReductionAb { seconds: 1 });
+    rig.run(WARMUP.as_secs_f64() + 1.0 + 1.5);
+    rig.sup.resumed();
+    assert!(!nr_state(&rig).0);
+    rig
+}
+
+#[test]
+fn a_pending_put_back_is_dropped_when_the_dongle_disconnects() {
+    let mut rig = rig_with_a_pending_put_back();
+    let writes = nr_state(&rig).1;
+    rig.set_present(false);
+    rig.run(1.2);
+    assert_eq!(rig.snapshot().phase, Phase::Disconnected);
+    // the dongle keeps its memory, so what it holds is what the comparison left
+    rig.set_present(true);
+    rig.run(SETTLE.as_secs_f64() + 2.0);
+    assert_eq!(rig.phase(), Phase::Connected);
+    assert_eq!(nr_state(&rig), (false, writes));
+}
+
+#[test]
+fn a_pending_put_back_is_dropped_when_the_engine_stops() {
+    let mut rig = rig_with_a_pending_put_back();
+    let writes = nr_state(&rig).1;
+    rig.sup.finish();
+    rig.run(SETTLE.as_secs_f64() + 2.0);
+    assert_eq!(nr_state(&rig), (false, writes));
+}
+
 #[test]
 fn the_state_says_what_is_running_and_whether_there_is_a_recording() {
     let mut rig = rig_in(Mode::Quiet);

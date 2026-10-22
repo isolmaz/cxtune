@@ -183,8 +183,11 @@ closed by the engine as soon as nothing needs it. A request that cannot be run i
   disconnect ends tries to, and a warning is logged when the write fails. One that a sleep ends
   leaves the dongle alone: the put-back is pending until the settling wait of 2 s after the wake
   is over, and the first settings pass after it writes it. A pending put-back stays through a
-  further sleep and through a test that starts meanwhile. If the dongle disconnects or the
-  engine stops before that pass, the pending put-back is dropped.
+  further sleep and through a test that does not switch noise reduction; a comparison that starts
+  meanwhile takes the pending value as its own original and puts it back itself when it ends. If
+  the dongle disconnects or the engine stops before that pass, the pending put-back is dropped.
+  A test request is not held back during that settling wait, so a comparison started in it writes
+  `$1151` before the wait is over (the write is guarded like every other).
 - **Warm-up.** The first 4 s after the microphone opens are not measured or recorded: the codec
   delivers digital silence and a click first, and in balanced mode the meter showed higher
   levels for a while longer (`docs/firmware-notes.md`; the 4 s is provisional until it is
