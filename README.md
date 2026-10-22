@@ -43,7 +43,8 @@ and a tray application.
 | `lowest-noise` | Driver clamped. | Loud click. | Audio is muted for the soft-start time (default 600 ms) plus 150 ms. |
 
 The former names `stock`, `quiet` and `min-hiss` are accepted by the command line and the
-settings file.
+settings file. A settings file saved by this version uses the new names, which an older cxtune
+rejects.
 
 Two times can be tuned. The lowest-noise soft-start time (20-2000 ms) and the balanced stop
 decay time (100-2000 ms) are single bytes of the routines, written in place. The 600 ms that
