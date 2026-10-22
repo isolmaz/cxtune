@@ -10,6 +10,7 @@ pub mod config;
 pub mod dsp;
 pub mod hid;
 pub mod lock;
+pub mod log;
 pub mod mode;
 pub mod patches;
 pub mod protocol;
