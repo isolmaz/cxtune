@@ -57,8 +57,9 @@ with the keys above.
 
 Do not run cxtune at the same time as another tool that reads codec memory over HID (for
 example a second cxtune or the vendor software poking the same interface): the read protocol
-has no request tag, so concurrent readers can receive each other's responses. The safety checks
-make this fail closed (a refusal), not write wrong data.
+has no request tag, so concurrent readers can receive each other's responses. The checks are
+meant to turn that into a refusal rather than a wrong write, but untagged responses cannot
+guarantee it (a crossed response that happens to satisfy a single-bit check passes).
 
 ## Safety design
 
