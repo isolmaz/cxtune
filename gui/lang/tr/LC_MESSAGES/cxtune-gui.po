@@ -228,8 +228,8 @@ msgid "Level"
 msgstr "Düzey"
 
 msgctxt "ui"
-msgid "The RMS level of the last 50 ms in dBFS, where 0 is digital full scale. The microphone is open only while this page is shown."
-msgstr "Son 50 ms'nin RMS düzeyi, dBFS cinsinden; 0 dijital tam ölçektir. Mikrofon yalnızca bu sayfa gösterilirken açıktır."
+msgid "The RMS level of the last 50 ms in dBFS, where 0 is digital full scale. The meter opens the microphone only while this switch is on."
+msgstr "Son 50 ms'nin RMS düzeyi, dBFS cinsinden; 0 dijital tam ölçektir. Ölçer, mikrofonu yalnızca bu anahtar açıkken açar."
 
 msgctxt "ui"
 msgid "The median level over {} s, after the microphone has warmed up. Keep the room quiet."

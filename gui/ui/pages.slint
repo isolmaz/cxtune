@@ -462,26 +462,41 @@ export component TestPage inherits Page {
         level-row := Row {
             icon: "\u{E720}";
             title: @tr("ui" => "Level");
-            help: @tr("ui" => "The RMS level of the last 50 ms in dBFS, where 0 is digital full scale. The microphone is open only while this page is shown.");
-            disabled: !Model.controls-enabled;
+            help: @tr("ui" => "The RMS level of the last 50 ms in dBFS, where 0 is digital full scale. The meter opens the microphone only while this switch is on.");
+            disabled: !Model.test-available;
+            fill: true;
 
+            // the bar takes the space between the label and the value, which has the narrow
+            // column of the value of a slider
             HorizontalLayout {
+                horizontal-stretch: 1;
+
                 LevelBar {
-                    segments: 10;
                     active: Model.meters-active;
                     db: Model.mic-db;
                     label: @tr("ui" => "Level");
                 }
 
                 ResultText {
+                    width: Grid.value;
                     text: Model.meters-active ? Texts.dbfs-rounded(Model.mic-db) : "";
                 }
             }
 
-            // nothing to press: the control is left out
-            Rectangle {
+            HorizontalLayout {
                 width: Grid.control;
                 horizontal-stretch: 0;
+                alignment: end;
+
+                SwitchControl {
+                    label: @tr("ui" => "Level");
+                    description: level-row.help;
+                    enabled: Model.test-available && Model.test-job == TestJob.none;
+                    checked <=> Model.meter-on;
+                    toggled(on) => {
+                        Model.meter-toggled(on);
+                    }
+                }
             }
         }
 
@@ -489,7 +504,7 @@ export component TestPage inherits Page {
             icon: "\u{E9D2}";
             title: @tr("ui" => "Noise floor");
             help: @tr("ui" => "The median level over {} s, after the microphone has warmed up. Keep the room quiet.", Model.noise-floor-seconds);
-            disabled: !Model.controls-enabled;
+            disabled: !Model.test-available;
 
             TestResultText {
                 job: TestJob.noise-floor;
@@ -507,7 +522,7 @@ export component TestPage inherits Page {
             icon: "\u{E7C8}";
             title: @tr("ui" => "Recording");
             help: @tr("ui" => "Records {} s from the microphone into memory; nothing is saved. The level is the RMS and, under it, the peak, in dBFS. Play sends it to the headset, scaled down if its peak is above -12 dBFS.", Model.record-seconds);
-            disabled: !Model.controls-enabled;
+            disabled: !Model.test-available;
 
             TestResultText {
                 job: TestJob.record;
@@ -542,7 +557,7 @@ export component TestPage inherits Page {
             icon: "\u{E8AB}";
             title: @tr("ui" => "Noise reduction");
             help: @tr("ui" => "Measures the noise floor for {} s with noise reduction on and for {} s with it off, then puts the setting back. The result is the change, and under it the level with the setting on and off.", Model.comparison-seconds, Model.comparison-seconds);
-            disabled: !Model.controls-enabled;
+            disabled: !Model.test-available;
 
             TestResultText {
                 job: TestJob.comparison;
@@ -568,7 +583,7 @@ export component TestPage inherits Page {
             icon: "\u{E945}";
             title: @tr("ui" => "Click test");
             help: @tr("ui" => "Waits until the output is idle, then plays a short tone at -40 dBFS, so that the click at its start and its end can be heard.");
-            disabled: !Model.controls-enabled;
+            disabled: !Model.test-available;
 
             TestResultText {
                 job: TestJob.click;
@@ -586,7 +601,7 @@ export component TestPage inherits Page {
             icon: "\u{E995}";
             title: @tr("ui" => "Listen to noise");
             help: @tr("ui" => "Closes the microphone and waits until the output is idle, so that you can listen to its noise in the headset. Nothing is played.");
-            disabled: !Model.controls-enabled;
+            disabled: !Model.test-available;
 
             TestResultText {
                 job: TestJob.listen;

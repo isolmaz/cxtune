@@ -160,8 +160,8 @@ export global Model {
     in property <bool> controls-enabled;
 
     // the level meter of the microphone, in the header and on the Test page: the RMS level of the
-    // last 50 ms in dBFS, from -60 to 0. Only shown while `meters-active`; otherwise it stays
-    // neutral.
+    // last 50 ms in dBFS, from -60 to 0. `meters-active` is true only while the meter runs and has
+    // delivered a level; otherwise the meter stays neutral and shows no value.
     in property <bool> meters-active;
     in property <float> mic-db: -60;
 
@@ -211,10 +211,14 @@ export global Model {
     in-out property <float> microphone-volume;
     in-out property <bool> microphone-muted;
 
-    // the Test page: the test that runs and where it is (`test-remaining` is in ms, -1 when the step
-    // has no known end), whether a recording can be played, the last problem, whether the caution
-    // about the sound of the output tests is still to be shown, the durations that the tests use
-    // in seconds, and the last result of each test
+    // the Test page: whether it can reach the dongle (it is connected and has been read; the tests
+    // and the meter switch cannot be used otherwise), the switch of the level meter (the
+    // microphone is open for the meter only while it is on), the test that runs and where it is
+    // (`test-remaining` is in ms, -1 when the step has no known end), whether a recording can be
+    // played, the last problem, whether the caution about the sound of the output tests is still
+    // to be shown, the durations that the tests use in seconds, and the last result of each test
+    in property <bool> test-available;
+    in-out property <bool> meter-on;
     in property <TestJob> test-job;
     in property <TestStep> test-step;
     in property <int> test-remaining: -1;
@@ -246,10 +250,11 @@ export global Model {
     callback sidetone-toggled(bool);
     callback level-changed(float);
     callback slider-released();
-    // the tab changed: the Test page runs the microphone meter only while it is shown
+    // the tab changed: the meter of the Test page is turned off when the page is left
     callback tab-changed(int);
-    // the window was minimized or restored: the meter runs only in a window that can be seen
+    // the window was minimized or restored: the meter is turned off in a window that cannot be seen
     callback minimized-changed(bool);
+    callback meter-toggled(bool);
     callback test-requested(TestJob);
     callback test-cancelled();
     callback autostart-toggled(bool);

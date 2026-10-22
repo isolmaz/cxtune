@@ -37,11 +37,12 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
   gets the keyboard focus scrolls into view: it says where it is (`Reveal` in `components.slint`)
   and the page moves, so Tab never lands on a control that cannot be seen.
 - **Meter.** The microphone meter takes the RMS level of the last 50 ms in dBFS (`mic-db`) and a
-  flag (`meters-active`). While the flag is false it is dimmed, every segment is off and there is no
-  value; with a level the value, in dBFS like `-52 dBFS`, appears to the left of the bars in the
-  header and in the result column of the Level row of the Test page. The engine measures only the
-  microphone, so there is no meter for the output: nothing in the application delivers an output
-  level, and the header shows none rather than a made-up one.
+  flag (`meters-active`), which is true only while the meter runs (the switch of the Level row of
+  the Test page is on) and has delivered a level. While the flag is false it is dimmed, every
+  segment is off and there is no value; with a level the value, in dBFS like `-52 dBFS`, appears
+  to the left of the bars in the header and in the value column of the Level row. The engine
+  measures only the microphone, so there is no meter for the output: nothing in the application
+  delivers an output level, and the header shows none rather than a made-up one.
 - **Colours.** The window follows the light or dark scheme and the accent colour of Windows. Text
   uses the Fluent tokens TextFillColorPrimary, -Secondary and -Disabled; every secondary text has
   at least 4.5:1 contrast on its card in both schemes.
@@ -167,17 +168,26 @@ with the last value always sent when the slider is released.
   `gui/src/test_tab.rs`). Its rows, in three groups, share one layout: a control is a slot of
   160 px at the right edge, and the result of a row is in a column of 128 px, right-aligned,
   directly left of the slot, so the values line up from row to row.
-  - *Level*: a bar of 10 segments that ends where the result column starts, and in that column
-    the level, like `-52 dBFS`. There is nothing to press, so its slot stays empty. The
-    microphone meter runs only while this page is shown in a window that is shown (not hidden in
-    the notification area) and not minimized, and the dongle is there: entering the page sends
-    `Meter(true)`; leaving it, hiding or minimizing the window or losing the dongle sends
-    `Meter(false)`, so the microphone is not open in the background; and an output test, which
-    needs the microphone closed, keeps it off until the test ends. `test_tab::meter_wanted`
-    decides (it reads the page and the minimized state from the window) and `MeterAsk` sends one
-    request for each change; `minimized-changed` makes the application decide again when the
-    window is minimized or restored. The level events (twenty a second) update the meter
-    properties only.
+  - *Level*: a switch in the slot, a bar that fills the space between the label and the value
+    (as many segments as fit, `LevelBar`; the row sets `fill` so that the label does not take
+    that space), and, in a column of 64 px like the value of a slider, the level, like
+    `-52 dBFS`. The meter does not start by itself: entering the page opens nothing, and the
+    microphone is open for the meter only while the switch (`meter-on`, reported by
+    `meter-toggled`) is on. The switch goes off, and the engine is sent `Meter(false)`, when the
+    page is left, when the window is minimized or hidden in the notification area, when the
+    dongle is lost or the computer wakes (the page waits until the engine has read the dongle
+    again), when the engine is restarted and when the program quits. It also goes off when a
+    test that plays a sound or listens (click test, noise listening, playback) is started,
+    because those need the microphone closed, and it stays off after the test until the user
+    turns it on again: in balanced mode an open microphone opens the headphone driver, which
+    would end the idle output that the test is meant to let the user hear. A request that fails
+    turns it off too, because the engine closes the microphone after one. A measurement (noise
+    floor, recording, comparison) keeps the meter as it is. While any test runs the switch cannot
+    be used. `TestTab::state` applies these rules to each state of the engine and the window,
+    and `TestTab::sync_meter` sends one request for each change; `tab-changed` and
+    `minimized-changed` make the application decide again when the page or the window changes.
+    The level events (twenty a second) update the meter properties only. The header meter shows
+    a value only while the meter runs.
   - *Noise floor* (the median over 10 s), *Recording* (Record 5 s, then Play: two buttons of
     76 px share the slot) and *Noise reduction* (the comparison, 10 s with the setting on and 10 s
     with it off): each row has a button that fills the slot and, before it, the result. While a
@@ -191,12 +201,15 @@ with the last value always sent when the slider is released.
   two levels under it for the comparison, the RMS and the peak for a recording, seconds to idle.
   Nothing says that a value is good. The buttons follow the engine's refusals
   (`TestButton` in `components.slint`): while a test runs only its own button, which cancels, can
-  be used, because the engine refuses another request; Play needs a recording; without a dongle
-  all are disabled. Leaving the page does not cancel a test (the engine holds the saved settings
-  until it ends); only the meter is tied to the page. A request that fails is an info bar at the
-  top of the page, by what the user can do (the dongle did not answer, the audio could not be
-  opened, anything else); the engine logs the details. A result stays until its test is started
-  again or cancelled.
+  be used, because the engine refuses another request; Play needs a recording. While the dongle
+  is not there (`test-available` is false: it is not connected, or it was not read since it
+  connected or the computer woke up, `test_tab::available`) the rows are dimmed, every button and
+  the switch are disabled, and no problem is shown: one from before the dongle was lost is gone
+  when it returns. The other pages do not follow this flag; they keep `controls-enabled`. Leaving
+  the page does not cancel a test (the engine holds the saved settings until it ends); only the
+  meter is tied to the page. A request that fails is an info bar at the top of the page, by what
+  the user can do (the dongle did not answer, the audio could not be opened, anything else); the
+  engine logs the details. A result stays until its test is started again or cancelled.
 - **Apply recommended** (a subtle button next to the title of the Output page, with what it
   sets as its tooltip) sets balanced mode, microphone
   boost 6, noise reduction on, AGC off and sidetone off, and leaves the soft-start time, the
@@ -257,7 +270,7 @@ in `contract.slint` and the `MainWindow` and `Tray` components.
 |---|---|
 | `title`, `hint`, `tone`, `details`, `reapply-enabled`, `version` | the status lines (enums `Title`, `Hint`, `Tone`), whether the log has details, whether Re-apply has something to do |
 | `tab` (in-out) | the shown page: 0 output, 1 microphone, 2 sidetone, 3 test, 4 general, 5 about |
-| `meters-active`, `mic-db` | the microphone meter (header and Test page): whether there is a level, and the RMS level in dBFS (-60 to 0) |
+| `meters-active`, `mic-db` | the microphone meter (header and Test page): whether the meter runs and has a level, and the RMS level in dBFS (-60 to 0) |
 | `controls-enabled` | whether the controls that change the dongle can be used |
 | `mode` (in-out), `recommended-mode`, `indicators` | the mode (0 `default`, 1 `low-click`, 2 `balanced`, 3 `lowest-noise`), the recommended one, and the `ModeIndicators` (`noise-floor`, `click`, `start-delay`, `start-delay-ms`) of every mode by index |
 | `settle-ms` (in-out), `settle-min`, `settle-max`, `settle-step`, `settle-enabled` | the soft-start time |
@@ -266,6 +279,7 @@ in `contract.slint` and the `MainWindow` and `Tray` components.
 | `boost` (in-out), `boost-max`, `boost-db`, `noise-reduction` (in-out), `agc` (in-out) | the microphone |
 | `sidetone` (in-out), `level` (in-out), `level-min`, `level-max`, `level-step` | sidetone: the register value (shown as dB, 256 per dB) and the range and key step of its slider |
 | `speaker-present`, `speaker-volume` (in-out), `speaker-muted` (in-out), `microphone-present`, `microphone-volume` (in-out), `microphone-muted` (in-out) | the Windows volume |
+| `test-available`, `meter-on` (in-out) | the Test page: whether it can reach the dongle (connected and read), and the switch of the level meter |
 | `test-job`, `test-step`, `test-remaining`, `test-has-recording`, `test-problem`, `test-caution` | the Test page: the test that runs (enum `TestJob`), its step (`TestStep`) and the ms left in it (-1 if not known), whether a recording can be played, the last problem (`TestProblem`) and whether the caution about the sound is still shown |
 | `noise-floor-result`, `recording-result`, `comparison-result`, `click-result`, `listen-result` | the last result of each test (`Measured`: whether there is one and up to three numbers) |
 | `noise-floor-seconds`, `record-seconds`, `comparison-seconds` | how long the tests run, for their texts |
@@ -273,11 +287,11 @@ in `contract.slint` and the `MainWindow` and `Tray` components.
 
 Callbacks of `Model`: `mode-selected(int)`, `settle-changed(int)`, `decay-changed(int)`,
 `surround-toggled(bool)`, `surround-level-changed(int)`, `tab-changed(int)`,
-`minimized-changed(bool)`, `test-requested(TestJob)`, `test-cancelled()`, `boost-changed(int)`,
-`noise-reduction-toggled(bool)`, `agc-toggled(bool)`, `sidetone-toggled(bool)`,
-`level-changed(float)`, `slider-released()`, `volume-changed(side, percent)`,
-`mute-toggled(side, bool)`, `autostart-toggled(bool)`, `language-selected(int)`,
-`apply-recommended()`, `reapply()` and `open-log-folder()`.
+`minimized-changed(bool)`, `meter-toggled(bool)`, `test-requested(TestJob)`, `test-cancelled()`,
+`boost-changed(int)`, `noise-reduction-toggled(bool)`, `agc-toggled(bool)`,
+`sidetone-toggled(bool)`, `level-changed(float)`, `slider-released()`,
+`volume-changed(side, percent)`, `mute-toggled(side, bool)`, `autostart-toggled(bool)`,
+`language-selected(int)`, `apply-recommended()`, `reapply()` and `open-log-folder()`.
 
 `Theme.scheme` (in-out) is the colour scheme, bound to the one of Windows. The `snapshot` feature
 sets it to draw both schemes, so it is part of the contract and a different look keeps it.
@@ -312,14 +326,19 @@ release profile uses `lto` and `strip`, and `panic` stays `unwind`: the engine r
 (`i-slint-backend-testing`, a dev-dependency; `build.rs` compiles the element information that it
 needs into debug builds only). `gui/src/pages.rs` finds elements by their type and checks the
 bindings that decide what can be used: the sidetone and surround level sliders follow their
-switches, the two time sliders follow their modes, the Test buttons follow the engine's refusals
-and start or cancel, and the page change and the minimizing of the window reach Rust. With the
+switches, the two time sliders follow their modes, the Test buttons and the level switch follow
+the dongle and the engine's refusals, the buttons start or cancel, the switch reports the user and
+shows what Rust says, and the page change and the minimizing of the window reach Rust. With the
 window at its real size it also checks the layout: every page is in a scroll view that fills the
 page area, the title scrolls with a page that does not fit, the rows are the same 512 px wide with
 a scroll bar and without one, the controls of the Test page share one slot and its results one
-column, and the header meter reads in dBFS like the Test page. `gui/src/test_tab.rs` checks when
-the meter is wanted (the page, a hidden or minimized window, the dongle, an output test) and asked
-for, the requests of the tests, and the order of what they measured.
+column, the level bar fills the space from the label to its value, and the header meter
+reads in dBFS like the Test page. `gui/src/test_tab.rs` checks the switch of the meter and the
+requests that follow it (nothing starts by itself; it goes off when the page is left, the window
+is hidden or minimized, the dongle is lost or an output test starts, and stays off afterwards; a
+measurement keeps it), what a lost and regained dongle leaves behind (a disabled page, then an
+enabled one with the switch off and no warning), the requests of the tests, and the order of what
+they measured.
 
 ## Not built
 

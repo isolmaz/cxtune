@@ -344,6 +344,7 @@ fn simulate(window: &MainWindow, scene: Scene, tab: usize) {
 
     let present = !matches!(scene, Scene::Disconnected);
     model.set_controls_enabled(present);
+    model.set_test_available(present);
     model.set_settle_enabled(present && mode == Mode::MinHiss);
     model.set_decay_enabled(present && mode == Mode::Balanced);
     model.set_speaker_present(present);

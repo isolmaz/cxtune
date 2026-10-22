@@ -82,8 +82,8 @@ fn the_surround_level_can_be_changed_only_while_surround_is_on() {
     model.set_controls_enabled(true);
     model.set_surround(false);
 
-    // the sliders of the page, in order: the speaker volume, the soft-start time, the mute
-    // delay and the surround level
+    // the sliders of the page, in order: the speaker volume, the soft-start time, the release
+    // time and the surround level
     let sliders = all(&window, "Slider");
     assert_eq!(sliders.len(), 4);
     let surround_level = &sliders[3];
@@ -109,13 +109,13 @@ fn each_time_slider_follows_the_engine_enabled_state_of_its_mode() {
     let model = window.global::<Model>();
     model.set_tab(OUTPUT_PAGE);
     let sliders = all(&window, "Slider");
-    let (soft_start, mute_delay) = (&sliders[1], &sliders[2]);
+    let (soft_start, release_time) = (&sliders[1], &sliders[2]);
 
     for (soft, decay) in [(false, false), (true, false), (false, true)] {
         model.set_settle_enabled(soft);
         model.set_decay_enabled(decay);
         assert_eq!(soft_start.accessible_enabled(), Some(soft));
-        assert_eq!(mute_delay.accessible_enabled(), Some(decay));
+        assert_eq!(release_time.accessible_enabled(), Some(decay));
     }
 }
 
@@ -141,7 +141,7 @@ fn the_test_buttons_are_enabled_where_the_engine_would_not_refuse_the_request() 
     let window = window();
     let model = window.global::<Model>();
     model.set_tab(test_tab::TAB);
-    model.set_controls_enabled(true);
+    model.set_test_available(true);
     let buttons = test_buttons(&window);
 
     // nothing to play yet
@@ -158,9 +158,68 @@ fn the_test_buttons_are_enabled_where_the_engine_would_not_refuse_the_request() 
     }
     model.set_test_job(TestJob::None);
 
-    // without a dongle the engine refuses all of them
-    model.set_controls_enabled(false);
+    // the engine refuses all of them while the dongle is not there (not connected, or not read
+    // since it connected or the computer woke up), whatever the other controls can do
+    model.set_controls_enabled(true);
+    model.set_test_available(false);
     assert_eq!(enabled(&buttons), [false; 6]);
+    model.set_controls_enabled(false);
+    model.set_test_available(true);
+    assert_eq!(enabled(&buttons), [true; 6]);
+}
+
+#[test]
+fn the_level_switch_is_off_until_the_user_turns_it_on_and_follows_what_rust_says() {
+    let window = window();
+    let model = window.global::<Model>();
+    let toggled = Rc::new(RefCell::new(Vec::new()));
+    model.on_meter_toggled({
+        let toggled = toggled.clone();
+        move |on| toggled.borrow_mut().push(on)
+    });
+    model.set_test_available(true);
+    for tab in [OUTPUT_PAGE, test_tab::TAB] {
+        model.set_tab(tab);
+        slint::platform::update_timers_and_animations();
+    }
+    let switch = only(&window, "Switch");
+    assert_eq!(switch.accessible_checked(), Some(false));
+    assert!(
+        toggled.borrow().is_empty(),
+        "entering the page asks for nothing"
+    );
+
+    switch.invoke_accessible_default_action();
+    assert_eq!(*toggled.borrow(), [true]);
+    assert_eq!(switch.accessible_checked(), Some(true));
+    // Rust turns it off where the meter may not run, and the switch shows it
+    model.set_meter_on(false);
+    assert_eq!(switch.accessible_checked(), Some(false));
+    switch.invoke_accessible_default_action();
+    assert_eq!(*toggled.borrow(), [true, true]);
+}
+
+#[test]
+fn the_level_switch_can_be_used_only_where_the_engine_would_open_the_microphone() {
+    let window = window();
+    let model = window.global::<Model>();
+    model.set_tab(test_tab::TAB);
+    let switch = only(&window, "Switch");
+
+    assert_eq!(switch.accessible_enabled(), Some(false), "no dongle");
+    model.set_test_available(true);
+    assert_eq!(switch.accessible_enabled(), Some(true));
+    // the engine refuses the meter while a test runs, and a measurement is no reason to turn it
+    // off in the middle of it
+    for job in JOBS {
+        model.set_test_job(job);
+        assert_eq!(switch.accessible_enabled(), Some(false), "{job:?}");
+    }
+    model.set_test_job(TestJob::None);
+    // it is not the controls that change the dongle that it follows
+    model.set_controls_enabled(true);
+    model.set_test_available(false);
+    assert_eq!(switch.accessible_enabled(), Some(false));
 }
 
 #[test]
@@ -168,7 +227,7 @@ fn a_test_button_starts_its_test_and_while_it_runs_cancels_it() {
     let window = window();
     let model = window.global::<Model>();
     model.set_tab(test_tab::TAB);
-    model.set_controls_enabled(true);
+    model.set_test_available(true);
     model.set_test_has_recording(true);
     let buttons = test_buttons(&window);
 
@@ -237,11 +296,16 @@ fn the_page_shows_what_the_tab_holds() {
     let window = window();
     let model = window.global::<Model>();
     let mut tab = TestTab::default();
-    tab.state(&TestState {
-        meter: true,
-        running: Some(TestKind::NoiseReductionAb),
-        has_recording: true,
-    });
+    tab.switched(true);
+    tab.state(
+        &TestState {
+            meter: true,
+            running: Some(TestKind::NoiseReductionAb),
+            has_recording: true,
+        },
+        true,
+        true,
+    );
     tab.event(&TestEvent::Level(cxtune::capture::Level {
         rms_dbfs: -52.0,
         peak_dbfs: -40.0,
@@ -258,16 +322,20 @@ fn the_page_shows_what_the_tab_holds() {
     assert!(model.get_test_has_recording());
     assert!(model.get_test_caution());
     assert_eq!(model.get_test_problem(), TestProblem::None);
+    assert!(model.get_test_available());
+    assert!(model.get_meter_on());
     assert!(model.get_meters_active());
     assert_eq!(model.get_mic_db(), -52.0);
 
-    // the meter went off with the test: no level, no countdown, the caution is gone with a sound
-    tab.state(&TestState::default());
+    // a test that plays turned the meter off: no level, no countdown, and the caution is gone
+    // with the sound
+    tab.state(&TestState::default(), true, true);
     tab.requested(TestJob::Click);
     tab.show(&model);
     assert_eq!(model.get_test_job(), TestJob::None);
     assert_eq!(model.get_test_remaining(), -1);
     assert!(!model.get_test_caution());
+    assert!(!model.get_meter_on());
     assert!(!model.get_meters_active());
 }
 
@@ -379,6 +447,8 @@ fn the_controls_of_the_test_rows_share_one_slot_and_the_results_one_column() {
     const HALF: f32 = 76.0;
     const GAP: f32 = 8.0;
     const RESULT: f32 = 128.0;
+    // the value of the level, in the column of the value of a slider
+    const VALUE: f32 = 64.0;
 
     let window = real_window();
     window.global::<Model>().set_tab(test_tab::TAB);
@@ -399,9 +469,13 @@ fn the_controls_of_the_test_rows_share_one_slot_and_the_results_one_column() {
                 assert_eq!(left + width, EDGE, "a single button ends at the edge");
             }
         }
+        // the level row, where it is found
+        let bar = all(&window, "LevelBar").first().map(rect);
         for result in all(&window, "ResultText") {
-            let [left, _, width, _] = rect(&result);
-            assert_eq!(width, RESULT, "a result column");
+            let [left, top, width, height] = rect(&result);
+            let level = bar.is_some_and(|bar| top < bar[1] + bar[3] && bar[1] < top + height);
+            let column = if level { VALUE } else { RESULT };
+            assert_eq!(width, column, "a result column, at {top}");
             assert_eq!(left + width, EDGE - SLOT - GAP, "directly left of the slot");
         }
     }
@@ -412,24 +486,83 @@ fn the_controls_of_the_test_rows_share_one_slot_and_the_results_one_column() {
 }
 
 #[test]
-fn the_level_bar_ends_where_the_result_column_starts() {
+fn the_level_bar_fills_the_space_between_the_label_and_the_result_column() {
+    // the right edge of the page content, the slot of the control and the gap before it
+    const EDGE: f32 = 684.0;
+    const SLOT: f32 = 160.0;
+    // between the label and the control of a row
+    const ROW_GAP: f32 = 12.0;
+
     let window = real_window();
     window.global::<Model>().set_tab(test_tab::TAB);
     let bar = rect(&only(&window, "LevelBar"));
-    let level_row = all(&window, "ResultText")
-        .into_iter()
-        .map(|result| rect(&result))
-        .find(|result| result[1] < bar[1] + bar[3] && bar[1] < result[1] + result[3])
-        .expect("the result column of the level row");
-    assert_eq!(bar[0] + bar[2], level_row[0]);
+    let beside = |other: &[f32; 4]| other[1] < bar[1] + bar[3] && bar[1] < other[1] + other[3];
+    let find = |type_name: &str| {
+        all(&window, type_name)
+            .iter()
+            .map(rect)
+            .find(beside)
+            .unwrap_or_else(|| panic!("a {type_name} in the level row"))
+    };
+    let (help, result, switch) = (find("Help"), find("ResultText"), find("SwitchControl"));
+
+    assert_eq!(
+        bar[0],
+        help[0] + help[2] + ROW_GAP,
+        "starts after the label"
+    );
+    assert_eq!(
+        bar[0] + bar[2],
+        result[0],
+        "ends where the result column starts"
+    );
+    // its segments fill the bar, to within the pitch of one of them
+    let segments = find("Meter");
+    assert!(
+        segments[0] >= bar[0]
+            && segments[0] + segments[2] <= bar[0] + bar[2]
+            && bar[2] - segments[2] < 7.0,
+        "{segments:?} in {bar:?}"
+    );
+    // the switch is the control of the row, at the right edge, in the slot of the others
+    assert_eq!(switch[0] + switch[2], EDGE);
+    assert!(switch[0] >= EDGE - SLOT);
+    assert!(result[0] + result[2] < switch[0]);
+}
+
+#[test]
+fn the_header_meter_draws_a_value_only_while_the_meter_runs() {
+    let window = window();
+    let model = window.global::<Model>();
+    model.set_mic_db(-52.0);
+    model.set_meters_active(true);
+    let [left, top, width, height] = rect(&only(&window, "MeterRow"));
+    // the texts in the meter: its tag, and its value
+    let texts = |window: &MainWindow| {
+        all(window, "Text")
+            .iter()
+            .map(rect)
+            .filter(|t| {
+                t[0] >= left
+                    && t[0] + t[2] <= left + width
+                    && t[1] >= top
+                    && t[1] + t[3] <= top + height
+            })
+            .count()
+    };
+    assert_eq!(texts(&window), 2, "a tag and a value");
+    model.set_meters_active(false);
+    assert_eq!(texts(&window), 1, "a tag and no value");
 }
 
 #[test]
 fn the_header_meter_reads_in_dbfs_like_the_test_page() {
     let window = window();
     let model = window.global::<Model>();
-    model.set_meters_active(true);
     model.set_mic_db(-52.0);
+    let idle = only(&window, "MeterRow").accessible_value().unwrap();
+    assert_eq!(idle, "", "no value while the meter does not run");
+    model.set_meters_active(true);
     let header = only(&window, "MeterRow").accessible_value().unwrap();
     assert!(header.ends_with("dBFS"), "{header}");
     model.set_tab(test_tab::TAB);

@@ -16,7 +16,7 @@ use crate::lang::{self, Lang};
 use crate::platform;
 use crate::sound::{Levels, Sound};
 use crate::status::{self, Problem};
-use crate::test_tab::{self, MeterAsk, TestTab};
+use crate::test_tab::{self, TestTab};
 use crate::throttle::Throttle;
 use crate::ui::{MainWindow, Model, TestJob, Tray};
 use crate::{autostart, instance};
@@ -101,11 +101,11 @@ pub struct App {
     touched: Touched,
     paced: [Paced; 5],
     sound: Sound,
-    /// What the Test page shows, and what the engine was last asked about its meter.
+    /// What the Test page shows, with the switch of its meter and what the engine was last asked
+    /// about it.
     test: TestTab,
-    meter: MeterAsk,
-    /// Whether the window is shown, not hidden in the notification area: the meter of the Test
-    /// page does not run in a hidden one, nor in a minimized one.
+    /// Whether the window is shown, not hidden in the notification area: the meter of the Test page
+    /// is off in a hidden window, and in a minimized one.
     shown: bool,
     /// Until when the volume of each side, playback and capture, is the user's own move.
     volume_hold: [Option<Instant>; 2],
@@ -163,7 +163,6 @@ pub fn install(
         volume_hold: [None; 2],
         quitting: false,
         test: TestTab::default(),
-        meter: MeterAsk::default(),
         shown: visible,
     };
     app.sound.watch(visible);
@@ -191,6 +190,7 @@ fn connect(window: &MainWindow, tray: &Tray) {
     model.on_surround_level_changed(|level| with_app(|app| app.surround_level_changed(level)));
     model.on_tab_changed(|_| with_app(App::render));
     model.on_minimized_changed(|_| with_app(App::render));
+    model.on_meter_toggled(|on| with_app(|app| app.meter_toggled(on)));
     model.on_test_requested(|job| with_app(|app| app.test_requested(job)));
     model.on_test_cancelled(|| with_app(App::test_cancelled));
     model.on_boost_changed(|step| with_app(|app| app.boost_changed(step)));
@@ -282,7 +282,7 @@ impl App {
         self.snapshot = None;
         self.start_problem = None;
         self.touched = Touched::default();
-        self.meter.reset();
+        self.test.engine_restarted();
         let spawned = std::thread::Builder::new()
             .name("cxtune-start".into())
             .spawn(move || {
@@ -312,8 +312,12 @@ impl App {
     pub fn preview(&mut self, snapshot: Snapshot, events: &[engine::TestEvent]) {
         self.touched = Touched::default();
         self.test = TestTab::default();
+        let test = snapshot.test;
         self.snapshot = Some(snapshot);
         self.render();
+        // the page is in view and the engine runs, with its meter on where the state says so
+        self.test.switched(test.meter);
+        self.test.state(&test, true, true);
         for event in events {
             self.test.event(event);
         }
@@ -360,10 +364,13 @@ impl App {
                 }
                 self.warned |= failure.kind == ErrorKind::Invalid;
             }
-            // the Test page changes twenty times a second while the meter runs: nothing else does
+            // the Test page changes twenty times a second while the meter runs: nothing else does,
+            // except a failure, which can end the meter
             Event::Test(event) => {
                 self.test.event(&event);
-                return self.show_test();
+                if !matches!(event, engine::TestEvent::Failed { .. }) {
+                    return self.show_test();
+                }
             }
         }
         self.render();
@@ -444,10 +451,11 @@ impl App {
             .as_ref()
             .map(|snapshot| snapshot.test)
             .unwrap_or_default();
-        self.test.state(&test);
+        let available = test_tab::available(usable, self.snapshot.as_ref());
+        self.test
+            .state(&test, available, test_tab::in_view(&window, self.shown));
         self.test.show(&model);
-        let wanted = test_tab::meter_wanted(&window, self.shown, usable, self.test.running());
-        if let Some(command) = self.meter.sync(wanted) {
+        if let Some(command) = self.test.sync_meter() {
             self.send(command);
         }
 
@@ -626,7 +634,12 @@ impl App {
         };
         self.test.requested(job);
         self.send(Command::Test(request));
-        self.show_test();
+        self.render();
+    }
+
+    fn meter_toggled(&mut self, on: bool) {
+        self.test.switched(on);
+        self.render();
     }
 
     fn test_cancelled(&mut self) {
@@ -769,6 +782,8 @@ impl App {
         }
         self.quitting = true;
         self.shown = false;
+        // the meter goes off with the window
+        self.render();
         if let Some(window) = self.window.upgrade() {
             let _ = window.hide();
         }

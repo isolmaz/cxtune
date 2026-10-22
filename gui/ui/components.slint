@@ -444,7 +444,7 @@ export component TestButton inherits FluentButton {
     in property <bool> available: true;
     property <bool> running: Model.test-job == root.job;
     text: root.running ? @tr("ui" => "Cancel") : root.start-text;
-    enabled: root.running || (Model.controls-enabled && Model.test-job == TestJob.none && root.available);
+    enabled: root.running || (Model.test-available && Model.test-job == TestJob.none && root.available);
     clicked => {
         if root.running {
             Model.test-cancelled();
@@ -548,6 +548,8 @@ export component Row inherits Rectangle {
     in property <bool> value-column;
     // the control does nothing: the texts take the colour of a disabled control
     in property <bool> disabled;
+    // the control takes the space that the label leaves, instead of the label taking all of it
+    in property <bool> fill;
     in property <bool> hovered;
     callback mute-toggled(bool);
     height: Grid.row;
@@ -591,7 +593,7 @@ export component Row inherits Rectangle {
 
         VerticalLayout {
             alignment: center;
-            horizontal-stretch: 1;
+            horizontal-stretch: root.fill ? 0 : 1;
 
             HorizontalLayout {
                 spacing: 8px;
@@ -617,7 +619,7 @@ export component Row inherits Rectangle {
         // the control, at the right edge
         VerticalLayout {
             alignment: center;
-            horizontal-stretch: 0;
+            horizontal-stretch: root.fill ? 1 : 0;
 
             HorizontalLayout {
                 spacing: Grid.value-gap;
@@ -1213,14 +1215,14 @@ export component MeterRow inherits HorizontalLayout {
     }
 }
 
-// The level of the microphone on the Test page: a meter of `segments` segments for a level in dBFS
-// from -60 to 0, as high as a row of buttons. Without a level it stays neutral.
+// The level of the microphone on the Test page: a meter for a level in dBFS from -60 to 0, as high
+// as a row of buttons, with as many segments as fit in the width that the layout gives it. Without
+// a level it stays neutral.
 export component LevelBar inherits Rectangle {
     in property <bool> active;
     in property <float> db;
     in property <string> label;
-    in property <int> segments: 28;
-    width: meter.width;
+    horizontal-stretch: 1;
     height: 32px;
     accessible-role: progress-indicator;
     accessible-label: root.label;
@@ -1230,7 +1232,7 @@ export component LevelBar inherits Rectangle {
         y: (parent.height - self.height) / 2;
         active: root.active;
         db: root.db;
-        segments: root.segments;
+        segments: Math.max(1, Math.floor((root.width + 2px) / 7px));
     }
 }
 

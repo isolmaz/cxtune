@@ -447,7 +447,13 @@ mod tests {
 
     #[test]
     fn the_recommended_settings_change_five_controls_and_keep_the_others() {
-        let held = Controls::effective(&Config::default(), Some(&device(Mode::MinHiss)));
+        // a release time that is not the default, so that a reset to the vendor's would show
+        let settings = Config {
+            balanced_decay_ms: Some(1500),
+            ..Config::default()
+        };
+        let held = Controls::effective(&settings, Some(&device(Mode::MinHiss)));
+        assert_ne!(held.decay_ms, DECAY_DEFAULT_MS);
         let recommended = held.recommended();
         assert_eq!(
             recommended,
@@ -461,7 +467,7 @@ mod tests {
             }
         );
         assert_eq!(recommended.settle_ms, 300);
-        assert_eq!(recommended.decay_ms, DECAY_DEFAULT_MS);
+        assert_eq!(recommended.decay_ms, 1500);
         assert_eq!(recommended.level, 500);
         assert!(recommended.surround);
         assert_eq!(recommended.surround_level, 7);

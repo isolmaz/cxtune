@@ -109,7 +109,7 @@ cxtune watch                    keep the remembered settings applied across repl
 engine (Windows 11, Turkish and English). It follows the light or dark scheme of Windows, has no
 console window and closes to the notification area. A list of pages on the left leads to the
 five below, and a header shows the dongle, its state and the level of the microphone (while
-the Test page is shown).
+the level meter of the Test page is switched on).
 
 - **Output**: the four modes (Default, Low click, Balanced, Lowest noise) as cards with Noise
   floor, Click and Start delay indicators that show only what was measured (and say so when
@@ -120,10 +120,11 @@ the Test page is shown).
 - **Microphone**: boost with the gain compared with the vendor's setting, noise reduction, AGC
   (experimental) and the microphone volume.
 - **Sidetone** (experimental, the level in dB, with a note not to turn on Windows' "Listen to this
-  device" as well), **Test** (the engine's test helpers: a live microphone level, the noise floor,
-  a recording and its playback, the noise reduction comparison, the click test and listening to
-  the noise, each showing only what it measured; a test sound is low-level and plays in the
-  headset) and **General**: start with Windows, language, the log folder and **About**
+  device" as well), **Test** (the engine's test helpers: a microphone level meter that you
+  switch on and that opens the microphone only while it is on, the noise floor, a recording and
+  its playback, the noise reduction comparison, the click test and listening to the noise, each
+  showing only what it measured; a test sound is low-level and plays in the headset) and
+  **General**: start with Windows, language, the log folder and **About**
   (version, the supported device and the disclaimer).
 - The **notification-area icon** switches the mode, re-applies the settings and shows the
   window; its tooltip is the short status. `cxtune-gui.exe --minimized` starts it in the
