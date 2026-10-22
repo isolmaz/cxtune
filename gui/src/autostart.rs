@@ -55,6 +55,7 @@ fn set_enabled_at(key: &str, exe: &Path, enabled: bool) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
 
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::UI::Shell::CommandLineToArgvW;
@@ -92,21 +93,34 @@ mod tests {
         }
     }
 
-    /// A key of the test's own, removed when the test ends, also when it fails.
-    struct TestKey(String);
+    const TEST_ROOT: &str = r"Software\cxtune-gui-test";
+
+    /// The tests that use the registry run one after the other, because the key that holds their
+    /// keys is deleted with the last one and must not be deleted while another test is creating
+    /// its own in it.
+    static REGISTRY: Mutex<()> = Mutex::new(());
+
+    /// A key of the test's own, removed when the test ends, also when it fails, together with
+    /// the key that holds it.
+    struct TestKey {
+        name: String,
+        _serial: MutexGuard<'static, ()>,
+    }
 
     impl TestKey {
         fn new(tag: &str) -> TestKey {
-            TestKey(format!(
-                r"Software\cxtune-gui-test\{tag}-{}",
-                std::process::id()
-            ))
+            TestKey {
+                _serial: REGISTRY.lock().unwrap_or_else(PoisonError::into_inner),
+                name: format!(r"{TEST_ROOT}\{tag}-{}", std::process::id()),
+            }
         }
     }
 
     impl Drop for TestKey {
         fn drop(&mut self) {
-            let _ = RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&self.0);
+            let user = RegKey::predef(HKEY_CURRENT_USER);
+            let _ = user.delete_subkey_all(&self.name);
+            let _ = user.delete_subkey(TEST_ROOT);
         }
     }
 
@@ -114,23 +128,23 @@ mod tests {
     fn registering_and_unregistering_round_trips_through_the_registry() {
         let key = TestKey::new("round-trip");
         let exe = PathBuf::from(r"C:\Program Files\cxtune\cxtune-gui.exe");
-        assert!(!is_enabled_at(&key.0, &exe).unwrap());
+        assert!(!is_enabled_at(&key.name, &exe).unwrap());
 
-        set_enabled_at(&key.0, &exe, true).unwrap();
-        assert!(is_enabled_at(&key.0, &exe).unwrap());
+        set_enabled_at(&key.name, &exe, true).unwrap();
+        assert!(is_enabled_at(&key.name, &exe).unwrap());
         let (run, _) = RegKey::predef(HKEY_CURRENT_USER)
-            .create_subkey_with_flags(&key.0, KEY_READ)
+            .create_subkey_with_flags(&key.name, KEY_READ)
             .unwrap();
         assert_eq!(
             run.get_value::<String, _>(VALUE).unwrap(),
             r#""C:\Program Files\cxtune\cxtune-gui.exe" --minimized"#
         );
 
-        set_enabled_at(&key.0, &exe, false).unwrap();
-        assert!(!is_enabled_at(&key.0, &exe).unwrap());
+        set_enabled_at(&key.name, &exe, false).unwrap();
+        assert!(!is_enabled_at(&key.name, &exe).unwrap());
         assert!(run.get_value::<String, _>(VALUE).is_err());
         // unregistering what is not registered is not an error
-        set_enabled_at(&key.0, &exe, false).unwrap();
+        set_enabled_at(&key.name, &exe, false).unwrap();
     }
 
     #[test]
@@ -138,18 +152,18 @@ mod tests {
         let key = TestKey::new("other-copy");
         let here = PathBuf::from(r"C:\Tools\cxtune-gui.exe");
         let elsewhere = PathBuf::from(r"C:\Old\cxtune-gui.exe");
-        set_enabled_at(&key.0, &elsewhere, true).unwrap();
-        assert!(!is_enabled_at(&key.0, &here).unwrap());
+        set_enabled_at(&key.name, &elsewhere, true).unwrap();
+        assert!(!is_enabled_at(&key.name, &here).unwrap());
 
         // registering again points the value at this copy
-        set_enabled_at(&key.0, &here, true).unwrap();
-        assert!(is_enabled_at(&key.0, &here).unwrap());
-        assert!(!is_enabled_at(&key.0, &elsewhere).unwrap());
+        set_enabled_at(&key.name, &here, true).unwrap();
+        assert!(is_enabled_at(&key.name, &here).unwrap());
+        assert!(!is_enabled_at(&key.name, &elsewhere).unwrap());
     }
 
     #[test]
     fn a_missing_key_means_not_registered() {
         let key = TestKey::new("missing");
-        assert!(!is_enabled_at(&key.0, Path::new(r"C:\x.exe")).unwrap());
+        assert!(!is_enabled_at(&key.name, Path::new(r"C:\x.exe")).unwrap());
     }
 }

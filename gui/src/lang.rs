@@ -1,6 +1,6 @@
 //! The language of the interface: Turkish or English.
 
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use windows::Win32::Globalization::GetUserDefaultUILanguage;
@@ -71,11 +71,22 @@ pub fn load(path: &Path) -> Option<Lang> {
     parse(&std::fs::read_to_string(path).ok()?)
 }
 
+/// Writes the choice to a temporary file next to `path` and renames it over `path`, so the file
+/// is never half written. On failure `path` is untouched and the temporary file is removed.
 pub fn save(path: &Path, lang: Lang) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, render(lang))
+    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
+    let write = || -> io::Result<()> {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(render(lang).as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    };
+    write().inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 #[cfg(test)]
@@ -147,5 +158,31 @@ mod tests {
         assert_eq!(load(&file), Some(Lang::English));
         save(&file, Lang::Turkish).unwrap();
         assert_eq!(load(&file), Some(Lang::Turkish));
+    }
+
+    #[test]
+    fn saving_leaves_no_temporary_file_and_a_failed_save_leaves_the_path_alone() {
+        let dir = Scratch(
+            std::env::temp_dir().join(format!("cxtune-gui-lang-atomic-{}", std::process::id())),
+        );
+        let file = dir.0.join("gui.toml");
+        save(&file, Lang::English).unwrap();
+        let names = |dir: &Path| -> Vec<String> {
+            std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(names(&dir.0), ["gui.toml"]);
+
+        // a directory cannot be replaced by a file: the rename fails
+        let blocked = dir.0.join("blocked.toml");
+        std::fs::create_dir(&blocked).unwrap();
+        assert!(save(&blocked, Lang::Turkish).is_err());
+        assert!(blocked.is_dir());
+        let mut left = names(&dir.0);
+        left.sort();
+        assert_eq!(left, ["blocked.toml", "gui.toml"]);
+        assert_eq!(load(&file), Some(Lang::English));
     }
 }
