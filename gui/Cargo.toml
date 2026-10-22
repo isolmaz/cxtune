@@ -38,4 +38,5 @@ slint-build = "=1.18.1"
 embed-resource = "3"
 
 [dev-dependencies]
+i-slint-backend-testing = "=1.18.1"
 windows = { version = "0.62.2", features = ["Win32_UI_Shell"] }

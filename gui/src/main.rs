@@ -5,6 +5,8 @@ mod autostart;
 mod controls;
 mod instance;
 mod lang;
+#[cfg(test)]
+mod pages;
 mod platform;
 #[cfg(feature = "snapshot")]
 mod snapshot;

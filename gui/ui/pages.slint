@@ -246,14 +246,14 @@ export component SidetonePage inherits Page {
             help: @tr("ui" => "In dB as the ROM counts it (USB audio class, 1/256 dB; 0 to +16 dB). The dongle does not expose this control to Windows, and the loudness was never measured. Vendor default: +3.7 dB.");
             value-column: true;
             value: Texts.level-db(Math.round(Model.level));
-            disabled: !Model.controls-enabled;
+            disabled: !Model.controls-enabled || !Model.sidetone;
 
             AppSlider {
                 minimum: Model.level-min;
                 maximum: Model.level-max;
                 step: Model.level-step;
                 value <=> Model.level;
-                enabled: Model.controls-enabled;
+                enabled: !level-row.disabled;
                 label: @tr("ui" => "Sidetone level");
                 description: level-row.help;
                 changed(value) => {

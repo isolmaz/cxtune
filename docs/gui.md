@@ -138,8 +138,10 @@ with the last value always sent when the slider is released.
   and how loud sidetone is were not measured, so nothing says that a low value is quiet. Only the
   window divides the register by 256. Switching sidetone on while the level is still the vendor's
   untouched 947 first sets 200. The level slider is linear in the register, so linear in dB: it
-  spans 1-4096 and a key press moves it by 128, half a dB. A line advises against turning on the
-  Windows setting "Listen to this device" at the same time (an echo).
+  spans 1-4096 and a key press moves it by 128, half a dB. While sidetone is off the level row is
+  disabled like the soft-start row outside Lowest noise: greyed, not focusable, its value in the
+  disabled colour. A line advises against turning on the Windows setting "Listen to this device"
+  at the same time (an echo).
 - **Apply recommended** (a subtle button next to the title of the Output page, with what it
   sets as its tooltip) sets balanced mode, microphone
   boost 6, noise reduction on, AGC off and sidetone off, and leaves the soft-start time and the
