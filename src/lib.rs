@@ -5,6 +5,7 @@
 //! All writes go through [`patches::apply_patch`]; there is no API that writes an
 //! arbitrary address. Nothing here touches EEPROM or DSP memory.
 
+pub mod audio;
 pub mod config;
 pub mod hid;
 pub mod patches;
