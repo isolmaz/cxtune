@@ -1,0 +1,257 @@
+@include "6502.slaspec"
+
+# Conexant CX2077x extensions (see cxdis.py for evidence/hypotheses)
+define token cxb1 (8) cxmask=(0,7);
+define token cxb2 (8) cxzp=(0,7);
+define pcodeop romPatchSlot;
+define pcodeop unknownCB;
+define pcodeop unknownDB;
+
+
+define token bitopbyte (8)
+    bitop           = (0,7)
+
+    action          = (7,7)
+    bitindex        = (4,6) dec
+    optype          = (0,3)
+;
+
+define token testopbyte (8)
+    top             = (0, 7)
+    taaa            = (5, 7)
+    td              = (4, 4)
+    tbb             = (2, 3)
+    tcc             = (0, 1)
+;
+
+################################################################
+
+# Zero Page Indirect
+ZIOP:   (imm8)    is bbb=4; imm8  { addr:2 = imm8; tmp:2 = *:2 addr; export *:1 tmp; }
+
+OPTB:   imm8      is tbb=1; imm8  { export *:1 imm8; }
+OPTB:   imm16     is tbb=3; imm16 { export *:1 imm16; }
+
+# Absolute Indexed Indirect
+ADDRIX: (imm16,X) is X; imm16     { addr:2 = imm16 + zext(X); tmp:2 = *:2 addr; export tmp; }
+
+# Instructions
+
+:ADC ZIOP                      is (cc=2 & aaa=3) ... & ZIOP
+{
+    local op1 = ZIOP;
+    local tmpC = C;
+
+    C = carry(A, op1);
+    A = A + op1 + tmpC;
+    resultFlags(A);
+    V = C;
+}
+
+# AND (zp) (0x32) removed: 0x32 is a 1-byte Conexant op (CX32) on this core
+
+:BBR "#"bitindex, imm8, REL    is (action=0 & optype=0xF) & bitindex ; imm8 ; REL {
+    local ptr:2 = imm8;
+    local value:1 = *:1 ptr;
+    local jump = (value & (1 << bitindex)) == 0;
+    if (jump) goto REL;
+}
+
+:BBS "#"bitindex, imm8, REL    is (action=1 & optype=0xF) & bitindex ; imm8 ; REL {
+    local ptr:2 = imm8;
+    local value:1 = *:1 ptr;
+    local jump = (value & (1 << bitindex)) != 0;
+    if (jump) goto REL;
+}
+
+# 0x89 is ADD #imm (no carry in) on this core: EOR #$ff / ADD #1 negation idiom
+:ADD "#"imm8                   is op=0x89; imm8
+{
+    local op1:1 = imm8;
+    C = carry(A, op1);
+    V = scarry(A, op1);
+    A = A + op1;
+    resultFlags(A);
+}
+
+:BIT OP2                       is (op=0x34 | op=0x3C) ... & OP2
+{
+    N = (OP2 & 0x80) == 0x80;
+    V = (OP2 & 0x40) == 0x40;
+    local value = A & OP2;
+    Z = (value == 0);
+}
+
+:BRA  REL                      is op=0x80; REL
+{
+    goto REL;
+}
+
+
+:ASR A                         is op=0x3A & A
+{
+    C = A & 1;
+    A = A s>> 1;
+    resultFlags(A);
+}
+
+:EOR ZIOP                      is (cc=2 & aaa=2) ... & ZIOP
+{
+    local op1 = ZIOP;
+    A = A ^ op1;
+    resultFlags(A);
+}
+
+:NEG A                         is op=0x1A & A
+{
+    A = -A;
+    resultFlags(A);
+}
+
+:JMP ADDRIX                    is (op=0x7C); ADDRIX
+{
+    goto [ADDRIX];
+}
+
+
+:ORA  ZIOP                     is (cc=2 & aaa=0) ... & ZIOP
+{
+    A = A | ZIOP;
+    resultFlags(A);
+}
+
+:PHX                           is op=0xDA
+{
+    *:1 (SP) = X;
+    SP = SP - 1;
+}
+
+:PLX                           is op=0xFA
+{
+    SP = SP + 1;
+    X = *:1 (SP);
+    resultFlags(X);
+}
+
+:PHY                           is op=0x5A
+{
+    *:1 (SP) = Y;
+    SP = SP - 1;
+}
+
+:PLY                           is op=0x7A
+{
+    SP = SP + 1;
+    Y = *:1 (SP);
+    resultFlags(Y);
+}
+
+:RMB "#"bitindex, imm8         is (action=0 & optype=7) & bitindex ; imm8 {
+    local ptr:2 = imm8;
+    local value:1 = *:1 ptr;
+    value = value & ~(1 << bitindex);
+    *:1 ptr = value;
+}
+
+
+:SMB "#"bitindex, imm8         is (action=1 & optype=7) & bitindex ; imm8 {
+    local ptr:2 = imm8;
+    local value:1 = *:1 ptr;
+    value = value | (1 << bitindex);
+    *:1 ptr = value;
+}
+
+:STA ZIOP                      is (cc=2 & aaa=4) ... & ZIOP
+{
+    ZIOP = A;
+}
+
+# 0x64 is ADD zp (no carry in) on this core: TXA / ADD $40 / LDA #0 / ADC $41 16-bit add idiom
+:ADD imm8                      is op=0x64 ; imm8
+{
+    local p:2 = imm8;
+    local op1:1 = *:1 p;
+    C = carry(A, op1);
+    V = scarry(A, op1);
+    A = A + op1;
+    resultFlags(A);
+}
+
+:STZ imm8,X                    is op=0x74 & X ; imm8
+{
+    local tmp:2 = zext(imm8 + X);
+    *:1 tmp = 0;
+}
+
+:STZ imm16                     is op=0x9C ; imm16
+{
+    local tmp:2 = imm16;
+    *:1 tmp = 0;
+}
+
+:STZ imm16,X                   is op=0x9E & X ; imm16
+{
+    local tmp:2 = imm16 + zext(X);
+    *:1 tmp = 0;
+}
+
+:TRB OPTB                      is (tcc=0 & taaa=0 & td=1) ... & OPTB
+{
+    local op1 = OPTB;
+    local result = (~A) & op1;
+    OPTB = result;
+    Z = result == 0;
+}
+
+:TSB OPTB                      is (tcc=0 & taaa=0 & td=0) ... & OPTB
+{
+    local op1 = OPTB;
+    local result = A | op1;
+    OPTB = result;
+    Z = result == 0;
+}
+
+# d2 mask lo hi : [abs] |= mask   (bit set)
+:SETB "#"cxmask, imm16       is op=0xD2; cxmask; imm16 { local p:2 = imm16; *:1 p = *:1 p | cxmask; }
+# c2 mask lo hi : [abs] &= ~mask  (bit clear)
+:CLRB "#"cxmask, imm16       is op=0xC2; cxmask; imm16 { local p:2 = imm16; *:1 p = *:1 p & ~cxmask; }
+# e2 lo hi mask rel : branch if ([abs] & mask) == 0   (polarity inferred)
+:BRCLR imm16, "#"cxmask, REL is op=0xE2; imm16; cxmask; REL { local p:2 = imm16; local v:1 = *:1 p; if ((v & cxmask) == 0) goto REL; }
+# f2 lo hi mask rel : branch if ([abs] & mask) != 0   (polarity inferred)
+:BRSET imm16, "#"cxmask, REL is op=0xF2; imm16; cxmask; REL { local p:2 = imm16; local v:1 = *:1 p; if ((v & cxmask) != 0) goto REL; }
+# b2 imm zp : [zp] = imm
+:MOVI "#"cxmask, cxzp        is op=0xB2; cxmask; cxzp { local p:2 = cxzp; *:1 p = cxmask; }
+# 6b slot from16 to16 : ROM patch slot (inferred: redirect ROM address 'from' to 'to')
+:PATCH "#"cxmask, imm16, ADDR16 is op=0x6B; cxmask; imm16; ADDR16 { local s:1 = cxmask; local f:2 = imm16; romPatchSlot(s, f, &:2 ADDR16); }
+:UNK_CB                      is op=0xCB { unknownCB(); }
+:UNK_DB                      is op=0xDB { unknownDB(); }
+
+# --- additional Conexant ops identified from the ROM (semantics unknown; modelled as opaque pcodeops) ---
+define pcodeop cxOp;
+define pcodeop cxPullA;
+define pcodeop dspAccess;
+define token cxsubtok (8) cxsub=(0,7);
+define token cxw16 (16) cxw=(0,15);
+:CX22                        is op=0x22 { cxOp(0x22:1); }
+:CX32                        is op=0x32 { cxOp(0x32:1); }
+:CX13                        is op=0x13 { cxOp(0x13:1); }
+:CX23                        is op=0x23 { cxOp(0x23:1); }
+:CX33                        is op=0x33 { cxOp(0x33:1); }
+:CX9B                        is op=0x9B { cxOp(0x9b:1); }
+:CXBB                        is op=0xBB { cxOp(0xbb:1); }
+:CXAB                        is op=0xAB { A = cxPullA(); }
+# 0x03 ends interrupt handlers (after CX32), modelled like RTI
+:CX03                        is op=0x03 { popSR(); SP = SP + 1; local rti_addr:2 = *:2 SP; SP = SP + 1; return [rti_addr]; }
+# 7b sub [operands]: DSP memory bridge; length depends on sub-op ((sub mod 12)/2 -> 6,4,6,2,4,2 bytes)
+:DSP_MEMX.p0 imm16, cxw is op=0x7B; cxsub=0x00; imm16; cxw { dspAccess(0x00:1, imm16:2, cxw:2); }
+:DSP_WRI.p0 cxw is op=0x7B; cxsub=0x02; cxw { dspAccess(0x02:1, cxw:2); }
+:DSP_WRM.p0 imm16, cxw is op=0x7B; cxsub=0x04; imm16; cxw { local p:2 = imm16; dspAccess(0x04:1, *:2 p, cxw:2); }
+:DSP_RDIND.p0 is op=0x7B; cxsub=0x06 { dspAccess(0x06:1); }
+:DSP_RDI.p0 cxw is op=0x7B; cxsub=0x08; cxw { dspAccess(0x08:1, cxw:2); }
+:DSP_RDIND2.p0 is op=0x7B; cxsub=0x0a { dspAccess(0x0a:1); }
+:DSP_MEMX.p1 imm16, cxw is op=0x7B; cxsub=0x0c; imm16; cxw { dspAccess(0x0c:1, imm16:2, cxw:2); }
+:DSP_WRI.p1 cxw is op=0x7B; cxsub=0x0e; cxw { dspAccess(0x0e:1, cxw:2); }
+:DSP_WRM.p1 imm16, cxw is op=0x7B; cxsub=0x10; imm16; cxw { local p:2 = imm16; dspAccess(0x10:1, *:2 p, cxw:2); }
+:DSP_RDIND.p1 is op=0x7B; cxsub=0x12 { dspAccess(0x12:1); }
+:DSP_RDI.p1 cxw is op=0x7B; cxsub=0x14; cxw { dspAccess(0x14:1, cxw:2); }
+:DSP_RDIND2.p1 is op=0x7B; cxsub=0x16 { dspAccess(0x16:1); }

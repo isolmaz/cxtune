@@ -78,6 +78,8 @@ enum Running {
 
 struct Inner {
     mem: Vec<u8>,
+    eeprom: Vec<u8>,
+    eeprom_reads: usize,
     writes: Vec<(u16, Vec<u8>)>,
     ignore_writes: bool,
     fail_after_writes: Option<usize>,
@@ -400,6 +402,8 @@ impl FakeDevice {
         put(SIDETONE_LEVEL, &[0xB3, 0x03]);
         let dev = Self(Arc::new(Mutex::new(Inner {
             mem,
+            eeprom: vec![0; 0x4000],
+            eeprom_reads: 0,
             writes: Vec::new(),
             ignore_writes: false,
             fail_after_writes: None,
@@ -480,6 +484,18 @@ impl FakeDevice {
     /// arriving at that moment would, while `$1154` keeps the stream bits it had.
     pub fn poke_on_newc(&self, addr: u16, value: u8) {
         self.lock().newc_poke.push((addr as usize, value));
+    }
+
+    /// Replaces the EEPROM image, which is 16 KiB.
+    pub fn set_eeprom(&self, image: &[u8]) {
+        let mut d = self.lock();
+        assert_eq!(image.len(), d.eeprom.len());
+        d.eeprom.copy_from_slice(image);
+    }
+
+    /// EEPROM read requests the device has been sent.
+    pub fn eeprom_reads(&self) -> usize {
+        self.lock().eeprom_reads
     }
 
     pub fn mem(&self) -> Vec<u8> {
@@ -655,6 +671,15 @@ impl Transport for FakeDevice {
                     d.stop_stream();
                     d.settle();
                 }
+            }
+            0x20 => {
+                assert!(
+                    b[5..].iter().all(|&x| x == 0),
+                    "data in EEPROM read request"
+                );
+                assert!(addr + len <= d.eeprom.len(), "EEPROM read out of range");
+                d.eeprom_reads += 1;
+                d.pending = Some(d.eeprom[addr..addr + len].to_vec());
             }
             flags => panic!("forbidden flags {flags:#04x}"),
         }

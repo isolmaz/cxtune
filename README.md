@@ -66,7 +66,7 @@ target\release\cxtune.exe mic-boost 6
 target\release\cxtune.exe watch
 ```
 
-`status` only reads. Every other command except `watch` changes the dongle and remembers the
+`status` and `dump` only read. Every other command except `watch` changes the dongle and remembers the
 choice in `%APPDATA%\cxtune\config.toml`. `watch` keeps the remembered settings applied until you stop
 it.
 
@@ -79,6 +79,8 @@ cxtune mic-nr <on|off>          set microphone noise reduction
 cxtune mic-agc <on|off>         set microphone AGC (experimental)
 cxtune sidetone <on|off>        set sidetone (experimental)
 cxtune sidetone-level <1-4096>  set the sidetone gain register (experimental; start low)
+cxtune dump <out-dir>           read the ROM and EEPROM (read-only) into rom.bin and eeprom.bin
+                                and compare their SHA-256 with the reference unit's
 cxtune watch                    keep the remembered settings applied across replugs and
                                 wake-ups (holds the dongle; other commands are refused)
 ```
@@ -131,6 +133,8 @@ written.
 - [docs/gui.md](docs/gui.md): the tray application.
 - [docs/firmware-research.md](docs/firmware-research.md): how the CX20773 firmware works, what
   is still unknown and how to help (contributions welcome).
+- [tools/README.md](tools/README.md): `cxtune dump` and the disassembler and Ghidra tools for
+  researching your own unit's firmware.
 
 ### Configuration
 
@@ -157,8 +161,9 @@ sidetone_level = 947
   guards, refuses on any mismatch, writes, reads back, and fails on a readback mismatch. It
   refuses any address outside the known writable patch-RAM regions and any device whose
   firmware version and chip id are not the ones the routines were written for.
-- Only the flags `0x00` (read CPU memory) and `0x40` (write CPU memory) are ever sent. The
-  EEPROM (`0x20`), DSP (`0x80`) and high-address (`0x10`) flags are never used.
+- Only the flags `0x00` (read CPU memory) and `0x40` (write CPU memory) are sent, plus `0x20`
+  alone (an EEPROM read) by `cxtune dump`. EEPROM writes (`0x20|0x40`), DSP (`0x80`) and
+  high-address (`0x10`) flags are never used.
 - A mode change is planned in full before the first write, from any recognised state
   (including every half-changed state an interrupted change can leave). An unrecognised state
   is refused without writing anything.

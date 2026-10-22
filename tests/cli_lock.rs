@@ -31,8 +31,11 @@ fn every_device_command_is_refused_while_the_lock_is_held() {
     let _ = std::fs::remove_dir_all(&appdata.0);
     std::fs::create_dir_all(&appdata.0).unwrap();
 
-    let commands: [&[&str]; 9] = [
+    let dump_dir = appdata.0.join("dump-out");
+    let dump_dir = dump_dir.to_str().unwrap();
+    let commands: [&[&str]; 10] = [
         &["status"],
+        &["dump", dump_dir],
         &["apply", "balanced"],
         &["tune", "300"],
         &["mic-boost", "6"],

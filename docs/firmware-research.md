@@ -26,9 +26,10 @@ EEPROM; `img 0xxxxx` is an offset in the EEPROM image (same numbers as EEPROM of
 
 cxtune changes volatile state only. It sends HID memory requests with flags `0x00` (read CPU
 memory) and `0x40` (write CPU memory) and never `0x20` (EEPROM access), `0x80` (DSP memory) or `0x10`
-(address at or above 64 KiB). The planned `cxtune dump` (section 9) will add one read-only path,
-flag `0x20` without `0x40`, to read the EEPROM; the single write function keeps refusing every
-request that has `0x20` set, so `0x20|0x40` is never sent. Every write passes one guarded function (see
+(address at or above 64 KiB). The one exception is `cxtune dump` (section 9), a read-only path
+that sends flag `0x20` without `0x40` to read the EEPROM; its request type has constant flags and
+no data, and the single write function refuses every request that has `0x20` set, so `0x20|0x40`
+is never sent. Every write passes one guarded function (see
 [Safety design](../README.md#safety-design) and [Writable regions](firmware-notes.md#writable-regions)).
 Reasons:
 
@@ -500,11 +501,11 @@ in which case small register values are not necessarily quiet.
 
 All analysis was static unless stated. No dump is published (section 9).
 
-**Disassembly.** `romdis.py` is a recursive-descent disassembler for the ROM
+**Disassembly.** `tools/romdis.py` is a recursive-descent disassembler for the ROM
 (`$7000..$FFFF`) and the patch (RAM from `$1460`). It seeds from the vectors, the populated hook entries,
 `JMP (table,X)` tables and code pointers stored into RAM slots, and writes a listing, data
 cross-references, a call graph and the jump tables (about 11,000 instructions decoded; the
-remaining gaps are data tables and the fill). `cxdis.py` decodes the EEPROM patch image with the
+remaining gaps are data tables and the fill). `tools/cxdis.py` (run through `tools/cxrun.py`) decodes the EEPROM patch image with the
 same instruction table (CPU address = image offset `+ 0x0E91`). Routines we install are
 assembled with a small assembler and decoded by both tools, which must agree, then run through
 a behavioural model of the ROM paths they touch before any write.
@@ -513,11 +514,12 @@ a behavioural model of the ROM paths they touch before any write.
 65C02 and the extensions of section 3.1; opaque pcode operations for `CX22`, `CX9B`, `CXAB`,
 `7B` and similar) with a headless script that creates the memory blocks, labels the registers and
 seeds functions. Ghidra 12.1.4 was used. The decompiler output was a cross-check, not a source of
-facts. The spec, the scripts and the register labels will be added under `tools/` in a later
-change.
+facts. The language spec is in `tools/ghidra/` (see [tools/README.md](../tools/README.md)); the
+headless scripts and the register labels are not published.
 
-**Reading memory safely.** A read-only HID reader whose single send function refuses any packet
-that is not a plain read (write bit set, non-zero data, wrong length or id). Reads of at most 32
+**Reading memory safely.** A read-only HID reader: `cxtune dump`, whose request types are a CPU
+memory read and an EEPROM read and have no write flag (the research used a Python reader whose
+single send function refused any packet that was not a plain read). Reads of at most 32
 bytes, with 5 ms between the request and `GET_REPORT`, and a pause between chunks for dumps;
 one process at a time (the protocol has no request tag). Dumps were re-read in four places and
 compared.
@@ -609,10 +611,11 @@ What is welcome: addresses, short readbacks (a few bytes, as in firmware-notes),
 measurements, and our own annotations (address maps, register names, tooling).
 
 **Compare your unit against ours, without exchanging dumps.** Read your own device and compare
-SHA-256 values with ours. A read-only `cxtune dump` command is planned; it does not exist yet.
-It will read the ROM with flag `0x00` and the EEPROM with flag `0x20` alone, a read; it will
-never send `0x20|0x40`, and the single write choke point keeps refusing `0x20`.
-Until it exists, `cxtune status` (reads only) is what we ask for. Reference values:
+SHA-256 values with ours: `cxtune dump <out-dir>` (see [tools/README.md](../tools/README.md))
+reads the ROM with flag `0x00` and the EEPROM with flag `0x20` alone, a read, writes `rom.bin` and
+`eeprom.bin` into the directory you name, prints their hashes and compares them with the values
+below. It never sends `0x20|0x40`, the single write choke point refuses `0x20`, and nothing is
+uploaded. Keep the files to yourself and report only the hashes. Reference values:
 
 | Item | Range read | Size | SHA-256 |
 |---|---|---|---|
@@ -624,16 +627,16 @@ Until it exists, `cxtune status` (reads only) is what we ask for. Reference valu
 
 The ROM was read with ordinary CPU-space reads and four ranges were re-read and compared. The
 reference EEPROM hash was read during research with flag `0x20` (EEPROM read; `0x20` without
-`0x40` is a read, and an EEPROM write is `0x20|0x40`). Today's cxtune never uses `0x20`; the
-planned `dump` will use it for reads only, and cxtune never sends an EEPROM write. A matching ROM hash plus a matching patch-stream hash means the same
-firmware as ours. The free areas, the size-probe bytes, `0x00..0x01`, the serial string and the
+`0x40` is a read, and an EEPROM write is `0x20|0x40`). `cxtune dump` uses `0x20` for reads
+only, and cxtune never sends an EEPROM write. A matching ROM hash plus a matching patch-stream
+hash means the same firmware as ours. The free areas, the size-probe bytes, `0x00..0x01`, the serial string and the
 config block (the ROM's save request rewrites it) may legitimately differ per unit, so a
 full-EEPROM mismatch alone does not mean different firmware; if only those differ, say so in the
 report.
 
-**Shareable tooling.** The disassemblers, the address and register maps and the Ghidra SLEIGH
-CPU specification will be added under `tools/` in a later pull request. They contain no
-firmware bytes.
+**Shareable tooling.** The disassemblers and the Ghidra SLEIGH CPU specification are in
+[`tools/`](../tools/README.md). They contain no firmware bytes. The address and register maps are
+in [firmware-notes.md](firmware-notes.md).
 
 **Rules for any experiment**
 

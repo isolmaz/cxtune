@@ -19,8 +19,9 @@ usage page `0x000C` (interface 3).
 
 - OUT report `0x04`, 37 bytes: `[0x04, flags, length, addrHi, addrLo, data...]`, `length` 1..32.
 - IN report `0x05`, 33 bytes: `[0x05, data...]`, fetched with GET_REPORT after the request.
-- `flags`: `0x00` read CPU memory, `0x40` write CPU memory. cxtune sends nothing else. The other
-  bits (`0x10` address at or above 64 KiB, `0x20` EEPROM, `0x80` DSP memory) are never used.
+- `flags`: `0x00` read CPU memory, `0x40` write CPU memory. The only other value cxtune sends is
+  `0x20` alone, an EEPROM read, from `cxtune dump`. `0x20|0x40` (an EEPROM write), `0x10` (address
+  at or above 64 KiB) and `0x80` (DSP memory) are never used.
 - A read needs about 5 ms between the request and GET_REPORT; a write needs about 50 ms before
   the readback. Reads are retried up to five times when the IN report is not `0x05`.
 - Requests carry no tag. Two programs talking to the dongle at once can receive each other's

@@ -3,11 +3,12 @@
 //! microphone DSP settings built from those writes.
 //!
 //! All writes go through [`patches::apply_patch`]; there is no API that writes an
-//! arbitrary address. Nothing here touches EEPROM or DSP memory.
+//! arbitrary address. Nothing here writes EEPROM or DSP memory; [`dump`] only reads the EEPROM.
 
 pub mod audio;
 pub mod config;
 pub mod dsp;
+pub mod dump;
 pub mod engine;
 pub mod hid;
 pub mod lock;
