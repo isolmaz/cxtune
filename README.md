@@ -122,8 +122,9 @@ four below, and a header shows the dongle, its state and the level meters.
 - The **notification-area icon** switches the mode, re-applies the settings and shows the
   window; its tooltip is the short status. `cxtune-gui.exe --minimized` starts it in the
   notification area, and only one copy runs at a time.
-- The **status** is one line for what is wrong and one for what to do; technical details are only
-  in the log (`%LOCALAPPDATA%\cxtune\cxtune.log`).
+- The **status**: a pill in the header says how the dongle stands; the band at the bottom appears
+  only for what is going on or needs an action, in one line for what is wrong and one for what to
+  do. Technical details are only in the log (`%LOCALAPPDATA%\cxtune\cxtune.log`).
 - The volume sliders are the Windows volume of the dongle's playback and capture endpoints
   (the same as the Windows mixer and the buttons on the dongle); no HID report is involved.
 

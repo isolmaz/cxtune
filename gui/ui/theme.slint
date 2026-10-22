@@ -2,25 +2,41 @@ import { Palette } from "std-widgets.slint";
 import { Hiss, Pop, Tone } from "contract.slint";
 
 // The 720 x 480 window on a 4 px grid: a header, a navigation column and a page, a footer band.
+// The page has 24 px at its sides and 16 px above and below; everything on it is as wide as the
+// page (512 px).
 export global Grid {
     out property <length> width: 720px;
     out property <length> height: 480px;
     out property <length> header: 64px;
-    out property <length> footer: 44px;
-    out property <length> nav: 136px;
-    // the page: the space around it and between its groups
-    out property <length> margin: 12px;
+    out property <length> footer: 60px;
+    out property <length> nav: 160px;
+    out property <length> margin-x: 24px;
+    out property <length> margin-y: 16px;
+    // between the title, the groups and the info bars of a page
     out property <length> group-gap: 12px;
-    // the cards and rows of a group
+    // between the cards and rows of a group
     out property <length> gap: 4px;
-    out property <length> card-x: 12px;
-    out property <length> card-y: 10px;
-    // a setting row: two lines of text between the vertical card padding
-    out property <length> row: 56px;
-    // the columns of a setting row: the label block, the slider (at least `control`) and the value
-    out property <length> label: 232px;
-    out property <length> control: 160px;
+    // between the mode cards
+    out property <length> gutter: 8px;
+    // the padding of a card, a row and an info bar
+    out property <length> pad: 12px;
+    // a setting row, from its left edge: the glyph column, a gap, the label, and at the right edge
+    // of the row (minus the padding) the control. A slider is `slider` wide and ends `value-gap`
+    // plus `value` before the control's edge, so that every slider and every value is where it is
+    // on any other page.
+    out property <length> row: 48px;
+    out property <length> row-icon: 20px;
+    out property <length> row-gap: 12px;
+    out property <length> slider: 200px;
     out property <length> value: 64px;
+    out property <length> value-gap: 8px;
+    // a combo box or a button in a row
+    out property <length> control: 160px;
+    // the mode cards: the head holds the name (up to two lines) or the name and the badge, then
+    // come the three traits
+    out property <length> mode-head: 42px;
+    out property <length> trait: 20px;
+    out property <length> mode-card: 130px;
 }
 
 // The type ramp. A text uses one of these sizes; the glyphs of Segoe Fluent Icons use `icon`
@@ -81,6 +97,11 @@ export global Signal {
 
     public pure function hiss(kind: Hiss) -> color {
         return kind == Hiss.constant ? Surface.critical : kind == Hiss.some ? Surface.caution : Surface.good;
+    }
+
+    // the glyph of each trait of the modes, by position: noise, click, delay
+    public pure function trait-glyph(position: int) -> string {
+        return position == 0 ? "\u{E9D2}" : position == 1 ? "\u{E945}" : "\u{E916}";
     }
 
     // a click that was not measured has no colour

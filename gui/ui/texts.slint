@@ -155,32 +155,6 @@ export global Texts {
         return @tr("ui" => "Lowest noise");
     }
 
-    public pure function mode-tagline(mode: int) -> string {
-        if mode == 0 {
-            return @tr("ui" => "Always on");
-        }
-        if mode == 1 {
-            return @tr("ui" => "Idle power-down");
-        }
-        if mode == 3 {
-            return @tr("ui" => "Clamped when idle");
-        }
-        return "";
-    }
-
-    public pure function mode-note(mode: int) -> string {
-        if mode == 0 {
-            return @tr("ui" => "Vendor behaviour: constant idle noise, no click, nothing muted.");
-        }
-        if mode == 1 {
-            return @tr("ui" => "Some idle noise and a low click when audio starts; nothing is muted.");
-        }
-        if mode == 2 {
-            return @tr("ui" => "Less idle noise; the first 0.6 s of audio after idle is muted.");
-        }
-        return @tr("ui" => "Less idle noise and a loud click; muted for the soft-start time plus 100 ms.");
-    }
-
     public pure function hiss(kind: Hiss) -> string {
         if kind == Hiss.constant {
             return @tr("ui" => "Constant");
@@ -199,9 +173,34 @@ export global Texts {
             return @tr("ui" => "Low");
         }
         if kind == Pop.not-measured {
-            return @tr("ui" => "Not measured");
+            return "—";
         }
         return @tr("ui" => "Loud");
+    }
+
+    // what the legend says about a trait of the modes, by position on the cards
+    public pure function trait-tip(position: int) -> string {
+        if position == 0 {
+            return @tr("ui" => "Noise floor: the hiss in the headphones while nothing plays.");
+        }
+        if position == 1 {
+            return @tr("ui" => "Click: the pop when audio starts.");
+        }
+        return @tr("ui" => "Mute delay: how long the start of audio is muted.");
+    }
+
+    public pure function click-tip(kind: Pop) -> string {
+        return kind == Pop.not-measured ? trait-tip(1) + " " + @tr("ui" => "Not measured yet.") : trait-tip(1);
+    }
+
+    public pure function delay-tip(kind: Delay) -> string {
+        if kind == Delay.about-600-ms {
+            return trait-tip(2) + " " + @tr("ui" => "The first 0.6 s of audio after idle is muted.");
+        }
+        if kind == Delay.settle {
+            return trait-tip(2) + " " + @tr("ui" => "Muted for the soft-start time plus 100 ms.");
+        }
+        return trait-tip(2);
     }
 
     public pure function delay(kind: Delay, ms: int) -> string {
@@ -243,6 +242,21 @@ export global Texts {
             return @tr("ui" => "+{} dB", db);
         }
         return @tr("ui" => "{} dB", db);
+    }
+
+    // the lines of the About card: what it is made for, what it is not, what it does and who bears
+    // the risk
+    public pure function about-line(position: int) -> string {
+        if position == 0 {
+            return @tr("ui" => "Made for the HyperX Cloud II USB sound card (USB 0951:16A4).");
+        }
+        if position == 1 {
+            return @tr("ui" => "Not affiliated with HyperX, HP or Synaptics.");
+        }
+        if position == 2 {
+            return @tr("ui" => "Changes live in RAM only; unplugging restores the vendor settings.");
+        }
+        return @tr("ui" => "Use at your own risk. The authors accept no liability.");
     }
 
     // the sidetone gain register is in 1/256 dB (UAC); the tenths are formatted separately so that

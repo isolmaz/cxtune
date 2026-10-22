@@ -37,7 +37,7 @@ msgstr "Mikrofon"
 
 msgctxt "ui"
 msgid "Sidetone"
-msgstr "Yan ton"
+msgstr "Sidetone"
 
 msgctxt "ui"
 msgid "General"
@@ -60,16 +60,12 @@ msgid "Quit"
 msgstr "Çıkış"
 
 msgctxt "ui"
+msgid "Help"
+msgstr "Yardım"
+
+msgctxt "ui"
 msgid "Experimental"
 msgstr "Deneysel"
-
-msgctxt "ui"
-msgid "Recommended"
-msgstr "Önerilen"
-
-msgctxt "ui"
-msgid "{}: {}, {}: {}, {}: {}"
-msgstr "{}: {}, {}: {}, {}: {}"
 
 msgctxt "ui"
 msgid "Noise floor"
@@ -84,6 +80,14 @@ msgid "Mute delay"
 msgstr "Açılış gecikmesi"
 
 msgctxt "ui"
+msgid "{}: {}, {}: {}, {}: {}"
+msgstr "{}: {}, {}: {}, {}: {}"
+
+msgctxt "ui"
+msgid "Recommended"
+msgstr "Önerilen"
+
+msgctxt "ui"
 msgid "{} dB"
 msgstr "{} dB"
 
@@ -93,7 +97,7 @@ msgstr "Önerileni uygula"
 
 msgctxt "ui"
 msgid "Balanced mode, microphone boost 6, noise reduction on, AGC and sidetone off."
-msgstr "Dengeli mod, mikrofon yükseltme 6, gürültü azaltma açık, AGC ve yan ton kapalı."
+msgstr "Dengeli mod, mikrofon yükseltme 6, gürültü azaltma açık, AGC ve sidetone kapalı."
 
 msgctxt "ui"
 msgid "Mute speakers"
@@ -108,28 +112,20 @@ msgid "Speaker volume"
 msgstr "Hoparlör ses düzeyi"
 
 msgctxt "ui"
-msgid "Windows volume of the output"
-msgstr "Çıkışın Windows ses düzeyi"
-
-msgctxt "ui"
-msgid "The Windows volume of the sound card. Click the speaker to mute."
-msgstr "USB ses kartının Windows ses düzeyi. Susturmak için hoparlör simgesine tıklayın."
-
-msgctxt "ui"
 msgid "{}%"
 msgstr "%{}"
+
+msgctxt "ui"
+msgid "The Windows volume of the sound card."
+msgstr "USB ses kartının Windows ses düzeyi."
 
 msgctxt "ui"
 msgid "Soft-start time"
 msgstr "Yumuşak açılış süresi"
 
 msgctxt "ui"
-msgid "Used only by Lowest noise"
-msgstr "Yalnızca En düşük gürültü kullanır"
-
-msgctxt "ui"
-msgid "After audio starts it stays muted for this time plus 100 ms."
-msgstr "Ses başladıktan sonra bu süre artı 100 ms boyunca susturulur."
+msgid "Used only by Lowest noise. After audio starts it stays muted for this time plus 100 ms."
+msgstr "Yalnızca En düşük gürültü kullanır. Ses başladıktan sonra bu süre artı 100 ms boyunca susturulur."
 
 msgctxt "ui"
 msgid "{} ms"
@@ -148,60 +144,36 @@ msgid "Microphone volume"
 msgstr "Mikrofon ses düzeyi"
 
 msgctxt "ui"
-msgid "Windows volume of the input"
-msgstr "Girişin Windows ses düzeyi"
-
-msgctxt "ui"
-msgid "The Windows volume of the microphone. Click the microphone to mute."
-msgstr "Mikrofonun Windows ses düzeyi. Susturmak için mikrofon simgesine tıklayın."
+msgid "The Windows volume of the microphone."
+msgstr "Mikrofonun Windows ses düzeyi."
 
 msgctxt "ui"
 msgid "Microphone boost"
 msgstr "Mikrofon yükseltme"
 
 msgctxt "ui"
-msgid "Relative to vendor setting (step 4)"
-msgstr "Üretici ayarına (Kademe 4) göre"
-
-msgctxt "ui"
-msgid "Step 6 had the best signal-to-noise ratio in one take; step 7 added 6 dB of noise."
-msgstr "En iyi sinyal/gürültü oranı tek bir ölçümde 6. adımda çıktı; 7. adım gürültüyü 6 dB artırdı."
-
-msgctxt "ui"
-msgid "{} ({})"
-msgstr "{} ({})"
+msgid "Relative to the vendor setting, step 4; a step is 6 dB. Step 6 had the best signal-to-noise ratio in one take, step 7 added 6 dB of noise."
+msgstr "Üretici ayarına (Kademe 4) göre; her kademe 6 dB'dir. En iyi sinyal/gürültü oranı tek bir ölçümde 6. kademede çıktı, 7. kademe gürültüyü 6 dB artırdı."
 
 msgctxt "ui"
 msgid "Noise reduction"
 msgstr "Gürültü azaltma"
 
 msgctxt "ui"
-msgid "Suppresses steady background noise"
-msgstr "Sabit arka plan gürültüsünü bastırır"
-
-msgctxt "ui"
-msgid "Measured: about 12 dB less steady noise. The effect on speech was not measured."
-msgstr "Ölçüm: sabit gürültü yaklaşık 12 dB daha az. Konuşma üzerindeki etkisi ölçülmedi."
+msgid "Suppresses steady background noise. Measured: about 12 dB less. The effect on speech was not measured."
+msgstr "Sabit arka plan gürültüsünü bastırır. Ölçüm: yaklaşık 12 dB daha az. Konuşma üzerindeki etkisi ölçülmedi."
 
 msgctxt "ui"
 msgid "AGC"
 msgstr "AGC"
 
 msgctxt "ui"
-msgid "Automatic gain control"
-msgstr "Otomatik kazanç denetimi"
-
-msgctxt "ui"
-msgid "The firmware applies it; no effect on steady noise was measured and speech was not tested."
-msgstr "Bellenim bunu uygular; sabit gürültü üzerinde etkisi ölçülemedi, konuşma denenmedi."
+msgid "Automatic gain control. The firmware applies it; no effect on steady noise was measured and speech was not tested."
+msgstr "Otomatik kazanç denetimi. Bellenim bunu uygular; sabit gürültü üzerinde etkisi ölçülemedi, konuşma denenmedi."
 
 msgctxt "ui"
 msgid "Balanced: opening the microphone from idle gives 1.26 s of silence and a click."
 msgstr "Dengeli: mikrofonu boştan açmak 1,26 sn sessizlik ve bir tık verir."
-
-msgctxt "ui"
-msgid "Hear your own voice in the headphones"
-msgstr "Kendi sesinizi kulaklıkta duyun"
 
 msgctxt "ui"
 msgid "Plays your microphone in the headphones while a microphone and playback are open."
@@ -209,71 +181,47 @@ msgstr "Mikrofon ve ses çalma birlikte açıkken mikrofonunuzu kulaklıkta çal
 
 msgctxt "ui"
 msgid "Sidetone level"
-msgstr "Yan ton düzeyi"
+msgstr "Sidetone düzeyi"
 
 msgctxt "ui"
-msgid "Vendor default: +3.7 dB"
-msgstr "Üretici varsayılanı: +3,7 dB"
+msgid "0 to +16 dB as the USB audio control reports it. The loudness was never measured. Vendor default: +3.7 dB."
+msgstr "USB ses denetiminin bildirdiği gibi 0 ile +16 dB. Ses yüksekliği hiç ölçülmedi. Üretici varsayılanı: +3,7 dB."
 
 msgctxt "ui"
-msgid "0 to +16 dB as the USB audio control reports it. The loudness was never measured."
-msgstr "USB ses denetiminin bildirdiği gibi 0 ile +16 dB. Ses yüksekliği hiç ölçülmedi."
-
-msgctxt "ui"
-msgid "Do not also turn on \"Listen to this device\" for the microphone in Windows: it would echo."
-msgstr "Mikrofon için Windows'un \"Bu aygıtı dinle\" özelliğini de açmayın: yankı duyarsınız."
+msgid "Keep Windows' \"Listen to this device\" off for the microphone: it would echo."
+msgstr "Mikrofon için Windows'un \"Bu aygıtı dinle\" özelliğini açmayın: yankı olur."
 
 msgctxt "ui"
 msgid "Start with Windows"
 msgstr "Windows ile başlat"
 
 msgctxt "ui"
-msgid "Starts in the notification area"
-msgstr "Bildirim alanında başlar"
-
-msgctxt "ui"
-msgid "Starts minimized when you sign in; nothing is installed."
-msgstr "Oturum açınca küçültülmüş başlar; hiçbir şey kurulmaz."
+msgid "Starts minimized in the notification area when you sign in; nothing is installed."
+msgstr "Oturum açınca bildirim alanında küçültülmüş başlar; hiçbir şey kurulmaz."
 
 msgctxt "ui"
 msgid "Language"
 msgstr "Dil"
 
 msgctxt "ui"
-msgid "Language of the window and the menu"
-msgstr "Pencerenin ve menünün dili"
-
-msgctxt "ui"
 msgid "Log"
 msgstr "Günlük"
-
-msgctxt "ui"
-msgid "Technical details of what cxtune did"
-msgstr "cxtune'un yaptıklarının teknik ayrıntıları"
 
 msgctxt "ui"
 msgid "Open log folder"
 msgstr "Günlük klasörünü aç"
 
 msgctxt "ui"
+msgid "Technical details of what cxtune did."
+msgstr "cxtune'un yaptıklarının teknik ayrıntıları."
+
+msgctxt "ui"
 msgid "The setting could not be changed."
 msgstr "Ayar değiştirilemedi."
 
 msgctxt "ui"
-msgid "cxtune {} · MIT license"
-msgstr "cxtune {} · MIT lisansı"
-
-msgctxt "ui"
-msgid "Version {}"
-msgstr "Sürüm {}"
-
-msgctxt "ui"
-msgid "Supports the HyperX Cloud II USB sound card (USB 0951:16A4)."
-msgstr "HyperX Cloud II USB ses kartını (USB 0951:16A4) destekler."
-
-msgctxt "ui"
-msgid "cxtune is an independent project. It is not affiliated with, endorsed by or supported by HyperX, HP or Synaptics. It changes the device's settings at your own risk; the authors accept no liability. Changes are temporary: unplugging the dongle restores the original settings."
-msgstr "cxtune bağımsız bir projedir. HyperX, HP veya Synaptics ile hiçbir resmi bağlantısı yoktur; onlar tarafından onaylanmamış veya desteklenmemektedir. Cihaz ayarlarını değiştirir; kullanım tamamen kullanıcının kendi sorumluluğundadır, geliştiriciler hiçbir sorumluluk kabul etmez. Değişiklikler geçicidir: USB ses kartı çıkarılıp takıldığında orijinal ayarlar geri gelir."
+msgid "Version {} · MIT license"
+msgstr "Sürüm {} · MIT lisansı"
 
 msgctxt "ui"
 msgid "Starting…"
@@ -460,34 +408,6 @@ msgid "Lowest noise"
 msgstr "En düşük gürültü"
 
 msgctxt "ui"
-msgid "Always on"
-msgstr "Hep açık"
-
-msgctxt "ui"
-msgid "Idle power-down"
-msgstr "Boşta kapanır"
-
-msgctxt "ui"
-msgid "Clamped when idle"
-msgstr "Boşta bastırılır"
-
-msgctxt "ui"
-msgid "Vendor behaviour: constant idle noise, no click, nothing muted."
-msgstr "Üretici davranışı: boşta sürekli gürültü, tık yok, ses susturulmaz."
-
-msgctxt "ui"
-msgid "Some idle noise and a low click when audio starts; nothing is muted."
-msgstr "Boşta biraz gürültü, ses başlarken hafif tık; ses susturulmaz."
-
-msgctxt "ui"
-msgid "Less idle noise; the first 0.6 s of audio after idle is muted."
-msgstr "Boşta daha az gürültü; boştan sonra sesin ilk 0,6 sn'si susturulur."
-
-msgctxt "ui"
-msgid "Less idle noise and a loud click; muted for the soft-start time plus 100 ms."
-msgstr "Boşta daha az gürültü, yüksek tık; yumuşak açılış süresi + 100 ms susturulur."
-
-msgctxt "ui"
 msgid "Constant"
 msgstr "Sürekli"
 
@@ -508,12 +428,32 @@ msgid "Low"
 msgstr "Düşük"
 
 msgctxt "ui"
-msgid "Not measured"
-msgstr "Ölçülmedi"
-
-msgctxt "ui"
 msgid "Loud"
 msgstr "Yüksek"
+
+msgctxt "ui"
+msgid "Noise floor: the hiss in the headphones while nothing plays."
+msgstr "Gürültü tabanı: hiçbir şey çalmazken kulaklıktaki fısıltı."
+
+msgctxt "ui"
+msgid "Click: the pop when audio starts."
+msgstr "Tık: ses başlarken duyulan çıtlama."
+
+msgctxt "ui"
+msgid "Mute delay: how long the start of audio is muted."
+msgstr "Açılış gecikmesi: sesin başlangıcının ne kadar susturulduğu."
+
+msgctxt "ui"
+msgid "Not measured yet."
+msgstr "Henüz ölçülmedi."
+
+msgctxt "ui"
+msgid "The first 0.6 s of audio after idle is muted."
+msgstr "Boştan sonra sesin ilk 0,6 sn'si susturulur."
+
+msgctxt "ui"
+msgid "Muted for the soft-start time plus 100 ms."
+msgstr "Yumuşak açılış süresi artı 100 ms boyunca susturulur."
 
 msgctxt "ui"
 msgid "≈ 0.6 s"
@@ -534,6 +474,22 @@ msgstr "Kapalı"
 msgctxt "ui"
 msgid "+{} dB"
 msgstr "+{} dB"
+
+msgctxt "ui"
+msgid "Made for the HyperX Cloud II USB sound card (USB 0951:16A4)."
+msgstr "HyperX Cloud II USB ses kartı için yapılmıştır (USB 0951:16A4)."
+
+msgctxt "ui"
+msgid "Not affiliated with HyperX, HP or Synaptics."
+msgstr "HyperX, HP veya Synaptics ile bağlantılı değildir."
+
+msgctxt "ui"
+msgid "Changes live in RAM only; unplugging restores the vendor settings."
+msgstr "Değişiklikler yalnızca RAM'de; cihazı çıkarınca üretici ayarları döner."
+
+msgctxt "ui"
+msgid "Use at your own risk. The authors accept no liability."
+msgstr "Kullanım riski size aittir; yazarlar sorumluluk kabul etmez."
 
 msgctxt "ui"
 msgid "+{}.{} dB"

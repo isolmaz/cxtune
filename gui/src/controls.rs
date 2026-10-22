@@ -51,8 +51,9 @@ pub fn indicators(mode: Mode, settle_ms: u16) -> ModeIndicators {
     }
 }
 
-/// The level that switching sidetone on starts with when the user has not chosen one: far below
-/// the stock level, because the loudness of sidetone was never measured and it can be loud.
+/// The level that switching sidetone on starts with when the user has not chosen one: 200 is
+/// +0.78 dB, about 3 dB below the vendor's +3.7 dB, because the loudness of sidetone was never
+/// measured and it can be loud.
 pub const SIDETONE_START: u16 = 200;
 
 /// The level to set before sidetone is switched on, if there is one. The vendor's level was

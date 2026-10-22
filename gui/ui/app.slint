@@ -17,8 +17,8 @@ component Header inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: Grid.margin;
-        padding-right: Grid.margin;
+        padding-left: Grid.margin-x;
+        padding-right: Grid.margin-x;
         spacing: 12px;
 
         VerticalLayout {
@@ -95,8 +95,10 @@ component Footer inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: Grid.margin;
-        padding-right: 6px;
+        padding-left: Grid.margin-x;
+        padding-right: Grid.margin-x;
+        padding-top: Grid.pad;
+        padding-bottom: Grid.pad;
         spacing: 8px;
 
         if root.headline != "": VerticalLayout {

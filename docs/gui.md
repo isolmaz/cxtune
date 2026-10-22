@@ -20,32 +20,44 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
 
 - **Layout.** The window has a fixed size of 720 x 480 logical pixels and no scrolling. The
   header holds a photo of the dongle (`gui/assets/dongle.png`), its name, a pill with the state of
-  the dongle and the OUT and MIC level meters. A column of pages on the left (Output, Microphone,
-  Sidetone, General, each with a glyph of Segoe Fluent Icons) leads to the page on the right, made
-  of Windows 11 style cards. About is a page of General: a row of its card opens it and the
-  breadcrumb at its top leads back. A "?" next to the title of a row explains the row in a box
-  while the mouse is over it. Left and Right move between the mode cards from the keyboard, Up and
-  Down between the pages, and Space or Enter chooses.
+  the dongle (the one place that says how it stands) and the OUT and MIC level meters. A column
+  of pages on the left (Output, Microphone, Sidetone, General, each with a glyph of Segoe Fluent
+  Icons) leads to the page on the right, made of Windows 11 style cards. About is a page of
+  General: a row of its card opens it and the breadcrumb at its top leads back. The layout does
+  the explaining: rows have a title and a control and no sub-line; what more there is to say
+  sits behind the "?" of the row, which opens with the mouse or, from the keyboard, with Enter
+  or Space, and is also the accessible description of the control. A group of experimental
+  settings carries one "Experimental" marker above it. Left and Right move between the mode
+  cards from the keyboard, Up and Down between the pages, and Space or Enter chooses.
 - **Meters.** The OUT and MIC meters take a peak level in dBFS (`out-db`, `mic-db`) and a flag
-  (`meters-active`). While the flag is false they stay neutral (every segment off); nothing in the
-  application delivers levels yet.
+  (`meters-active`). While the flag is false they are dimmed, every segment is off and there is no
+  value; with a level the value appears to the left of the bars. Nothing in the application
+  delivers levels yet.
 - **Colours.** The window follows the light or dark scheme and the accent colour of Windows. Text
   uses the Fluent tokens TextFillColorPrimary, -Secondary and -Disabled; every secondary text has
   at least 4.5:1 contrast on its card in both schemes.
-- **Type and spacing** (`Type` and `Grid` in `theme.slint`). Texts are 20 px semibold (page title),
-  16 px semibold (device name), 14 px (titles of rows and cards; semibold on a card header), 13 px
-  (body, values, buttons) and 12 px (captions, secondary text); glyphs are 16 px, chevrons 12 px.
-  The font is Segoe UI, not Segoe UI Variable: its digits are all the same width and Slint cannot
-  switch on tabular figures of the variable font. Cards have 12 px side and 10 px top and bottom
-  padding; a setting row is a card of 56 px; cards of a group are 4 px apart, groups and the page
-  title 12 px. In a row the label block is 232 px, the value column 64 px and right-aligned, and a
-  slider takes the rest (at least 160 px), so that the right edges line up on every page.
+- **Type** (`Type` in `theme.slint`). Texts are 20 px semibold (page title), 16 px semibold
+  (device name), 14 px (titles of rows and cards; semibold on a card header), 13 px (body, values,
+  buttons) and 12 px (captions, secondary text); glyphs are 16 px, chevrons and the glyphs of the
+  mode traits 12 px. The font is Segoe UI, not Segoe UI Variable: its digits are all the same
+  width and Slint cannot switch on the tabular figures of the variable font.
+- **Grid** (`Grid` in `theme.slint`; 4 px base). The navigation is 160 px wide, the header 64 px
+  and the footer 60 px (12 px above and below a 32 px button and the status). The page has 24 px
+  at its sides and 16 px above and below, so everything on it is 512 px wide: the title (32 px
+  high, at y = 16 of the page), the rows, the info bars and the mode cards. The title and the
+  groups are 12 px apart, the cards of a group 4 px, the mode cards 8 px. A card has 12 px of
+  padding. A row is 48 px high and has a 20 px glyph column, 12 px, the label (it starts 44 px
+  from the left edge of the row on every page) and at the right edge, 12 px inside it, the
+  control: a slider is 200 px wide and is followed by 8 px and a 64 px right-aligned value, a switch
+  has the word for its state on its left, a combo box or a button is 160 px wide. The snapshot
+  pictures in `grid` have a guide line at each of these x positions.
 - **Icon.** The icon (`gui/assets/app.ico`, `tray.png` and `window.png`, a blue rounded square
   with a white headphone) is the project's own work, drawn from plain shapes. Nothing in it is
   taken from an icon set or another program.
-- **Status.** The band at the bottom shows two lines: what is wrong (or how the dongle stands) and
-  what to do about it, a coloured dot, an "Open log" link when the log holds technical details,
-  and the Re-apply button. The pill in the header is a short form of the first line.
+- **Status.** The pill in the header is the state of the dongle. The band at the bottom adds
+  what is going on and what needs an action, in two lines with a coloured dot (what is wrong or
+  what is being done, and what to do about it) and an "Open log" link when the log holds technical
+  details; while all is well it holds only the Re-apply button.
 - **Closing** the window hides it; the application keeps running in the notification area.
   The icon's menu has Show, the four modes (the chosen one marked with a filled circle; the
   Windows menu of Slint 1.18.1 has no check marks), Re-apply, About and Quit. A click on the
@@ -96,20 +108,25 @@ then the vendor's value, so a control always shows what is true. A control that 
 used keeps the user's value. Sliders send a command at once and then at most one per 100 ms,
 with the last value always sent when the slider is released.
 
-- **Mode and soft-start time.** The four modes are cards; the chosen one has a border and a
-  check mark and the recommended one a badge. The soft-start time slider is enabled only in
-  Lowest noise, with the range of the core (20-2000 ms in steps of 10).
-- **Mode indicators** (Noise floor, Click, Mute delay) on every card show only what the
-  documentation records ([firmware-notes.md](firmware-notes.md), README): the noise floor as the
-  README words it (constant, some, reduced), the click as recorded (none in stock mode, low in
-  quiet mode, loud in minimum hiss) and the time that the start of audio is muted, as measured
-  (none in stock and quiet mode, about 0.6 s in balanced mode, the soft-start time plus 100 ms in
-  minimum hiss). The start click of balanced mode was not measured and says "not measured".
-- **Microphone boost** 0-7 shows the gain compared with the vendor's step 4, 6 dB per step. The
-  gain of step 0 itself is not documented, so no absolute gain is shown. Step 6 is marked
-  recommended (best signal-to-noise ratio, in a single measurement, so only indicative); the "?"
-  says that the step from 6 to 7 raised the noise by 6 dB. In balanced mode a note says that
-  opening the microphone from idle gives 1.26 s of silence and a click.
+- **Mode and soft-start time.** The four modes are cards across the page; the chosen one has a
+  border and a check mark and the recommended one a badge. The soft-start time slider is enabled
+  only in Lowest noise, with the range of the core (20-2000 ms in steps of 10).
+- **Mode indicators.** Every card has three lines in the same order: noise floor, click and mute
+  delay, each with a glyph in the colour of its value (a grey glyph and a dash when it was not
+  measured) and the value. A legend under the cards names the glyphs once, and each line has the
+  same text as a tooltip, with what is known about the value ("not measured yet", "muted for the
+  soft-start time plus 100 ms"). The values are what the documentation records
+  ([firmware-notes.md](firmware-notes.md), README): the noise floor as the README words it
+  (constant, some, reduced), the click as recorded (none in stock mode, low in quiet mode, loud in
+  minimum hiss) and the time that the start of audio is muted, as measured (none in stock and
+  quiet mode, about 0.6 s in balanced mode, the soft-start time plus 100 ms in minimum hiss).
+  The start click of balanced mode was not measured and says so.
+- **Microphone boost** 0-7 shows the gain compared with the vendor's step 4, 6 dB per step, as
+  "+12 dB"; the "?" says what it is relative to. The gain of step 0 itself is not documented, so
+  no absolute gain is shown. The "?" also says that step 6 had the best signal-to-noise ratio (in
+  a single measurement, so only indicative) and that step 7 raised the noise by 6 dB. In
+  balanced mode a note says that opening the microphone from idle gives 1.26 s of silence and a
+  click.
 - **Noise reduction** (measured: about 12 dB less steady noise) and **AGC** (experimental: no
   effect on steady noise could be measured, speech not tested).
 - **Sidetone** is experimental and its loudness was never listened to. The level is shown in dB:
@@ -120,14 +137,15 @@ with the last value always sent when the slider is released.
   untouched 947 first sets 200. The level slider is linear in the register, so linear in dB: it
   spans 1-4096 and a key press moves it by 128, half a dB. A line advises against turning on the
   Windows setting "Listen to this device" at the same time (an echo).
-- **Apply recommended** (next to the title of the Output page) sets balanced mode, microphone
+- **Apply recommended** (a subtle button next to the title of the Output page, with what it
+  sets as its tooltip) sets balanced mode, microphone
   boost 6, noise reduction on, AGC off and sidetone off, and leaves the soft-start time and the
   sidetone level as they are. Balanced mode is
   the recommendation because it reduces the idle hiss at the price of 0.6 s of muted audio after
   idle, without the loud start pop that was recorded for minimum hiss (the pop of balanced mode
   itself was not measured); stock and quiet mode keep the idle hiss.
-- **Volume** (speakers on the Output page, microphone on the Microphone page; the glyph in front
-  of the row mutes) is the volume of the Windows audio endpoints of the dongle, found by the USB
+- **Volume** (speakers on the Output page, microphone on the Microphone page; the glyph at the
+  start of the row mutes) is the volume of the Windows audio endpoints of the dongle, found by the USB
   vendor and product id like the silent stream's endpoint (`cxtune::volume`,
   `IAudioEndpointVolume`). No HID report is involved. While the window is shown the volume thread
   reads both endpoints twice a second, so the sliders follow the buttons on the dongle and the
@@ -208,7 +226,8 @@ forwards the click.)
 `cargo build -p cxtune-gui --features snapshot` adds `--snapshot <folder>`, which renders the
 window to PNG files (every page in both languages and both colour schemes, the other modes, muted
 volumes, sidetone on, the meters with made-up levels and the status line of every problem) and
-quits. Every state in those pictures is simulated: the engine is not started and the dongle is
+quits. The folder `grid` has the same pictures with the guide lines, and the folder `focus`
+the English pages with the keyboard focus on each control that Tab reaches, one after the other. Every state in those pictures is simulated: the engine is not started and the dongle is
 never read or written. A simulated engine state goes through the same code as a real one
 (`status::status` and the controls); the volumes and the meter levels are set directly.
 `SLINT_SCALE_FACTOR=1` makes the pictures 720 x 480 pixels, the size of the window at 100 %. The

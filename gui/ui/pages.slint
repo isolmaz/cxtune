@@ -1,14 +1,14 @@
 import { ComboBox } from "std-widgets.slint";
 import { Model } from "contract.slint";
-import { AppSlider, Breadcrumb, Caption, Card, DeviceTile, FluentButton, Group, Help, Icon, InfoBar, ModeGroup, Row, SwitchControl, Trailing } from "components.slint";
+import { AppSlider, Body, Breadcrumb, Caption, Card, DeviceTile, ExperimentalTag, FluentButton, Group, Icon, InfoBar, ModeGroup, Row, SwitchControl } from "components.slint";
 import { Grid, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
 component Page inherits VerticalLayout {
-    padding-left: Grid.margin;
-    padding-right: Grid.margin;
-    padding-top: Grid.margin;
-    padding-bottom: Grid.margin;
+    padding-left: Grid.margin-x;
+    padding-right: Grid.margin-x;
+    padding-top: Grid.margin-y;
+    padding-bottom: Grid.margin-y;
     spacing: Grid.group-gap;
     alignment: start;
 }
@@ -39,22 +39,13 @@ export component OutputPage inherits Page {
     PageTitle {
         text: @tr("ui" => "Output");
 
-        HorizontalLayout {
-            spacing: 8px;
-            horizontal-stretch: 0;
-            FluentButton {
-                text: @tr("ui" => "Apply recommended");
-                enabled: Model.controls-enabled;
-                clicked => {
-                    Model.apply-recommended();
-                }
-            }
-
-            VerticalLayout {
-                alignment: center;
-                Help {
-                    explanation: @tr("ui" => "Balanced mode, microphone boost 6, noise reduction on, AGC and sidetone off.");
-                }
+        FluentButton {
+            text: @tr("ui" => "Apply recommended");
+            tip: @tr("ui" => "Balanced mode, microphone boost 6, noise reduction on, AGC and sidetone off.");
+            subtle: true;
+            enabled: Model.controls-enabled;
+            clicked => {
+                Model.apply-recommended();
             }
         }
     }
@@ -69,8 +60,6 @@ export component OutputPage inherits Page {
             unmute-text: @tr("ui" => "Unmute speakers");
             muted <=> Model.speaker-muted;
             title: @tr("ui" => "Speaker volume");
-            caption: @tr("ui" => "Windows volume of the output");
-            help: @tr("ui" => "The Windows volume of the sound card. Click the speaker to mute.");
             value-column: true;
             value: Model.speaker-present ? @tr("ui" => "{}%", Math.round(Model.speaker-volume)) : "";
             disabled: !Model.speaker-present;
@@ -85,6 +74,7 @@ export component OutputPage inherits Page {
                 value <=> Model.speaker-volume;
                 enabled: Model.speaker-present;
                 label: @tr("ui" => "Speaker volume");
+                description: @tr("ui" => "The Windows volume of the sound card.");
                 changed(value) => {
                     Model.speaker-volume = Math.round(value);
                     Model.volume-changed(0, Math.round(value));
@@ -95,8 +85,7 @@ export component OutputPage inherits Page {
         Row {
             icon: "\u{E916}";
             title: @tr("ui" => "Soft-start time");
-            caption: @tr("ui" => "Used only by Lowest noise");
-            help: @tr("ui" => "After audio starts it stays muted for this time plus 100 ms.");
+            help: @tr("ui" => "Used only by Lowest noise. After audio starts it stays muted for this time plus 100 ms.");
             value-column: true;
             value: @tr("ui" => "{} ms", Math.round(Model.settle-ms));
             disabled: !Model.delay-enabled;
@@ -118,10 +107,6 @@ export component OutputPage inherits Page {
             }
         }
     }
-
-    InfoBar {
-        text: Texts.mode-note(Model.mode);
-    }
 }
 
 export component MicrophonePage inherits Page {
@@ -137,8 +122,6 @@ export component MicrophonePage inherits Page {
             unmute-text: @tr("ui" => "Unmute microphone");
             muted <=> Model.microphone-muted;
             title: @tr("ui" => "Microphone volume");
-            caption: @tr("ui" => "Windows volume of the input");
-            help: @tr("ui" => "The Windows volume of the microphone. Click the microphone to mute.");
             value-column: true;
             value: Model.microphone-present ? @tr("ui" => "{}%", Math.round(Model.microphone-volume)) : "";
             disabled: !Model.microphone-present;
@@ -153,6 +136,7 @@ export component MicrophonePage inherits Page {
                 value <=> Model.microphone-volume;
                 enabled: Model.microphone-present;
                 label: @tr("ui" => "Microphone volume");
+                description: @tr("ui" => "The Windows volume of the microphone.");
                 changed(value) => {
                     Model.microphone-volume = Math.round(value);
                     Model.volume-changed(1, Math.round(value));
@@ -163,11 +147,9 @@ export component MicrophonePage inherits Page {
         Row {
             icon: "\u{E9E9}";
             title: @tr("ui" => "Microphone boost");
-            caption: @tr("ui" => "Relative to vendor setting (step 4)");
-            help: @tr("ui" => "Step 6 had the best signal-to-noise ratio in one take; step 7 added 6 dB of noise.");
-            recommended: Model.boost-recommended;
+            help: @tr("ui" => "Relative to the vendor setting, step 4; a step is 6 dB. Step 6 had the best signal-to-noise ratio in one take, step 7 added 6 dB of noise.");
             value-column: true;
-            value: @tr("ui" => "{} ({})", Math.round(Model.boost), Texts.gain(Model.boost-db));
+            value: Texts.gain(Model.boost-db);
             disabled: !Model.controls-enabled;
 
             AppSlider {
@@ -190,10 +172,7 @@ export component MicrophonePage inherits Page {
         Row {
             icon: "\u{E9D2}";
             title: @tr("ui" => "Noise reduction");
-            caption: @tr("ui" => "Suppresses steady background noise");
-            help: @tr("ui" => "Measured: about 12 dB less steady noise. The effect on speech was not measured.");
-            value-column: true;
-            value: Texts.state(Model.noise-reduction);
+            help: @tr("ui" => "Suppresses steady background noise. Measured: about 12 dB less. The effect on speech was not measured.");
             disabled: !Model.controls-enabled;
 
             SwitchControl {
@@ -205,15 +184,15 @@ export component MicrophonePage inherits Page {
                 }
             }
         }
+    }
+
+    Group {
+        ExperimentalTag { }
 
         Row {
             icon: "\u{E9D9}";
             title: @tr("ui" => "AGC");
-            caption: @tr("ui" => "Automatic gain control");
-            help: @tr("ui" => "The firmware applies it; no effect on steady noise was measured and speech was not tested.");
-            experimental: true;
-            value-column: true;
-            value: Texts.state(Model.agc);
+            help: @tr("ui" => "Automatic gain control. The firmware applies it; no effect on steady noise was measured and speech was not tested.");
             disabled: !Model.controls-enabled;
 
             SwitchControl {
@@ -238,14 +217,12 @@ export component SidetonePage inherits Page {
     }
 
     Group {
+        ExperimentalTag { }
+
         Row {
             icon: "\u{E95B}";
             title: @tr("ui" => "Sidetone");
-            caption: @tr("ui" => "Hear your own voice in the headphones");
             help: @tr("ui" => "Plays your microphone in the headphones while a microphone and playback are open.");
-            experimental: true;
-            value-column: true;
-            value: Texts.state(Model.sidetone);
             disabled: !Model.controls-enabled;
 
             SwitchControl {
@@ -261,9 +238,7 @@ export component SidetonePage inherits Page {
         Row {
             icon: "\u{E767}";
             title: @tr("ui" => "Sidetone level");
-            caption: @tr("ui" => "Vendor default: +3.7 dB");
-            help: @tr("ui" => "0 to +16 dB as the USB audio control reports it. The loudness was never measured.");
-            experimental: true;
+            help: @tr("ui" => "0 to +16 dB as the USB audio control reports it. The loudness was never measured. Vendor default: +3.7 dB.");
             value-column: true;
             value: Texts.level-db(Math.round(Model.level));
             disabled: !Model.controls-enabled;
@@ -288,7 +263,7 @@ export component SidetonePage inherits Page {
     InfoBar {
         icon: "\u{E7BA}";
         tone: Surface.caution;
-        text: @tr("ui" => "Do not also turn on \"Listen to this device\" for the microphone in Windows: it would echo.");
+        text: @tr("ui" => "Keep Windows' \"Listen to this device\" off for the microphone: it would echo.");
     }
 }
 
@@ -296,13 +271,11 @@ export component SidetonePage inherits Page {
 component PageLink inherits Rectangle {
     in property <string> icon;
     in property <string> title;
-    in property <string> caption;
     callback clicked();
     height: Grid.row;
     forward-focus: keys;
     accessible-role: button;
     accessible-label: root.title;
-    accessible-description: root.caption;
     accessible-action-default => {
         root.clicked();
     }
@@ -310,15 +283,20 @@ component PageLink inherits Rectangle {
     Row {
         icon: root.icon;
         title: root.title;
-        caption: root.caption;
         hovered: touch.has-hover;
 
-        Trailing {
+        // the ink of the chevron ends at the edge of the control, like the other controls
+        Rectangle {
+            width: 16px;
+            height: 16px;
+
             Icon {
+                x: 3px;
                 text: "\u{E76C}";
                 font-size: Type.chevron;
                 color: Surface.secondary;
                 width: 16px;
+                horizontal-alignment: right;
             }
         }
     }
@@ -357,10 +335,7 @@ export component GeneralPage inherits Page {
         Row {
             icon: "\u{E7E8}";
             title: @tr("ui" => "Start with Windows");
-            caption: @tr("ui" => "Starts in the notification area");
-            help: @tr("ui" => "Starts minimized when you sign in; nothing is installed.");
-            value-column: true;
-            value: Texts.state(Model.autostart);
+            help: @tr("ui" => "Starts minimized in the notification area when you sign in; nothing is installed.");
 
             SwitchControl {
                 label: @tr("ui" => "Start with Windows");
@@ -374,11 +349,10 @@ export component GeneralPage inherits Page {
         Row {
             icon: "\u{E775}";
             title: @tr("ui" => "Language");
-            caption: @tr("ui" => "Language of the window and the menu");
 
-            Trailing {
+            VerticalLayout {
                 ComboBox {
-                    width: 168px;
+                    width: Grid.control;
                     model: ["Türkçe", "English"];
                     current-index <=> Model.language;
                     accessible-label: @tr("ui" => "Language");
@@ -392,11 +366,12 @@ export component GeneralPage inherits Page {
         Row {
             icon: "\u{E838}";
             title: @tr("ui" => "Log");
-            caption: @tr("ui" => "Technical details of what cxtune did");
 
-            Trailing {
+            VerticalLayout {
                 FluentButton {
+                    min-width: Grid.control;
                     text: @tr("ui" => "Open log folder");
+                    tip: @tr("ui" => "Technical details of what cxtune did.");
                     clicked => {
                         Model.open-log-folder();
                     }
@@ -414,7 +389,6 @@ export component GeneralPage inherits Page {
     PageLink {
         icon: "\u{E946}";
         title: @tr("ui" => "About");
-        caption: @tr("ui" => "cxtune {} · MIT license", Model.version);
         clicked => {
             Model.tab = 4;
         }
@@ -430,47 +404,55 @@ export component AboutPage inherits Page {
         }
     }
 
-    HorizontalLayout {
-        spacing: 12px;
-        height: 80px;
+    VerticalLayout {
+        spacing: Grid.gap;
 
-        DeviceTile {
-            width: 128px;
-            height: 80px;
-            inset: 6px;
-            source: @image-url("../assets/dongle.png");
-            label: @tr("ui" => "HyperX Cloud II USB sound card");
+        HorizontalLayout {
+            alignment: center;
+            DeviceTile {
+                width: 160px;
+                height: 96px;
+                inset: 6px;
+                source: @image-url("../assets/dongle.png");
+                label: @tr("ui" => "HyperX Cloud II USB sound card");
+            }
         }
 
-        VerticalLayout {
+        HorizontalLayout {
             alignment: center;
-            spacing: 2px;
-
             Text {
                 text: "cxtune";
                 color: Surface.text;
                 font-size: Type.device;
                 font-weight: 600;
             }
+        }
 
+        HorizontalLayout {
+            alignment: center;
             Caption {
-                text: @tr("ui" => "Version {}", Model.version);
-            }
-
-            Text {
-                text: @tr("ui" => "Supports the HyperX Cloud II USB sound card (USB 0951:16A4).");
-                color: Surface.text;
-                font-size: Type.caption;
-                wrap: word-wrap;
+                text: @tr("ui" => "Version {} · MIT license", Model.version);
             }
         }
     }
 
     Card {
-        Caption {
-            text: @tr("ui" => "cxtune is an independent project. It is not affiliated with, endorsed by or supported by HyperX, HP or Synaptics. It changes the device's settings at your own risk; the authors accept no liability. Changes are temporary: unplugging the dongle restores the original settings.");
-            wrap: word-wrap;
-            vertical-alignment: top;
+        VerticalLayout {
+            spacing: 2px;
+
+            for line in 4: HorizontalLayout {
+                spacing: 8px;
+
+                Body {
+                    text: "•";
+                    width: 8px;
+                }
+
+                Body {
+                    text: Texts.about-line(line);
+                    overflow: elide;
+                }
+            }
         }
     }
 }
