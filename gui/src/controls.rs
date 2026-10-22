@@ -4,8 +4,9 @@ use cxtune::config::Config;
 use cxtune::engine::Readback;
 use cxtune::mode::{Mode, SETTLE_STEP_MS, mute_delay_ms};
 use cxtune::patches::{
-    MIC_MAX, MIC_MIN, SETTLE_DEFAULT, SETTLE_MAX, SETTLE_MIN, SIDETONE_DEFAULT, SIDETONE_MAX,
-    SIDETONE_MIN,
+    DECAY_DEFAULT, DECAY_MAX, DECAY_MIN, MIC_MAX, MIC_MIN, SETTLE_DEFAULT, SETTLE_MAX, SETTLE_MIN,
+    SIDETONE_DEFAULT, SIDETONE_MAX, SIDETONE_MIN, SURROUND_LEVEL_DEFAULT, SURROUND_LEVEL_MAX,
+    SURROUND_LEVEL_MIN,
 };
 
 use crate::ui::{Delay, Hiss, ModeIndicators, Pop};
@@ -13,6 +14,14 @@ use crate::ui::{Delay, Hiss, ModeIndicators, Pop};
 pub const SETTLE_MIN_MS: u16 = SETTLE_MIN as u16 * SETTLE_STEP_MS;
 pub const SETTLE_MAX_MS: u16 = SETTLE_MAX as u16 * SETTLE_STEP_MS;
 const SETTLE_DEFAULT_MS: u16 = SETTLE_DEFAULT as u16 * SETTLE_STEP_MS;
+
+/// The stop decay time of Balanced mode, in ms; it has the same step as the soft-start time.
+pub const DECAY_MIN_MS: u16 = DECAY_MIN as u16 * SETTLE_STEP_MS;
+pub const DECAY_MAX_MS: u16 = DECAY_MAX as u16 * SETTLE_STEP_MS;
+const DECAY_DEFAULT_MS: u16 = DECAY_DEFAULT as u16 * SETTLE_STEP_MS;
+
+pub const SURROUND_MIN: u8 = SURROUND_LEVEL_MIN;
+pub const SURROUND_MAX: u8 = SURROUND_LEVEL_MAX;
 
 pub const BOOST_MAX: u8 = MIC_MAX - MIC_MIN;
 /// The step the vendor patch sets (`$1017 = 0x3C`).
@@ -49,6 +58,16 @@ pub fn indicators(mode: Mode, settle_ms: u16) -> ModeIndicators {
     }
 }
 
+/// The soft-start time is used only by Lowest noise, and the stop decay time only by Balanced;
+/// the engine takes a change of either at any time, but it does nothing in another mode.
+pub fn soft_start_enabled(usable: bool, mode: Mode) -> bool {
+    usable && mode == Mode::MinHiss
+}
+
+pub fn decay_enabled(usable: bool, mode: Mode) -> bool {
+    usable && mode == Mode::Balanced
+}
+
 /// The level that switching sidetone on starts with when the user has not chosen one: 200 is
 /// +0.78 dB, about 3 dB below the vendor's +3.7 dB, because the loudness of sidetone was never
 /// measured and it can be loud.
@@ -70,11 +89,14 @@ pub const LEVEL_STEP: u16 = 128;
 pub struct Controls {
     pub mode: Mode,
     pub settle_ms: u16,
+    pub decay_ms: u16,
     pub boost: u8,
     pub noise_reduction: bool,
     pub agc: bool,
     pub sidetone: bool,
     pub level: u16,
+    pub surround: bool,
+    pub surround_level: u8,
 }
 
 impl Controls {
@@ -82,11 +104,14 @@ impl Controls {
     pub const VENDOR: Controls = Controls {
         mode: Mode::Stock,
         settle_ms: SETTLE_DEFAULT_MS,
+        decay_ms: DECAY_DEFAULT_MS,
         boost: BOOST_STOCK,
         noise_reduction: true,
         agc: false,
         sidetone: false,
         level: SIDETONE_DEFAULT,
+        surround: false,
+        surround_level: SURROUND_LEVEL_DEFAULT,
     };
 
     /// The recommended settings: Balanced mode, and the microphone settings that measured best
@@ -117,6 +142,10 @@ impl Controls {
                 .min_hiss_ms
                 .or(device.and_then(|d| d.min_hiss_ms))
                 .unwrap_or(vendor.settle_ms),
+            decay_ms: settings
+                .balanced_decay_ms
+                .or(device.and_then(|d| d.balanced_decay_ms))
+                .unwrap_or(vendor.decay_ms),
             boost: settings
                 .mic_boost
                 .or(device.and_then(|d| d.mic_boost))
@@ -138,6 +167,15 @@ impl Controls {
                 .or(device.map(|d| d.sidetone_level))
                 .filter(|level| (SIDETONE_MIN..=SIDETONE_MAX).contains(level))
                 .unwrap_or(vendor.level),
+            surround: settings
+                .surround
+                .or(device.map(|d| d.surround))
+                .unwrap_or(vendor.surround),
+            surround_level: settings
+                .surround_level
+                .or(device.and_then(|d| d.surround_level))
+                .filter(|level| (SURROUND_MIN..=SURROUND_MAX).contains(level))
+                .unwrap_or(vendor.surround_level),
         }
     }
 }
@@ -174,9 +212,9 @@ mod tests {
             agc: true,
             sidetone: true,
             sidetone_level: 500,
-            balanced_decay_ms: None,
-            surround: false,
-            surround_level: Some(4),
+            balanced_decay_ms: (mode == Mode::Balanced).then_some(300),
+            surround: true,
+            surround_level: Some(7),
         }
     }
 
@@ -185,6 +223,15 @@ mod tests {
         assert_eq!((SETTLE_MIN_MS, SETTLE_MAX_MS), (20, 2000));
         assert_eq!(SETTLE_DEFAULT_MS, 600);
         assert_eq!(BOOST_MAX, 7);
+        assert_eq!((DECAY_MIN_MS, DECAY_MAX_MS), (100, 2000));
+        assert_eq!(DECAY_DEFAULT_MS, 800);
+        assert_eq!((SURROUND_MIN, SURROUND_MAX), (1, 10));
+        for ms in [DECAY_MIN_MS, DECAY_DEFAULT_MS, DECAY_MAX_MS] {
+            assert!(cxtune::mode::decay_units(ms).is_ok(), "{ms}");
+        }
+        for ms in [DECAY_MIN_MS - SETTLE_STEP_MS, DECAY_MAX_MS + SETTLE_STEP_MS] {
+            assert!(cxtune::mode::decay_units(ms).is_err(), "{ms}");
+        }
         for ms in [SETTLE_MIN_MS, 600, SETTLE_MAX_MS] {
             assert!(cxtune::mode::settle_units(ms).is_ok(), "{ms}");
         }
@@ -214,13 +261,18 @@ mod tests {
             Controls {
                 mode: Mode::MinHiss,
                 settle_ms: 300,
+                decay_ms: DECAY_DEFAULT_MS,
                 boost: 6,
                 noise_reduction: false,
                 agc: true,
                 sidetone: true,
                 level: 500,
+                surround: true,
+                surround_level: 7,
             }
         );
+        let balanced = Controls::effective(&Config::default(), Some(&device(Mode::Balanced)));
+        assert_eq!(balanced.decay_ms, 300);
     }
 
     #[test]
@@ -233,18 +285,23 @@ mod tests {
             mic_agc: Some(false),
             sidetone: Some(false),
             sidetone_level: Some(70),
-            ..Config::default()
+            balanced_decay_ms: Some(1500),
+            surround: Some(false),
+            surround_level: Some(2),
         };
         assert_eq!(
-            Controls::effective(&settings, Some(&device(Mode::MinHiss))),
+            Controls::effective(&settings, Some(&device(Mode::Balanced))),
             Controls {
                 mode: Mode::Quiet,
                 settle_ms: 900,
+                decay_ms: 1500,
                 boost: 2,
                 noise_reduction: true,
                 agc: false,
                 sidetone: false,
                 level: 70,
+                surround: false,
+                surround_level: 2,
             }
         );
     }
@@ -357,6 +414,24 @@ mod tests {
             ),
             (Hiss::Cut, Pop::Loud, Delay::Settle, 450)
         );
+    }
+
+    #[test]
+    fn each_time_is_enabled_only_in_the_mode_that_uses_it_and_with_a_dongle() {
+        for mode in Mode::ALL {
+            assert_eq!(
+                soft_start_enabled(true, mode),
+                mode == Mode::MinHiss,
+                "{mode:?}"
+            );
+            assert_eq!(
+                decay_enabled(true, mode),
+                mode == Mode::Balanced,
+                "{mode:?}"
+            );
+            assert!(!soft_start_enabled(false, mode), "{mode:?}");
+            assert!(!decay_enabled(false, mode), "{mode:?}");
+        }
     }
 
     #[test]

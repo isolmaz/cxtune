@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 use cxtune::config;
-use cxtune::engine::{self, Command, Engine, ErrorKind, Event, Handle, Snapshot};
+use cxtune::engine::{self, Command, Engine, ErrorKind, Event, Handle, Snapshot, TestRequest};
 use cxtune::mode::Mode;
 use cxtune::volume::Side;
 use slint::{CloseRequestResponse, ComponentHandle, ModelRc, Timer, TimerMode, VecModel, Weak};
@@ -16,12 +16,13 @@ use crate::lang::{self, Lang};
 use crate::platform;
 use crate::sound::{Levels, Sound};
 use crate::status::{self, Problem};
+use crate::test_tab::{self, MeterAsk, TestTab};
 use crate::throttle::Throttle;
-use crate::ui::{MainWindow, Model, Tray};
+use crate::ui::{MainWindow, Model, TestJob, Tray};
 use crate::{autostart, instance};
 
 /// The index of the About page of the window.
-const ABOUT_TAB: i32 = 4;
+const ABOUT_TAB: i32 = 5;
 /// A slider sends at most one command per this long, and the last value always.
 const PACE: Duration = Duration::from_millis(100);
 /// After the user moves a volume slider, what the thread reads is ignored for this long, so that
@@ -50,21 +51,32 @@ pub fn with_app(f: impl FnOnce(&mut App)) {
 struct Touched {
     mode: bool,
     settle: bool,
+    decay: bool,
     boost: bool,
     noise_reduction: bool,
     agc: bool,
     sidetone: bool,
     level: bool,
+    surround: bool,
+    surround_level: bool,
 }
 
 #[derive(Clone, Copy)]
 enum Slot {
     Settle,
+    Decay,
     Boost,
     Level,
+    SurroundLevel,
 }
 
-const SLOTS: [Slot; 3] = [Slot::Settle, Slot::Boost, Slot::Level];
+const SLOTS: [Slot; 5] = [
+    Slot::Settle,
+    Slot::Decay,
+    Slot::Boost,
+    Slot::Level,
+    Slot::SurroundLevel,
+];
 
 struct Paced {
     throttle: Throttle<Command>,
@@ -87,8 +99,13 @@ pub struct App {
     warned: bool,
     controls: Controls,
     touched: Touched,
-    paced: [Paced; 3],
+    paced: [Paced; 5],
     sound: Sound,
+    /// What the Test page shows, and what the engine was last asked about its meter.
+    test: TestTab,
+    meter: MeterAsk,
+    /// Whether the window is shown: the meter of the Test page does not run in a hidden one.
+    shown: bool,
     /// Until when the volume of each side, playback and capture, is the user's own move.
     volume_hold: [Option<Instant>; 2],
     quitting: bool,
@@ -107,6 +124,14 @@ pub fn install(
     model.set_settle_min(f32::from(controls::SETTLE_MIN_MS));
     model.set_settle_max(f32::from(controls::SETTLE_MAX_MS));
     model.set_settle_step(f32::from(cxtune::mode::SETTLE_STEP_MS));
+    model.set_decay_min(f32::from(controls::DECAY_MIN_MS));
+    model.set_decay_max(f32::from(controls::DECAY_MAX_MS));
+    model.set_decay_step(f32::from(cxtune::mode::SETTLE_STEP_MS));
+    model.set_surround_level_min(f32::from(controls::SURROUND_MIN));
+    model.set_surround_level_max(f32::from(controls::SURROUND_MAX));
+    model.set_noise_floor_seconds(i32::from(test_tab::NOISE_FLOOR_SECONDS));
+    model.set_record_seconds(i32::from(test_tab::RECORD_SECONDS));
+    model.set_comparison_seconds(i32::from(test_tab::COMPARISON_SECONDS));
     model.set_boost_max(f32::from(controls::BOOST_MAX));
     model.set_level_min(f32::from(cxtune::patches::SIDETONE_MIN));
     model.set_level_max(f32::from(cxtune::patches::SIDETONE_MAX));
@@ -130,12 +155,15 @@ pub fn install(
         warned: false,
         controls: Controls::VENDOR,
         touched: Touched::default(),
-        paced: [paced(), paced(), paced()],
+        paced: [paced(), paced(), paced(), paced(), paced()],
         sound: Sound::start(|levels| {
             let _ = slint::invoke_from_event_loop(move || with_app(|app| app.on_sound(levels)));
         }),
         volume_hold: [None; 2],
         quitting: false,
+        test: TestTab::default(),
+        meter: MeterAsk::default(),
+        shown: visible,
     };
     app.sound.watch(visible);
     app.apply_language(lang);
@@ -157,6 +185,12 @@ fn connect(window: &MainWindow, tray: &Tray) {
     let model = window.global::<Model>();
     model.on_mode_selected(|index| with_app(|app| app.mode_selected(index)));
     model.on_settle_changed(|ms| with_app(|app| app.settle_changed(ms)));
+    model.on_decay_changed(|ms| with_app(|app| app.decay_changed(ms)));
+    model.on_surround_toggled(|on| with_app(|app| app.surround_toggled(on)));
+    model.on_surround_level_changed(|level| with_app(|app| app.surround_level_changed(level)));
+    model.on_tab_changed(|_| with_app(App::render));
+    model.on_test_requested(|job| with_app(|app| app.test_requested(job)));
+    model.on_test_cancelled(|| with_app(App::test_cancelled));
     model.on_boost_changed(|step| with_app(|app| app.boost_changed(step)));
     model.on_noise_reduction_toggled(|on| with_app(|app| app.noise_reduction_toggled(on)));
     model.on_agc_toggled(|on| with_app(|app| app.agc_toggled(on)));
@@ -174,7 +208,11 @@ fn connect(window: &MainWindow, tray: &Tray) {
     model.on_open_log_folder(open_log_folder);
 
     window.window().on_close_requested(|| {
-        with_app(|app| app.sound.watch(false));
+        with_app(|app| {
+            app.sound.watch(false);
+            app.shown = false;
+            app.render();
+        });
         CloseRequestResponse::HideWindow
     });
 
@@ -242,6 +280,7 @@ impl App {
         self.snapshot = None;
         self.start_problem = None;
         self.touched = Touched::default();
+        self.meter.reset();
         let spawned = std::thread::Builder::new()
             .name("cxtune-start".into())
             .spawn(move || {
@@ -265,12 +304,18 @@ impl App {
         self.render();
     }
 
-    /// Development only: shows `snapshot` as if the engine had reported it.
+    /// Development only: shows `snapshot` as if the engine had reported it, and then the messages
+    /// of the Test page.
     #[cfg(feature = "snapshot")]
-    pub fn preview(&mut self, snapshot: Snapshot) {
+    pub fn preview(&mut self, snapshot: Snapshot, events: &[engine::TestEvent]) {
         self.touched = Touched::default();
+        self.test = TestTab::default();
         self.snapshot = Some(snapshot);
         self.render();
+        for event in events {
+            self.test.event(event);
+        }
+        self.show_test();
     }
 
     fn on_started(&mut self, generation: usize, started: cxtune::Result<Engine>) {
@@ -313,9 +358,19 @@ impl App {
                 }
                 self.warned |= failure.kind == ErrorKind::Invalid;
             }
-            Event::Test(_) => {}
+            // the Test page changes twenty times a second while the meter runs: nothing else does
+            Event::Test(event) => {
+                self.test.event(&event);
+                return self.show_test();
+            }
         }
         self.render();
+    }
+
+    fn show_test(&self) {
+        if let Some(window) = self.window.upgrade() {
+            self.test.show(&window.global::<Model>());
+        }
     }
 
     fn render(&mut self) {
@@ -339,6 +394,10 @@ impl App {
             controls.settle_ms = shown.settle_ms;
             model.set_settle_ms(f32::from(shown.settle_ms));
         }
+        if !touched.decay {
+            controls.decay_ms = shown.decay_ms;
+            model.set_decay_ms(f32::from(shown.decay_ms));
+        }
         if !touched.boost {
             controls.boost = shown.boost;
             model.set_boost(f32::from(shown.boost));
@@ -359,15 +418,37 @@ impl App {
             controls.level = shown.level;
         }
         model.set_level(f32::from(controls.level));
+        if !touched.surround {
+            controls.surround = shown.surround;
+            model.set_surround(shown.surround);
+        }
+        if !touched.surround_level {
+            controls.surround_level = shown.surround_level;
+            model.set_surround_level(f32::from(shown.surround_level));
+        }
 
         let running = self.engine.as_ref().is_some_and(Engine::is_running);
         let usable = running && status.controls;
         let controls = self.controls;
         model.set_controls_enabled(usable);
-        model.set_delay_enabled(usable && controls.mode == Mode::MinHiss);
+        model.set_delay_enabled(controls::soft_start_enabled(usable, controls.mode));
+        model.set_decay_enabled(controls::decay_enabled(usable, controls.mode));
         let indicators = Mode::ALL.map(|mode| controls::indicators(mode, controls.settle_ms));
         model.set_indicators(ModelRc::new(VecModel::from(indicators.to_vec())));
         model.set_boost_db(controls::gain_db(controls.boost));
+
+        let test = self
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.test)
+            .unwrap_or_default();
+        self.test.state(&test);
+        self.test.show(&model);
+        let wanted =
+            test_tab::meter_wanted(model.get_tab(), self.shown, usable, self.test.running());
+        if let Some(command) = self.meter.sync(wanted) {
+            self.send(command);
+        }
 
         model.set_title(status.title);
         model.set_hint(status.hint);
@@ -507,6 +588,50 @@ impl App {
         self.render();
     }
 
+    fn decay_changed(&mut self, ms: i32) {
+        let Ok(ms) = u16::try_from(ms) else {
+            return;
+        };
+        if ms == self.controls.decay_ms {
+            return;
+        }
+        self.touched.decay = true;
+        self.controls.decay_ms = ms;
+        self.send_paced(Slot::Decay, Command::SetBalancedDecayMs(ms));
+        self.render();
+    }
+
+    fn surround_toggled(&mut self, on: bool) {
+        self.touched.surround = true;
+        self.controls.surround = on;
+        self.send(Command::SetSurround(on));
+    }
+
+    fn surround_level_changed(&mut self, level: i32) {
+        let Ok(level) = u8::try_from(level) else {
+            return;
+        };
+        if level == self.controls.surround_level {
+            return;
+        }
+        self.touched.surround_level = true;
+        self.controls.surround_level = level;
+        self.send_paced(Slot::SurroundLevel, Command::SetSurroundLevel(level));
+    }
+
+    fn test_requested(&mut self, job: TestJob) {
+        let Some(request) = test_tab::request_of(job) else {
+            return;
+        };
+        self.test.requested(job);
+        self.send(Command::Test(request));
+        self.show_test();
+    }
+
+    fn test_cancelled(&mut self) {
+        self.send(Command::Test(TestRequest::Cancel));
+    }
+
     fn boost_changed(&mut self, step: i32) {
         let Ok(step) = u8::try_from(step) else {
             return;
@@ -629,6 +754,8 @@ impl App {
         if let Some(window) = self.window.upgrade() {
             platform::show_and_raise(window.window());
             self.sound.watch(true);
+            self.shown = true;
+            self.render();
         }
     }
 
@@ -640,6 +767,7 @@ impl App {
             return;
         }
         self.quitting = true;
+        self.shown = false;
         if let Some(window) = self.window.upgrade() {
             let _ = window.hide();
         }

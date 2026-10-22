@@ -1,5 +1,5 @@
 import { Slider, Switch } from "std-widgets.slint";
-import { Model, ModeIndicators, Pop } from "contract.slint";
+import { Model, ModeIndicators, Pop, TestJob } from "contract.slint";
 import { Grid, Signal, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
@@ -9,6 +9,20 @@ export global Hover {
     in-out property <string> explanation;
     in-out property <length> x;
     in-out property <length> y;
+}
+
+// Keeps the keyboard focus in view on a page that scrolls: a control that gets the focus says
+// where it is, and the page moves to show it.
+export global Reveal {
+    in-out property <length> y;
+    in-out property <length> height;
+    in-out property <int> count;
+
+    public function focused(y: length, height: length) {
+        self.y = y;
+        self.height = height;
+        self.count += 1;
+    }
 }
 
 // ---- Type: see `Type` ----
@@ -210,7 +224,9 @@ export component Help inherits Rectangle {
     keys := FocusScope {
         width: 0px;
         changed has-focus => {
-            if !self.has-focus {
+            if self.has-focus {
+                Reveal.focused(root.absolute-position.y, root.height);
+            } else {
                 root.hide();
             }
         }
@@ -403,6 +419,7 @@ export component FluentButton inherits Rectangle {
         changed has-focus => {
             if self.has-focus {
                 root.show-tip();
+                Reveal.focused(root.absolute-position.y, root.height);
             } else {
                 root.hide-tip();
             }
@@ -413,6 +430,25 @@ export component FluentButton inherits Rectangle {
                 return accept;
             }
             return reject;
+        }
+    }
+}
+
+// The button of a test: it starts the test, and while that test runs it cancels it. The others
+// cannot be used then, because the engine refuses a test while another one runs. `available` is
+// what the test needs besides.
+export component TestButton inherits FluentButton {
+    in property <TestJob> job;
+    in property <string> start-text;
+    in property <bool> available: true;
+    property <bool> running: Model.test-job == root.job;
+    text: root.running ? @tr("ui" => "Cancel") : root.start-text;
+    enabled: root.running || (Model.controls-enabled && Model.test-job == TestJob.none && root.available);
+    clicked => {
+        if root.running {
+            Model.test-cancelled();
+        } else {
+            Model.test-requested(root.job);
         }
     }
 }
@@ -477,6 +513,11 @@ component MuteToggle inherits Rectangle {
     keys := FocusScope {
         width: 0px;
         enabled: root.enabled;
+        changed has-focus => {
+            if self.has-focus {
+                Reveal.focused(root.absolute-position.y, root.height);
+            }
+        }
         key-pressed(event) => {
             if event.text == Key.Space || event.text == Key.Return {
                 root.toggled();
@@ -625,6 +666,11 @@ export component AppSlider inherits Rectangle {
             enabled: root.enabled;
             accessible-label: root.label;
             accessible-description: root.description;
+            changed has-focus => {
+                if self.has-focus {
+                    Reveal.focused(root.absolute-position.y, root.height);
+                }
+            }
             changed(value) => {
                 root.changed(value);
             }
@@ -669,6 +715,11 @@ export component SwitchControl inherits HorizontalLayout {
             enabled: root.enabled;
             accessible-label: root.label;
             accessible-description: root.description;
+            changed has-focus => {
+                if self.has-focus {
+                    Reveal.focused(self.absolute-position.y, self.height);
+                }
+            }
             toggled => {
                 root.toggled(self.checked);
             }
@@ -928,6 +979,7 @@ export component ModeGroup inherits Rectangle {
         changed has-focus => {
             if self.has-focus {
                 root.focus-index = Model.mode;
+                Reveal.focused(root.absolute-position.y, root.height);
             }
         }
         key-pressed(event) => {
@@ -1157,6 +1209,50 @@ export component MeterRow inherits HorizontalLayout {
             active: root.active;
             db: root.db;
         }
+    }
+}
+
+// The level of the microphone on the Test page: the segments of the header meter in the width of a
+// slider, for a level in dBFS from -60 to 0. Without a level it stays neutral.
+export component LevelBar inherits Rectangle {
+    in property <bool> active;
+    in property <float> db;
+    in property <string> label;
+    width: Grid.slider;
+    height: 32px;
+    accessible-role: progress-indicator;
+    accessible-label: root.label;
+    accessible-value: root.active ? Texts.dbfs-rounded(root.db) : "";
+
+    Meter {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        active: root.active;
+        db: root.db;
+    }
+}
+
+// The result of a test in a row, right-aligned before the button: the measured value and, smaller
+// under it, what else was measured.
+export component ResultText inherits VerticalLayout {
+    in property <string> text;
+    in property <string> detail;
+    in property <bool> subdued;
+    alignment: center;
+    horizontal-stretch: 0;
+    max-width: 130px;
+
+    Body {
+        text: root.text;
+        color: root.subdued ? Surface.secondary : Surface.text;
+        horizontal-alignment: right;
+        overflow: elide;
+    }
+
+    if root.detail != "": Caption {
+        text: root.detail;
+        horizontal-alignment: right;
+        overflow: elide;
     }
 }
 

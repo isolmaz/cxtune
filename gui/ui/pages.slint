@@ -1,16 +1,45 @@
-import { ComboBox } from "std-widgets.slint";
-import { Model } from "contract.slint";
-import { AppSlider, Body, Breadcrumb, Caption, Card, DeviceTile, ExperimentalTag, FluentButton, Group, Icon, InfoBar, ModeGroup, Row, SwitchControl } from "components.slint";
+import { ComboBox, ScrollView } from "std-widgets.slint";
+import { Measured, Model, TestJob, TestProblem } from "contract.slint";
+import { AppSlider, Body, Breadcrumb, Caption, Card, DeviceTile, ExperimentalTag, FluentButton, Group, Icon, InfoBar, LevelBar, ModeGroup, ResultText, Reveal, Row, SwitchControl, TestButton } from "components.slint";
 import { Grid, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
-component Page inherits VerticalLayout {
-    padding-left: Grid.margin-x;
-    padding-right: Grid.margin-x;
-    padding-top: Grid.margin-y;
-    padding-bottom: Grid.margin-y;
-    spacing: Grid.group-gap;
-    alignment: start;
+// A page. What does not fit under the title scrolls (the bar shows only then), and the control
+// that has the keyboard focus is kept in view.
+component Page inherits Rectangle {
+    property <int> focus-seen: Reveal.count;
+
+    changed focus-seen => {
+        if scroll.content-height > scroll.visible-height {
+            let top = Reveal.y - scroll.absolute-position.y;
+            let bottom = top + Reveal.height;
+            if top < Grid.margin-y {
+                scroll.content-y = Math.min(0px, scroll.content-y + Grid.margin-y - top);
+            } else if bottom > scroll.visible-height - Grid.margin-y {
+                scroll.content-y = Math.max(scroll.visible-height - scroll.content-height, scroll.content-y - (bottom - scroll.visible-height + Grid.margin-y));
+            }
+        }
+    }
+
+    scroll := ScrollView {
+        width: parent.width;
+        height: parent.height;
+        horizontal-scrollbar-policy: always-off;
+        content-width: self.visible-width;
+        content-height: content.preferred-height;
+
+        content := VerticalLayout {
+            width: scroll.visible-width;
+            padding-left: Grid.margin-x;
+            padding-right: Grid.margin-x;
+            padding-top: Grid.margin-y;
+            padding-bottom: Grid.margin-y;
+            spacing: Grid.group-gap;
+            alignment: start;
+
+            @children
+        }
+    }
 }
 
 // The title of a page, and what goes with it on the right.
@@ -101,6 +130,79 @@ export component OutputPage inherits Page {
                 changed(value) => {
                     self.value = Math.round(value / Model.settle-step) * Model.settle-step;
                     Model.settle-changed(Math.round(self.value));
+                }
+                released => {
+                    Model.slider-released();
+                }
+            }
+        }
+
+        decay-row := Row {
+            icon: "\u{E917}";
+            title: @tr("decay" => "Mute delay");
+            help: @tr("ui" => "Used only by Balanced. After audio or a recording stops, the output stays open for this time and then goes quiet again. Vendor setting: 800 ms.");
+            value-column: true;
+            value: @tr("ui" => "{} ms", Math.round(Model.decay-ms));
+            disabled: !Model.decay-enabled;
+
+            AppSlider {
+                minimum: Model.decay-min;
+                maximum: Model.decay-max;
+                step: Model.decay-step;
+                value <=> Model.decay-ms;
+                enabled: !decay-row.disabled;
+                label: @tr("decay" => "Mute delay");
+                description: decay-row.help;
+                changed(value) => {
+                    self.value = Math.round(value / Model.decay-step) * Model.decay-step;
+                    Model.decay-changed(Math.round(self.value));
+                }
+                released => {
+                    Model.slider-released();
+                }
+            }
+        }
+    }
+
+    Group {
+        ExperimentalTag { }
+
+        surround-row := Row {
+            icon: "\u{E7F6}";
+            title: @tr("ui" => "Virtual surround");
+            help: @tr("ui" => "7.1 virtual surround for the headphones. The firmware applies it; how it sounds was not measured.");
+            disabled: !Model.controls-enabled;
+
+            SwitchControl {
+                label: @tr("ui" => "Virtual surround");
+                description: surround-row.help;
+                checked <=> Model.surround;
+                enabled: Model.controls-enabled;
+                toggled(on) => {
+                    Model.surround-toggled(on);
+                }
+            }
+        }
+
+        surround-level-row := Row {
+            icon: "\u{E994}";
+            title: @tr("ui" => "Surround level");
+            help: @tr("ui" => "1 to 10, vendor setting 4. How it sounds was not measured. Changing it while audio plays reloads the codec, and a click was not ruled out.");
+            value-column: true;
+            value: @tr("ui" => "{}", Math.round(Model.surround-level));
+            disabled: !Model.controls-enabled || !Model.surround;
+
+            AppSlider {
+                minimum: Model.surround-level-min;
+                maximum: Model.surround-level-max;
+                step: 1;
+                value <=> Model.surround-level;
+                enabled: !surround-level-row.disabled;
+                label: @tr("ui" => "Surround level");
+                description: surround-level-row.help;
+                changed(value) => {
+                    self.value = Math.round(value);
+                    Model.surround-level-changed(Math.round(self.value));
                 }
                 released => {
                     Model.slider-released();
@@ -332,6 +434,159 @@ component PageLink inherits Rectangle {
     }
 }
 
+// What a test shows in its row, before the button: how far it is while it runs, else what it
+// measured last.
+component TestResultText inherits ResultText {
+    in property <TestJob> job;
+    // the test of the same row that runs after this one
+    in property <bool> with-play;
+    in property <Measured> result;
+    property <bool> running: Model.test-job == root.job || (root.with-play && Model.test-job == TestJob.play);
+    text: root.running ? Texts.progress(Model.test-step, Model.test-remaining) : root.result.present ? Texts.measured-text(root.job, root.result) : "";
+    detail: !root.running && root.result.present ? Texts.measured-detail(root.job, root.result) : "";
+    subdued: root.running;
+}
+
+export component TestPage inherits Page {
+    PageTitle {
+        text: @tr("ui" => "Test");
+    }
+
+    if Model.test-problem != TestProblem.none: InfoBar {
+        icon: "\u{E783}";
+        tone: Surface.critical;
+        text: Texts.test-problem(Model.test-problem);
+    }
+
+    Group {
+        level-row := Row {
+            icon: "\u{E720}";
+            title: @tr("ui" => "Level");
+            help: @tr("ui" => "The RMS level of the last 50 ms in dBFS, where 0 is digital full scale. The microphone is open only while this page is shown.");
+            value-column: true;
+            value: Model.meters-active ? Texts.dbfs-rounded(Model.mic-db) : "";
+            disabled: !Model.controls-enabled;
+
+            LevelBar {
+                active: Model.meters-active;
+                db: Model.mic-db;
+                label: @tr("ui" => "Level");
+            }
+        }
+
+        noise-floor-row := Row {
+            icon: "\u{E9D2}";
+            title: @tr("ui" => "Noise floor");
+            help: @tr("ui" => "The median level over {} s, after the microphone has warmed up. Keep the room quiet.", Model.noise-floor-seconds);
+            disabled: !Model.controls-enabled;
+
+            TestResultText {
+                job: TestJob.noise-floor;
+                result: Model.noise-floor-result;
+            }
+
+            TestButton {
+                width: Grid.control;
+                job: TestJob.noise-floor;
+                start-text: @tr("ui" => "Measure");
+            }
+        }
+
+        recording-row := Row {
+            icon: "\u{E7C8}";
+            title: @tr("ui" => "Recording");
+            help: @tr("ui" => "Records {} s from the microphone into memory; nothing is saved. The level is the RMS and, under it, the peak, in dBFS. Play sends it to the headset, scaled down if its peak is above -12 dBFS.", Model.record-seconds);
+            disabled: !Model.controls-enabled;
+
+            TestResultText {
+                job: TestJob.record;
+                with-play: true;
+                result: Model.recording-result;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+
+                TestButton {
+                    job: TestJob.record;
+                    start-text: @tr("ui" => "Record {} s", Model.record-seconds);
+                }
+
+                TestButton {
+                    job: TestJob.play;
+                    start-text: @tr("ui" => "Play");
+                    available: Model.test-has-recording;
+                }
+            }
+        }
+    }
+
+    Group {
+        comparison-row := Row {
+            icon: "\u{E8AB}";
+            title: @tr("ui" => "Noise reduction");
+            help: @tr("ui" => "Measures the noise floor for {} s with noise reduction on and for {} s with it off, then puts the setting back. The result is the change, and under it the level with the setting on and off.", Model.comparison-seconds, Model.comparison-seconds);
+            disabled: !Model.controls-enabled;
+
+            TestResultText {
+                job: TestJob.comparison;
+                result: Model.comparison-result;
+            }
+
+            TestButton {
+                width: Grid.control;
+                job: TestJob.comparison;
+                start-text: @tr("ui" => "Compare");
+            }
+        }
+    }
+
+    if Model.test-caution: InfoBar {
+        icon: "\u{E7BA}";
+        tone: Surface.caution;
+        text: @tr("ui" => "Low-level test sound plays in the headset.");
+    }
+
+    Group {
+        click-row := Row {
+            icon: "\u{E945}";
+            title: @tr("ui" => "Click test");
+            help: @tr("ui" => "Waits until the output is idle, then plays a short tone at -40 dBFS, so that the click at its start and its end can be heard.");
+            disabled: !Model.controls-enabled;
+
+            TestResultText {
+                job: TestJob.click;
+                result: Model.click-result;
+            }
+
+            TestButton {
+                width: Grid.control;
+                job: TestJob.click;
+                start-text: @tr("ui" => "Play");
+            }
+        }
+
+        listen-row := Row {
+            icon: "\u{E995}";
+            title: @tr("ui" => "Listen to noise");
+            help: @tr("ui" => "Closes the microphone and waits until the output is idle, so that you can listen to its noise in the headset. Nothing is played.");
+            disabled: !Model.controls-enabled;
+
+            TestResultText {
+                job: TestJob.listen;
+                result: Model.listen-result;
+            }
+
+            TestButton {
+                width: Grid.control;
+                job: TestJob.listen;
+                start-text: @tr("ui" => "Start");
+            }
+        }
+    }
+}
+
 export component GeneralPage inherits Page {
     PageTitle {
         text: @tr("ui" => "General");
@@ -397,7 +652,7 @@ export component GeneralPage inherits Page {
         icon: "\u{E946}";
         title: @tr("ui" => "About");
         clicked => {
-            Model.tab = 4;
+            Model.tab = 5;
         }
     }
 }
@@ -407,7 +662,7 @@ export component AboutPage inherits Page {
         parent: @tr("ui" => "General");
         current: @tr("ui" => "About");
         back => {
-            Model.tab = 3;
+            Model.tab = 4;
         }
     }
 

@@ -1,4 +1,4 @@
-import { Delay, Hint, Hiss, Pop, Title } from "contract.slint";
+import { Delay, Hint, Hiss, Measured, Pop, TestJob, TestProblem, TestStep, Title } from "contract.slint";
 
 // The texts of the contract's enums, in the language that is selected. This is the only place
 // where the status, the indicators and the gain become words.
@@ -269,5 +269,107 @@ export global Texts {
             return @tr("ui" => "{} dB", 0);
         }
         return @tr("ui" => "+{}.{} dB", Math.floor(tenths / 10), Math.mod(tenths, 10));
+    }
+
+    // ---- the Test page ----
+
+    // a measured number with one decimal and its sign; the Turkish text uses a decimal comma
+    public pure function number(value: float) -> string {
+        let tenths = Math.round(Math.abs(value) * 10);
+        if value < 0 && tenths > 0 {
+            return @tr("ui" => "-{}.{}", Math.floor(tenths / 10), Math.mod(tenths, 10));
+        }
+        return @tr("ui" => "{}.{}", Math.floor(tenths / 10), Math.mod(tenths, 10));
+    }
+
+    public pure function dbfs(value: float) -> string {
+        return @tr("ui" => "{} dBFS", number(value));
+    }
+
+    // the level of the meter, whole dB
+    public pure function dbfs-rounded(value: float) -> string {
+        return @tr("ui" => "{} dBFS", Math.round(value));
+    }
+
+    // what noise reduction changes in the noise floor, in dB
+    public pure function db-change(value: float) -> string {
+        if value > 0 && Math.round(value * 10) > 0 {
+            return @tr("ui" => "+{} dB", number(value));
+        }
+        return @tr("ui" => "{} dB", number(value));
+    }
+
+    public pure function seconds(ms: int) -> string {
+        return @tr("ui" => "{} s", number(ms / 1000));
+    }
+
+    public pure function step(kind: TestStep) -> string {
+        if kind == TestStep.warming-up {
+            return @tr("ui" => "Warming up");
+        }
+        if kind == TestStep.measuring {
+            return @tr("ui" => "Measuring");
+        }
+        if kind == TestStep.recording {
+            return @tr("step" => "Recording");
+        }
+        if kind == TestStep.with-noise-reduction {
+            return @tr("ui" => "Reduction on");
+        }
+        if kind == TestStep.switching {
+            return @tr("ui" => "Switching");
+        }
+        if kind == TestStep.without-noise-reduction {
+            return @tr("ui" => "Reduction off");
+        }
+        if kind == TestStep.waiting {
+            return @tr("ui" => "Waiting");
+        }
+        if kind == TestStep.resting {
+            return @tr("ui" => "Pausing");
+        }
+        return @tr("ui" => "Playing");
+    }
+
+    // a running test: its step and, when the step ends by itself at a known time, the seconds left
+    public pure function progress(kind: TestStep, remaining: int) -> string {
+        if remaining < 0 {
+            return step(kind);
+        }
+        return @tr("ui" => "{} · {}", step(kind), @tr("ui" => "{} s", Math.ceil(remaining / 1000)));
+    }
+
+    // what a test measured: the value, and under it what else was measured
+    public pure function measured-text(job: TestJob, result: Measured) -> string {
+        if job == TestJob.noise-floor || job == TestJob.record {
+            return dbfs(result.first);
+        }
+        if job == TestJob.comparison {
+            return db-change(result.first);
+        }
+        if job == TestJob.click || job == TestJob.listen {
+            return @tr("ui" => "Idle after {}", seconds(result.first));
+        }
+        return "";
+    }
+
+    public pure function measured-detail(job: TestJob, result: Measured) -> string {
+        if job == TestJob.record {
+            return @tr("ui" => "peak {}", dbfs(result.second));
+        }
+        if job == TestJob.comparison {
+            return @tr("ui" => "{} / {} dBFS", number(result.second), number(result.third));
+        }
+        return "";
+    }
+
+    public pure function test-problem(kind: TestProblem) -> string {
+        if kind == TestProblem.communication {
+            return @tr("ui" => "The test could not reach the dongle. Check the cable and the USB port.");
+        }
+        if kind == TestProblem.audio {
+            return @tr("ui" => "The test could not open the dongle's audio. Close programs that use it.");
+        }
+        return @tr("ui" => "The test stopped. The log has the details.");
     }
 }

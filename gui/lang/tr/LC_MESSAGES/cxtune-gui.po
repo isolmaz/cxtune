@@ -12,10 +12,6 @@ msgid "HyperX Cloud II USB sound card"
 msgstr "HyperX Cloud II USB ses kartı"
 
 msgctxt "ui"
-msgid "Output level"
-msgstr "Çıkış düzeyi"
-
-msgctxt "ui"
 msgid "Microphone level"
 msgstr "Mikrofon düzeyi"
 
@@ -40,6 +36,10 @@ msgid "Sidetone"
 msgstr "Sidetone"
 
 msgctxt "ui"
+msgid "Test"
+msgstr "Test"
+
+msgctxt "ui"
 msgid "General"
 msgstr "Genel"
 
@@ -62,6 +62,10 @@ msgstr "Çıkış"
 msgctxt "ui"
 msgid "Help"
 msgstr "Yardım"
+
+msgctxt "ui"
+msgid "Cancel"
+msgstr "İptal"
 
 msgctxt "ui"
 msgid "Experimental"
@@ -131,6 +135,34 @@ msgctxt "ui"
 msgid "{} ms"
 msgstr "{} ms"
 
+msgctxt "decay"
+msgid "Mute delay"
+msgstr "Susturma gecikmesi"
+
+msgctxt "ui"
+msgid "Used only by Balanced. After audio or a recording stops, the output stays open for this time and then goes quiet again. Vendor setting: 800 ms."
+msgstr "Yalnızca Dengeli kullanır. Ses veya kayıt durduktan sonra çıkış bu süre boyunca açık kalır, sonra yeniden sessizleşir. Üretici ayarı: 800 ms."
+
+msgctxt "ui"
+msgid "Virtual surround"
+msgstr "Sanal surround"
+
+msgctxt "ui"
+msgid "7.1 virtual surround for the headphones. The firmware applies it; how it sounds was not measured."
+msgstr "Kulaklık için 7.1 sanal surround. Bellenim uygular; nasıl duyulduğu ölçülmedi."
+
+msgctxt "ui"
+msgid "Surround level"
+msgstr "Surround düzeyi"
+
+msgctxt "ui"
+msgid "1 to 10, vendor setting 4. How it sounds was not measured. Changing it while audio plays reloads the codec, and a click was not ruled out."
+msgstr "1 ile 10 arası, üretici ayarı 4. Nasıl duyulduğu ölçülmedi. Ses çalarken değiştirmek codec'i yeniden yükler; tık olasılığı dışlanmadı."
+
+msgctxt "ui"
+msgid "{}"
+msgstr "{}"
+
 msgctxt "ui"
 msgid "Mute microphone"
 msgstr "Mikrofonu sustur"
@@ -190,6 +222,70 @@ msgstr "ROM'un saydığı gibi dB olarak (USB ses sınıfı, 1/256 dB; 0 ile +16
 msgctxt "ui"
 msgid "Keep Windows' \"Listen to this device\" off for the microphone: it would echo."
 msgstr "Mikrofon için Windows'un \"Bu aygıtı dinle\" özelliğini açmayın: yankı olur."
+
+msgctxt "ui"
+msgid "Level"
+msgstr "Düzey"
+
+msgctxt "ui"
+msgid "The RMS level of the last 50 ms in dBFS, where 0 is digital full scale. The microphone is open only while this page is shown."
+msgstr "Son 50 ms'nin RMS düzeyi, dBFS cinsinden; 0 dijital tam ölçektir. Mikrofon yalnızca bu sayfa gösterilirken açıktır."
+
+msgctxt "ui"
+msgid "The median level over {} s, after the microphone has warmed up. Keep the room quiet."
+msgstr "Mikrofon ısındıktan sonra {} sn boyunca ortanca düzey. Odayı sessiz tutun."
+
+msgctxt "ui"
+msgid "Measure"
+msgstr "Ölç"
+
+msgctxt "ui"
+msgid "Recording"
+msgstr "Kayıt"
+
+msgctxt "ui"
+msgid "Records {} s from the microphone into memory; nothing is saved. The level is the RMS and, under it, the peak, in dBFS. Play sends it to the headset, scaled down if its peak is above -12 dBFS."
+msgstr "Mikrofondan {} sn'yi belleğe kaydeder; hiçbir şey saklanmaz. Düzey RMS'dir, altında tepe değeri, dBFS cinsinden. Oynat, kaydı kulaklığa gönderir; tepe değeri -12 dBFS'nin üzerindeyse küçültülür."
+
+msgctxt "ui"
+msgid "Record {} s"
+msgstr "{} sn kaydet"
+
+msgctxt "ui"
+msgid "Play"
+msgstr "Oynat"
+
+msgctxt "ui"
+msgid "Measures the noise floor for {} s with noise reduction on and for {} s with it off, then puts the setting back. The result is the change, and under it the level with the setting on and off."
+msgstr "Gürültü tabanını gürültü azaltma açıkken {} sn, kapalıyken {} sn ölçer, sonra ayarı geri koyar. Sonuç değişimdir; altında ayar açıkken ve kapalıyken düzey yer alır."
+
+msgctxt "ui"
+msgid "Compare"
+msgstr "Karşılaştır"
+
+msgctxt "ui"
+msgid "Low-level test sound plays in the headset."
+msgstr "Kulaklıkta düşük düzeyli bir test sesi çalar."
+
+msgctxt "ui"
+msgid "Click test"
+msgstr "Tık testi"
+
+msgctxt "ui"
+msgid "Waits until the output is idle, then plays a short tone at -40 dBFS, so that the click at its start and its end can be heard."
+msgstr "Çıkış boşa geçene kadar bekler, sonra -40 dBFS'de kısa bir ton çalar; böylece başındaki ve sonundaki tık duyulabilir."
+
+msgctxt "ui"
+msgid "Listen to noise"
+msgstr "Gürültüyü dinle"
+
+msgctxt "ui"
+msgid "Closes the microphone and waits until the output is idle, so that you can listen to its noise in the headset. Nothing is played."
+msgstr "Mikrofonu kapatır ve çıkış boşa geçene kadar bekler; böylece gürültüsünü kulaklıkta dinleyebilirsiniz. Hiçbir şey çalınmaz."
+
+msgctxt "ui"
+msgid "Start"
+msgstr "Başlat"
 
 msgctxt "ui"
 msgid "Start with Windows"
@@ -494,3 +590,83 @@ msgstr "Kullanım riski size aittir; yazarlar sorumluluk kabul etmez."
 msgctxt "ui"
 msgid "+{}.{} dB"
 msgstr "+{},{} dB"
+
+msgctxt "ui"
+msgid "-{}.{}"
+msgstr "-{},{}"
+
+msgctxt "ui"
+msgid "{}.{}"
+msgstr "{},{}"
+
+msgctxt "ui"
+msgid "{} dBFS"
+msgstr "{} dBFS"
+
+msgctxt "ui"
+msgid "{} s"
+msgstr "{} sn"
+
+msgctxt "ui"
+msgid "Warming up"
+msgstr "Isınıyor"
+
+msgctxt "ui"
+msgid "Measuring"
+msgstr "Ölçülüyor"
+
+msgctxt "step"
+msgid "Recording"
+msgstr "Kaydediliyor"
+
+msgctxt "ui"
+msgid "Reduction on"
+msgstr "Azaltma açık"
+
+msgctxt "ui"
+msgid "Switching"
+msgstr "Geçiliyor"
+
+msgctxt "ui"
+msgid "Reduction off"
+msgstr "Azaltma kapalı"
+
+msgctxt "ui"
+msgid "Waiting"
+msgstr "Bekleniyor"
+
+msgctxt "ui"
+msgid "Pausing"
+msgstr "Duraklıyor"
+
+msgctxt "ui"
+msgid "Playing"
+msgstr "Çalıyor"
+
+msgctxt "ui"
+msgid "{} · {}"
+msgstr "{} · {}"
+
+msgctxt "ui"
+msgid "Idle after {}"
+msgstr "{} sonra boşta"
+
+msgctxt "ui"
+msgid "peak {}"
+msgstr "tepe {}"
+
+msgctxt "ui"
+msgid "{} / {} dBFS"
+msgstr "{} / {} dBFS"
+
+msgctxt "ui"
+msgid "The test could not reach the dongle. Check the cable and the USB port."
+msgstr "Test dongle'a ulaşamadı. Kabloyu ve USB bağlantı noktasını kontrol edin."
+
+msgctxt "ui"
+msgid "The test could not open the dongle's audio. Close programs that use it."
+msgstr "Test dongle'ın sesini açamadı. Onu kullanan programları kapatın."
+
+msgctxt "ui"
+msgid "The test stopped. The log has the details."
+msgstr "Test durdu. Ayrıntılar günlükte."

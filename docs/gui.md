@@ -18,21 +18,27 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
 
 ## Window, icon and process
 
-- **Layout.** The window has a fixed size of 720 x 480 logical pixels and no scrolling. The
-  header holds a photo of the dongle (`gui/assets/dongle.png`), its name, a pill with the state of
-  the dongle (the one place that says how it stands) and the OUT and MIC level meters. A column
-  of pages on the left (Output, Microphone, Sidetone, General, each with a glyph of Segoe Fluent
-  Icons) leads to the page on the right, made of Windows 11 style cards. About is a page of
-  General: a row of its card opens it and the breadcrumb at its top leads back. The layout does
-  the explaining: rows have a title and a control and no sub-line; what more there is to say
-  sits behind the "?" of the row, which opens with the mouse or, from the keyboard, with Enter
-  or Space, and is also the accessible description of the control. A group of experimental
-  settings carries one "Experimental" marker above it. Left and Right move between the mode
-  cards from the keyboard, Up and Down between the pages, and Space or Enter chooses.
-- **Meters.** The OUT and MIC meters take a peak level in dBFS (`out-db`, `mic-db`) and a flag
-  (`meters-active`). While the flag is false they are dimmed, every segment is off and there is no
-  value; with a level the value appears to the left of the bars. Nothing in the application
-  delivers levels yet.
+- **Layout.** The window has a fixed size of 720 x 480 logical pixels. The header holds a photo
+  of the dongle (`gui/assets/dongle.png`), its name, a pill with the state of the dongle (the one
+  place that says how it stands) and the level meter of the microphone. A column of pages on the
+  left (Output, Microphone, Sidetone, Test, General, each with a glyph of Segoe Fluent Icons)
+  leads to the page on the right, made of Windows 11 style cards. About is a page of General: a
+  row of its card opens it and the breadcrumb at its top leads back. The layout does the
+  explaining: rows have a title and a control and no sub-line; what more there is to say sits
+  behind the "?" of the row, which opens with the mouse or, from the keyboard, with Enter or
+  Space, and is also the accessible description of the control. A group of experimental settings
+  carries one "Experimental" marker above it. Left and Right move between the mode cards from the
+  keyboard, Up and Down between the pages, and Space or Enter chooses.
+- **Scrolling.** What does not fit under the title of a page (the Output and the Test page) scrolls
+  with the mouse wheel or the bar at the right edge of the page, which shows only then. The
+  control that gets the keyboard focus scrolls into view: it says where it is (`Reveal` in
+  `components.slint`) and the page moves, so Tab never lands on a control that cannot be seen.
+- **Meter.** The microphone meter takes the RMS level of the last 50 ms in dBFS (`mic-db`) and a
+  flag (`meters-active`). While the flag is false it is dimmed, every segment is off and there is no
+  value; with a level the value appears to the left of the bars in the header and in the value
+  column of the Level row of the Test page. The engine measures only the microphone, so there is
+  no meter for the output: nothing in the application delivers an output level, and the header
+  shows none rather than a made-up one.
 - **Colours.** The window follows the light or dark scheme and the accent colour of Windows. Text
   uses the Fluent tokens TextFillColorPrimary, -Secondary and -Disabled; every secondary text has
   at least 4.5:1 contrast on its card in both schemes.
@@ -81,7 +87,8 @@ renderer (no GPU, no web runtime). The window follows the light or dark scheme o
   |---|---|---|
   | Noise floor | Gürültü tabanı | the hiss of the headphone driver at idle |
   | Click | Tık | the pop when audio starts |
-  | Mute delay | Açılış gecikmesi | how long the start of audio is muted |
+  | Mute delay (the legend of the cards) | Açılış gecikmesi | how long the start of audio is muted |
+  | Mute delay (the Balanced row) | Susturma gecikmesi | how long the output stays open after audio stops (the balanced stop decay time) |
   | Soft-start time | Yumuşak açılış süresi | the settle time of Lowest noise |
   | Default, Low click, Balanced, Lowest noise | Varsayılan, Az tıklı, Dengeli, En sessiz | the modes `default`, `low-click`, `balanced` and `lowest-noise` |
 
@@ -109,9 +116,18 @@ then the vendor's value, so a control always shows what is true. A control that 
 used keeps the user's value. Sliders send a command at once and then at most one per 100 ms,
 with the last value always sent when the slider is released.
 
-- **Mode and soft-start time.** The four modes are cards across the page; the chosen one has a
-  border and a check mark and the recommended one a badge. The soft-start time slider is enabled
-  only in Lowest noise, with the range of the core (20-2000 ms in steps of 10).
+- **Mode, soft-start time and mute delay.** The four modes are cards across the page; the chosen
+  one has a border and a check mark and the recommended one a badge. The soft-start time slider
+  is enabled only in Lowest noise, with the range of the core (20-2000 ms in steps of 10). The
+  **Mute delay** slider under it is the balanced stop decay time (`SetBalancedDecayMs`, 100-2000
+  ms in steps of 10, vendor 800 ms): after audio or a recording stops the output stays open for
+  that long and then goes quiet again. It is enabled only in Balanced. Both enabled states are
+  `controls::soft_start_enabled` and `controls::decay_enabled`.
+- **Virtual surround** (experimental, under its own marker on the Output page): a switch for the
+  7.1 virtual surround and a level slider (1-10, vendor 4, `SetSurround` and `SetSurroundLevel`).
+  The slider is disabled while the switch is off, like the sidetone level. The tooltips say that
+  how it sounds was not measured and that a level change while audio plays reloads the codec, of
+  which a click was not ruled out.
 - **Mode indicators.** Every card has three lines in the same order: noise floor, click and mute
   delay, each with a glyph in the colour of its value (a grey glyph and a dash when it was not
   measured) and the value. A legend under the cards names the glyphs once, and each line has the
@@ -142,10 +158,37 @@ with the last value always sent when the slider is released.
   disabled like the soft-start row outside Lowest noise: greyed, not focusable, its value in the
   disabled colour. A line advises against turning on the Windows setting "Listen to this device"
   at the same time (an echo).
+- **The Test page** shows the Test tab of the engine ([engine.md](engine.md#the-test-tab);
+  `gui/src/test_tab.rs`). Its rows, in three groups:
+  - *Level*: a bar of 200 px like a slider and the level in the value column. The microphone
+    meter runs only while this page is shown in a window that is shown and the dongle is
+    there: entering the page sends `Meter(true)`, leaving it, hiding the window (the notification
+    area) or losing the dongle sends `Meter(false)`, and an output test, which needs the
+    microphone closed, keeps it off until the test ends. `test_tab::meter_wanted` decides and
+    `MeterAsk` sends one request for each change. The level events (twenty a second) update the
+    meter properties only.
+  - *Noise floor* (the median over 10 s), *Recording* (Record 5 s, then Play) and *Noise
+    reduction* (the comparison, 10 s with the setting on and 10 s with it off): each row has a
+    button of 160 px and, before it, the result. While a test runs the result slot shows its
+    step and, when it is known, the seconds left; the button says Cancel.
+  - *Click test* and *Listen to noise*, which wait until the output is idle: they show how long
+    that took. Before the first of them (or Play) has been started a line says that a low-level
+    test sound plays in the headset.
+
+  Every result is the measured value and nothing else: dBFS for a level, the change in dB with the
+  two levels under it for the comparison, the RMS and the peak for a recording, seconds to idle.
+  Nothing says that a value is good. The buttons follow the engine's refusals
+  (`TestButton` in `components.slint`): while a test runs only its own button, which cancels, can
+  be used, because the engine refuses another request; Play needs a recording; without a dongle
+  all are disabled. Leaving the page does not cancel a test (the engine holds the saved settings
+  until it ends); only the meter is tied to the page. A request that fails is an info bar at the
+  top of the page, by what the user can do (the dongle did not answer, the audio could not be
+  opened, anything else); the engine logs the details. A result stays until its test is started
+  again or cancelled.
 - **Apply recommended** (a subtle button next to the title of the Output page, with what it
   sets as its tooltip) sets balanced mode, microphone
-  boost 6, noise reduction on, AGC off and sidetone off, and leaves the soft-start time and the
-  sidetone level as they are. Balanced mode is
+  boost 6, noise reduction on, AGC off and sidetone off, and leaves the soft-start time, the
+  mute delay, the sidetone level and the virtual surround as they are. Balanced mode is
   the recommendation because it reduces the idle hiss at the price of 0.65 s of muted audio after
   idle, without the loud start pop that was recorded for lowest noise (the pop of balanced mode
   itself was not measured); default and low click keep the idle hiss.
@@ -189,7 +232,7 @@ Everything that is drawn is in `gui/ui/`, and nothing there decides anything: th
 |---|---|
 | `contract.slint` | the enums and the `Model` global: what Rust sets and what the window reports |
 | `texts.slint` | the translated text of every enum value |
-| `theme.slint`, `components.slint`, `pages.slint` | the look: colours, grid, widgets, the five pages |
+| `theme.slint`, `components.slint`, `pages.slint` | the look: colours, grid, widgets, the six pages |
 | `app.slint` | the header, the navigation, the status band, `MainWindow` and the `Tray` component |
 
 A different look is a different set of `theme`, `components`, `pages`, `texts` and `app` files
@@ -201,17 +244,24 @@ in `contract.slint` and the `MainWindow` and `Tray` components.
 | Property | Meaning |
 |---|---|
 | `title`, `hint`, `tone`, `details`, `reapply-enabled`, `version` | the status lines (enums `Title`, `Hint`, `Tone`), whether the log has details, whether Re-apply has something to do |
-| `tab` (in-out) | the shown page: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about |
-| `meters-active`, `out-db`, `mic-db` | the header meters: whether there are levels, and the peak levels of the output and the microphone in dBFS (-60 to 0) |
+| `tab` (in-out) | the shown page: 0 output, 1 microphone, 2 sidetone, 3 test, 4 general, 5 about |
+| `meters-active`, `mic-db` | the microphone meter (header and Test page): whether there is a level, and the RMS level in dBFS (-60 to 0) |
 | `controls-enabled` | whether the controls that change the dongle can be used |
 | `mode` (in-out), `recommended-mode`, `indicators` | the mode (0 `default`, 1 `low-click`, 2 `balanced`, 3 `lowest-noise`), the recommended one, and the `ModeIndicators` (`hiss`, `pop`, `delay`, `delay-ms`) of every mode by index |
 | `settle-ms` (in-out), `settle-min`, `settle-max`, `settle-step`, `delay-enabled` | the soft-start time |
+| `decay-ms` (in-out), `decay-min`, `decay-max`, `decay-step`, `decay-enabled` | the mute delay of Balanced (the stop decay time) |
+| `surround` (in-out), `surround-level` (in-out), `surround-level-min`, `surround-level-max` | virtual surround |
 | `boost` (in-out), `boost-max`, `boost-db`, `noise-reduction` (in-out), `agc` (in-out) | the microphone |
 | `sidetone` (in-out), `level` (in-out), `level-min`, `level-max`, `level-step` | sidetone: the register value (shown as dB, 256 per dB) and the range and key step of its slider |
 | `speaker-present`, `speaker-volume` (in-out), `speaker-muted` (in-out), `microphone-present`, `microphone-volume` (in-out), `microphone-muted` (in-out) | the Windows volume |
+| `test-job`, `test-step`, `test-remaining`, `test-has-recording`, `test-problem`, `test-caution` | the Test page: the test that runs (enum `TestJob`), its step (`TestStep`) and the ms left in it (-1 if not known), whether a recording can be played, the last problem (`TestProblem`) and whether the caution about the sound is still shown |
+| `noise-floor-result`, `recording-result`, `comparison-result`, `click-result`, `listen-result` | the last result of each test (`Measured`: whether there is one and up to three numbers) |
+| `noise-floor-seconds`, `record-seconds`, `comparison-seconds` | how long the tests run, for their texts |
 | `autostart` (in-out), `autostart-failed`, `language` (in-out; 0 Turkish, 1 English) | general |
 
-Callbacks of `Model`: `mode-selected(int)`, `settle-changed(int)`, `boost-changed(int)`,
+Callbacks of `Model`: `mode-selected(int)`, `settle-changed(int)`, `decay-changed(int)`,
+`surround-toggled(bool)`, `surround-level-changed(int)`, `tab-changed(int)`,
+`test-requested(TestJob)`, `test-cancelled()`, `boost-changed(int)`,
 `noise-reduction-toggled(bool)`, `agc-toggled(bool)`, `sidetone-toggled(bool)`,
 `level-changed(float)`, `slider-released()`, `volume-changed(side, percent)`,
 `mute-toggled(side, bool)`, `autostart-toggled(bool)`, `language-selected(int)`,
@@ -230,17 +280,28 @@ forwards the click.)
 
 `cargo build -p cxtune-gui --features snapshot` adds `--snapshot <folder>`, which renders the
 window to PNG files (every page in both languages and both colour schemes, the other modes, muted
-volumes, sidetone on, the meters with made-up levels and the status line of every problem) and
-quits. The folder `grid` has the same pictures with the guide lines, and the folder `focus`
-the English pages with the keyboard focus on each control that Tab reaches, one after the other.
-Every state in those pictures is simulated: the engine is not started and the dongle is never read
-or written. A simulated engine state goes through the same code as a real one
-(`status::status` and the controls); the volumes and the meter levels are set directly.
+volumes, sidetone on, surround on, the Test page with made-up results, a running test and a
+problem, and the status line of every problem) and quits. `--pages output,test` renders only
+those pages, without the status problems. The folder `grid` has the same pictures with the guide
+lines, and the folder `focus` the English pages with the keyboard focus on each control that Tab
+reaches, one after the other. Every state in those pictures is simulated: the engine is not
+started and the dongle is never read or written. A simulated engine state goes through the same
+code as a real one (`status::status`, the controls and `TestTab`); the volumes, the meter level
+and the results are made up.
 `SLINT_SCALE_FACTOR=1` makes the pictures 720 x 480 pixels, the size of the window at 100 %. The
 release profile uses `lto` and `strip`, and `panic` stays `unwind`: the engine relies on
 `catch_unwind` to end with a last error state.
 
+## Tests
+
+`cargo test` runs the interface headless, in the testing backend of Slint
+(`i-slint-backend-testing`, a dev-dependency; `build.rs` compiles the element information that it
+needs into debug builds only). `gui/src/pages.rs` finds elements by their type and checks the
+bindings that decide what can be used: the sidetone and surround level sliders follow their
+switches, the two time sliders follow their modes, the Test buttons follow the engine's refusals
+and start or cancel, and the page change reaches Rust. `gui/src/test_tab.rs` checks when the meter
+is wanted and asked for, the requests of the tests, and the order of what they measured.
+
 ## Not built
 
-The microphone level meter and the 7.1 / stage enhancer need device work and are left for a later
-milestone.
+There is no output level meter: the engine measures only the microphone.
