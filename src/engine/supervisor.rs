@@ -549,9 +549,10 @@ impl<B: Backend> Supervisor<B> {
         }
     }
 
-    /// The dongle's own control can switch the virtual surround. A switch on a dongle that held
-    /// the chosen settings at the last pass is the user's, so the chosen setting follows it
-    /// instead of being corrected.
+    /// The vendor patch has code that toggles the virtual surround (inferred, not tested on the
+    /// device: see "Virtual surround" in docs/firmware-notes.md). A switch on a dongle that held
+    /// the chosen settings at the last pass is taken as the user's, so the chosen setting
+    /// follows it instead of being corrected.
     fn follow_surround(&mut self, seen: &Readback, now: Instant) {
         let Some(chosen) = self.cfg.surround else {
             return;

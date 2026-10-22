@@ -5,10 +5,10 @@
 //! when a capture stream opens and when it reloads the DSP settings on a NEWC request, so a
 //! change made while a capture stream is open is followed by a NEWC request and a change made
 //! without one is picked up by the next stream. Sidetone is a bit of the same byte plus a gain
-//! word (`$1276`, in 1/256 dB, never below 0 dB); the ROM applies both within one main-loop pass,
-//! while a capture and a playback stream are open. The virtual surround is a bit and a level
-//! nibble of two bytes that the ROM applies at the same two moments, while a playback stream is
-//! open. See docs/firmware-notes.md for what was measured.
+//! word (`$1276`, reported to the host in 1/256 dB, never below 0 dB); the ROM applies both
+//! within one main-loop pass, while a capture and a playback stream are open. The virtual
+//! surround is a bit and a level nibble of two bytes that the ROM applies at the same two
+//! moments, while a playback stream is open. See docs/firmware-notes.md for what was measured.
 
 use crate::config::Config;
 use crate::patches::{
@@ -92,9 +92,9 @@ pub fn set_sidetone<T: Transport + ?Sized>(t: &mut T, on: bool) -> Result<bool> 
     Ok(apply_patch(t, &patches::sidetone(on))? == Outcome::Written)
 }
 
-/// Sets the sidetone gain register (`SIDETONE_MIN..=SIDETONE_MAX`, in 1/256 dB, see
-/// [`patches::sidetone_db`]). While sidetone is on the register moves to the new value in
-/// [`RAMP_STEPS`] steps of equal size in dB.
+/// Sets the sidetone gain register (`SIDETONE_MIN..=SIDETONE_MAX`, reported to the host in
+/// 1/256 dB, see [`patches::sidetone_db`]). While sidetone is on the register moves to the new
+/// value in [`RAMP_STEPS`] steps of equal size in dB.
 /// Returns the number of writes made.
 pub fn set_sidetone_level<T: Transport + ?Sized>(t: &mut T, level: u16) -> Result<usize> {
     patches::sidetone_level(level)?;
@@ -113,9 +113,9 @@ pub fn set_sidetone_level<T: Transport + ?Sized>(t: &mut T, level: u16) -> Resul
     Ok(writes)
 }
 
-/// The register values from `from` (excluded) to `to` (included): the register counts in 1/256 dB,
-/// so equal steps of the register are equal steps in dB. Every value is between the two, none
-/// twice in a row.
+/// The register values from `from` (excluded) to `to` (included): the host is told the register
+/// counts in 1/256 dB, so equal steps of the register are equal steps in dB. Every value is
+/// between the two, none twice in a row.
 fn ramp(from: u16, to: u16) -> Vec<u16> {
     let mut steps: Vec<u16> = (1..RAMP_STEPS)
         .map(|i| {

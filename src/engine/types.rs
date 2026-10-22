@@ -28,9 +28,10 @@ pub enum Command {
     SetNoiseReduction(bool),
     SetAgc(bool),
     SetSidetone(bool),
-    /// Sidetone gain register, 1-4096, in 1/256 dB: 947 is +3.70 dB (the vendor default) and
-    /// 4096 is +16 dB. Every value amplifies; there is no quiet end, so sidetone off is the only
-    /// silent setting. `patches::sidetone_register` converts from dB.
+    /// Sidetone gain register, 1-4096, reported to the host as UAC 1/256 dB (DSP loudness not
+    /// measured): 947 is +3.70 dB (the vendor default) and 4096 is +16 dB. Read that way every
+    /// value amplifies, so sidetone off is the only silent setting.
+    /// `patches::sidetone_register` converts from dB.
     SetSidetoneLevel(u16),
     /// Virtual surround on or off.
     SetSurround(bool),
@@ -120,7 +121,8 @@ pub struct Readback {
     pub noise_reduction: bool,
     pub agc: bool,
     pub sidetone: bool,
-    /// The sidetone gain register, in 1/256 dB (`patches::sidetone_db` converts to dB).
+    /// The sidetone gain register, reported to the host in 1/256 dB (`patches::sidetone_db`
+    /// converts to dB).
     pub sidetone_level: u16,
     pub surround: bool,
     /// `None` if the level byte holds a level cxtune does not set (the ROM clamps it).

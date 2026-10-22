@@ -39,7 +39,7 @@
 | `SetBalancedDecayMs(u16)` | balanced stop decay time (100-2000 ms in steps of 10), used in balanced mode |
 | `SetMicBoost(u8)` | analog mic boost 0-7 |
 | `SetNoiseReduction(bool)`, `SetAgc(bool)` | microphone DSP bits |
-| `SetSidetone(bool)`, `SetSidetoneLevel(u16)` | sidetone on/off and the gain register 1-4096, in 1/256 dB (947 = +3.70 dB, 4096 = +16 dB; `patches::sidetone_register(db)` and `sidetone_db(register)` convert). Every level amplifies: only sidetone off is silent. |
+| `SetSidetone(bool)`, `SetSidetoneLevel(u16)` | sidetone on/off and the gain register 1-4096, reported to the host as UAC 1/256 dB; DSP loudness not measured (947 = +3.70 dB, 4096 = +16 dB; `patches::sidetone_register(db)` and `sidetone_db(register)` convert). Every level amplifies: only sidetone off is silent. |
 | `SetSurround(bool)`, `SetSurroundLevel(u8)` | virtual surround on/off and its level 1-10 (experimental; the sound was not listened to) |
 | `Test(TestRequest)` | a request of the Test tab; not a setting, nothing is saved (see The Test tab) |
 | `Reapply` | applies the settings now, forced, and starts over after earlier failures and after a setting was left alone (see Drift) |

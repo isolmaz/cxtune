@@ -59,7 +59,7 @@ usage page `0x000C` (interface 3).
 | `$00A6` bit 0 | DSP bypass. Clear at idle and while streams run (`0x00`, `0x02`). | proven (values), inferred (meaning) |
 | `$1151` | DSP enable bits. Bit 2 mic noise reduction (stock 1), bit 4 mic AGC (stock 0), bit 7 sidetone (stock 0). cxtune changes only these three. | proven |
 | `$1154` | Config-change request and stream state. Bit 0 is NEWC (the ROM clears it within a pass). Bit 1 follows the capture stream and bit 4 the playback stream (observed); the ROM owns the other bits. | proven (bits 0, 1, 4) |
-| `$1276/$1277` | Sidetone gain, little endian, stock `0x03B3`. cxtune writes `0x0001..0x1000`. In 1/256 dB: `0x03B3` = +3.70 dB, `0x1000` = +16 dB. | proven (copied to `$112A/B` and `$1255/6`); the unit is ROM-evidenced, not listened to (see "Sidetone gain unit") |
+| `$1276/$1277` | Sidetone gain, little endian, stock `0x03B3`. cxtune writes `0x0001..0x1000`. Reported to the host as UAC 1/256 dB: `0x03B3` = +3.70 dB, `0x1000` = +16 dB. | proven (copied to `$112A/B` and `$1255/6`); the unit is what the ROM reports to the host, DSP loudness not measured, nothing listened to (see "Sidetone gain unit") |
 | `$00A4` | Applier flags: bit 7 noise reduction applied, bit 5 AGC applied (both only while a capture stream is open), bit 4 virtual surround applied (only while a playback stream is open and `$1152` bit 3 is set: seen set within 0.1 s of a silent stream opening and cleared when it closed). | proven |
 | `$00A8` | Mixer flags: bit 5 capture, bit 4 playback, bit 3 sidetone path running. | proven |
 | `$13DC` | Capture interface alternate setting: `0x01` while a capture stream is open. `$13DD` is the same for playback. | proven |
@@ -184,8 +184,8 @@ The byte sequences are proven; the annotations are inferred from the ROM disasse
   (playback), DAC unmute 36 ms later. Stop: references off, decay time, then `0x77`.
 - The **decay time** is the immediate `#$50` at `$1F0E` (10 ms units, 800 ms). cxtune writes
   `0x0A..0xC8` (100..2000 ms) there in place while the hook is live: the byte is data of the
-  routine and the write changes no instruction. The measured times are under "Balanced stop decay
-  time".
+  routine and the write changes no instruction (see "The exception: a one-byte immediate
+  operand"). The measured times are under "Balanced stop decay time".
 - The **start dwell** (600 ms, timer 1) is set by the ROM routine at `$D671` that the routine
   calls; it is outside every region cxtune writes and is not tunable.
 - Cost: the first 600 ms of audio after idle are muted; opening the microphone from full idle
@@ -219,7 +219,7 @@ The byte sequences are proven; the annotations are inferred from the ROM disasse
 - Hook `4C FC 1E`, DAC holds `0x00`.
 - **T1**, the soft-start time, is the immediate at `$1F15`: units of 10 ms, default `0x3C`
   (600 ms), allowed `0x02..0xC8` (20..2000 ms). `cxtune soft-start` writes it in place while the
-  hook is live. **T2** at `$1F07` (default `0x0A`) is not changed.
+  hook is live (see "The exception: a one-byte immediate operand"). **T2** at `$1F07` (default `0x0A`) is not changed.
 - A multi-bit mask in `BRSET`/`BRCLR` does not test "all bits" as one would expect on this core;
   every test above uses a single-bit mask (proven by a failed earlier version, exact semantics
   not determined).
@@ -348,6 +348,12 @@ Observed on the device:
 - The engine applied the saved surround again with one write after `$1152` was cleared by
   another program.
 
+**The dongle's own control (inferred, not tested).** The vendor patch has code at `$18BA..$18C5` that toggles `$1152` bit 3
+(found in the cross-references of the patch by a reviewer). That a control on the dongle switches
+the virtual surround is inferred from that code and was not tested: no button press was made on
+the device. The engine follows a surround switch that it did not make (the chosen setting takes
+the value the dongle holds) when the dongle held the chosen settings at the last pass.
+
 Not measured: what it sounds like (nothing but digital silence was played, and nothing was
 listened to), whether the NEWC reload clicks while audio plays, and the effect on loudness. The
 setting is shipped as experimental.
@@ -380,14 +386,34 @@ leaves behind, to any mode:
    in a whole routine of its kind (both window parts), so this step is always possible. The
    chosen time is written again after the routine it belongs to is installed.
 2. If the hook is live and anything it runs will change, it is turned to RTS first.
-3. Window parts and operands change only while the hook is RTS. Installing a routine writes
-   its parts, then the operands. Removing one writes the operands, then the parts.
+3. Window parts and operands change only while the hook is RTS (one exception, below).
+   Installing a routine writes its parts, then the operands. Removing one writes the operands,
+   then the parts.
 4. The hook is turned to JMP last, and only if the window holds one whole routine and the
    operands point at it.
 5. DAC holds are released before the hook changes and held again after it.
 
 Unrecognised bytes anywhere (ROM identity, hook, window, DAC routines) are refused before the
 first write, and before a stream is opened.
+
+### The exception: a one-byte immediate operand
+
+A single-byte immediate operand may be changed in place while the hook is live when every other
+byte of the routine is guarded. cxtune does this for the balanced decay time at `$1F0E` and the
+lowest-noise soft-start time at `$1F15`. Both bytes are the immediate of a `B2 imm D7`
+(`MOVI #imm,$D7`) instruction that starts one byte earlier. The write is guarded by the whole
+window (every other byte equals the routine's image) and by the allowed range of the value.
+Why it is safe (a reading of the ROM and the patch by a reviewer):
+
+1. The opcode and the zero-page operand of the instruction are guarded unchanged, and every
+   allowed value gives the same 3-byte instruction, so no instruction boundary, opcode or branch
+   target can change.
+2. It is one byte, so the firmware performs it as one store. The HID handler (`b48d`, in the
+   main-loop service `7ad8`) and the hook (`8e6d`, reaching `$D45E JSR $14B1`) run in the same
+   main loop, so the routine never runs in the middle of the write. Without that ordering a
+   1-byte store is atomic on the 8-bit core, and both the old and the new value are valid.
+3. The immediate is loaded into timer `$D7` once per stop, at the reference-off transition, and a
+   decay that is already running keeps its count.
 
 Before the first write of a change that needs the stream, the executor waits until the codec
 shows it: `$0F18` bit 0, `$0F1A == 0x00`, `$0F1B == 0x00` and `$0F3E` bit 1. The stream is
@@ -525,7 +551,7 @@ and the first mode byte (`$1EFC`) at 521 ms. A second run wrote nothing.
 | Noise reduction (`$1151` bit 2, stock on) | `$00A4` bit 7 followed the bit after NEWC in all 12 changes. Stationary noise, median of 50 ms frames over 30 s: on -63.9 dBFS, off -52.0, on -63.9, off -52.0, on -63.9 dBFS, an 11.9 dB drop repeatable to 0.1 dB, 10.8 to 12.1 dB in every band from 20 Hz to 8 kHz. Effect on speech not measured. The click when the microphone opens reached -1.1 dBFS in the recording that started with NR off and -18 dBFS in the two that started with NR on. |
 | AGC (`$1151` bit 4, stock off) | `$00A4` bit 5 followed the bit after NEWC in all 16 changes. **No effect on stationary noise**: 90 s per state at -64 dBFS (NR on), 60 s at -52 dBFS and 45 s at -46 dBFS (NR off, boost 7), each off/on/off (and on again); level differences at most 0.1 dB and no rise over time in the 5 s profiles. The firmware ran the AGC applier, but its behaviour on speech could not be measured without an audible test signal. Shipped as experimental. |
 | Sidetone on/off (`$1151` bit 7, stock off) | With capture and playback open, `$00A8` bit 3 was set after the write (no NEWC) and cleared after the clear, (4 of 4 switches); `$1255/6` became `0x03B3` at the first switch-on; written at idle it was running as soon as both streams were open. With only one of the two streams open it stayed clear. Audible result not measured (no listening test). |
-| Sidetone level (`$1276/7`, stock `0x03B3`) | `$112A/B` followed the register for `0x1000`, `0x0001`, `0x0200` (sidetone off) and `$1255/6` followed it for `0x0200`, `0x0001`, `0x0100` (sidetone on) within 0.3 s. The unit is 1/256 dB (see "Sidetone gain unit"); the loudness was never listened to. With sidetone on, cxtune moves the gain in 4 steps of equal size in dB, one guarded write each, about 93 ms apart (0.39 s in all); with sidetone off it is one write. The equal-dB steps are covered by the tests on the fake dongle only: the device runs of this ramp, made with steps of equal ratio of the register (947 to 200 wrote `0x0282`, `0x01B3`, `0x0127`, `0x00C8`), kept `$00A8 = 0x38` and the path running, and sidetone was not switched on again. |
+| Sidetone level (`$1276/7`, stock `0x03B3`) | `$112A/B` followed the register for `0x1000`, `0x0001`, `0x0200` (sidetone off) and `$1255/6` followed it for `0x0200`, `0x0001`, `0x0100` (sidetone on) within 0.3 s. The register is reported to the host as UAC 1/256 dB (see "Sidetone gain unit"); how the DSP applies it was not measured and the loudness was never listened to. With sidetone on, cxtune moves the gain in 4 steps of equal size in dB, one guarded write each, about 93 ms apart (0.39 s in all); with sidetone off it is one write. The equal-dB steps are covered by the tests on the fake dongle only: the device runs of this ramp, made with steps of equal ratio of the register (947 to 200 wrote `0x0282`, `0x01B3`, `0x0127`, `0x00C8`), kept `$00A8 = 0x38` and the path running, and sidetone was not switched on again. |
 | EQ preset (`$1152` bits 1:0) | **Inert, not shipped.** Writing 2, 1 or 3 was never readable back, even 8 ms later; `$1248` stayed `0x06` and a NEWC pass loaded nothing. The hook-5 routine (`$16B5`, `JSR $1650`) of the vendor patch rewrites the two bits to 0 on every pass; changing that would mean editing vendor routine code, which cxtune does not do. |
 | Mic boost (`$1017`, existing) | One step more (6 to 7) raised the noise floor from -52.0 to -45.8 dBFS (+6.2 dB), consistent with 6 dB steps. |
 
@@ -554,7 +580,9 @@ holds the last gain afterwards).
 
 ### Sidetone gain unit
 
-`$1276/7` counts in 1/256 dB, the unit of a USB audio class volume control. Evidence:
+`$1276/7` is reported to the host as a USB audio class volume in 1/256 dB. How the DSP applies the
+value was not measured. The ROM copies the register unconverted to DSP `$2634` (a reading of the
+ROM by a reviewer). Evidence for the host-facing unit:
 
 - The ROM's class request table (at `$EA84`) serves the sidetone feature unit's GET_CUR
   directly from `$1276/7`, and its MIN, MAX and RES from `$0081`, `$0083` and `$0085` (a reading
@@ -563,8 +591,11 @@ holds the last gain afterwards).
   `$0085/6 = 0x0001`, followed by `0x03B3` at `$0087/8`. In 1/256 dB that is a range of 0 to
   +16 dB in steps of 1/256 dB, and the stock value is +3.70 dB.
 
-So the unit is ROM-evidenced; it has not been listened to, because sidetone was left off for the
-whole work on the device (the register itself was only read). What follows from it:
+So the host-facing unit is ROM-evidenced. The DSP's own reading of the value was not measured,
+and nothing was listened to, because sidetone was left off for the whole work on the device (the
+register itself was only read). cxtune treats the value as dB because that is the conservative
+reading for its warnings and ramp; the `0x1000` cap holds whichever way the DSP reads it. What
+follows from the dB reading:
 
 - Every register value in the range is a gain of 0 dB or more. There is no quiet end: the lowest
   value cxtune writes (`0x0001`, 0.004 dB) is only 3.7 dB below the vendor default, and `0x1000`
@@ -608,8 +639,9 @@ settings are applied by the same writes, which were exercised at idle and with s
   in the headphones was not checked (see the NEWC hazard above).
 - **A long decay time.** The balanced routine keeps the driver at `0x33` (parked, not clamped)
   for the decay time after every stream and capture, up to 2 s.
-- **Sidetone loudness.** The gain unit is 1/256 dB and every value amplifies (see "Sidetone
-  gain unit"), so no level is quiet. The level stays in `0x0001..0x1000` (0 to +16 dB), sidetone
+- **Sidetone loudness.** The register is reported to the host as 1/256 dB; read that way every
+  value amplifies (see "Sidetone gain unit"), so no level is quiet. DSP loudness was not
+  measured. The level stays in `0x0001..0x1000` (0 to +16 dB), sidetone
   is off by default and switching it on applies the saved level first. Only sidetone off is
   silent; a level was never listened to.
 - **One program at a time** (see the protocol above).
