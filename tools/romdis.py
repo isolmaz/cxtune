@@ -7,7 +7,7 @@ usage: python tools/romdis.py <rom.bin> <patch_1450.bin> <outdir>
                  the code segment (+0x0E91). The hook table segment is at +0x0E95 in RAM, so
                  here its entries are read from $1453 and are 4 bytes below their RAM addresses.
 writes: listing.txt (all decoded code in address order), xrefs.txt (data refs per address),
-        calls.txt (call graph), undef.txt (decode problems), jtables.txt
+        calls.txt (call graph), undef.txt (decode problems), jtables.txt, ptrseeds.txt
 """
 import collections
 import os

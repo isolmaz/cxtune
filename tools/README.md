@@ -68,7 +68,9 @@ own seeds.
 `ghidra/CX65C02/` is a Ghidra processor module with the language `CX65C02`. Its
 `cx65c02.slaspec` is derived from Ghidra's `65c02.slaspec` and its `cx65c02.ldefs` is modelled on
 Ghidra's `6502.ldefs`; both are modified (the Conexant opcodes) and licensed under the Apache
-License 2.0 ([ghidra/LICENSE](ghidra/LICENSE)), unlike the rest of the repository. The module is the
+License 2.0 ([LICENSE](ghidra/CX65C02/LICENSE), attribution in [NOTICE](ghidra/CX65C02/NOTICE)),
+unlike the rest of the repository; both files sit inside `CX65C02/`, so copying that folder keeps
+them with the module. The module is the
 language only. It was compiled with Ghidra 12.1.4; the decompiler output is a cross-check, not a
 source of facts.
 

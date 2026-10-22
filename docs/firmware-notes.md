@@ -23,7 +23,8 @@ usage page `0x000C` (interface 3).
   `0x20` alone, an EEPROM read, from `cxtune dump`. `0x20|0x40` (an EEPROM write), `0x10` (address
   at or above 64 KiB) and `0x80` (DSP memory) are never used.
 - A read needs about 5 ms between the request and GET_REPORT; a write needs about 50 ms before
-  the readback. Reads are retried up to five times when the IN report is not `0x05`.
+  the readback. Reads are retried up to five times when the IN report is not `0x05`. `cxtune dump` also reads
+  every chunk twice and retries the chunk (up to five times) until the two reads agree.
 - Requests carry no tag. Two programs talking to the dongle at once can receive each other's
   responses, so only one process may use the interface. cxtune enforces this between its own
   processes with the named mutex `Global\cxtune-device` (`src/lock.rs`).

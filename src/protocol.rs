@@ -164,8 +164,13 @@ fn read_chunk<T: Transport + ?Sized>(
             return Ok(first);
         }
     }
+    let wanted = if confirm {
+        "no valid, repeatable IN report"
+    } else {
+        "no valid IN report"
+    };
     Err(Error::Protocol(format!(
-        "no valid, repeatable IN report for read of {n} bytes at ${addr:04X}"
+        "{wanted} for read of {n} bytes at ${addr:04X}"
     )))
 }
 

@@ -50,9 +50,9 @@ CUSTOM = {
     0xe2: ('BRCLR', 'absmrel'), # e2 lo hi mask rel : branch if ([abs]&mask)==0 (polarity inferred from busy-wait loops)
     0xf2: ('BRSET', 'absmrel'), # f2 lo hi mask rel : branch if ([abs]&mask)!=0
     0xb2: ('MOVI', 'immzp'),    # b2 imm zp : [zp] = imm
-    0x6b: ('PATCH', 'slot'),
+    0x6b: ('PATCH', 'slot'),    # 6b slot from16 to16 : ROM patch slot (inferred: redirect ROM PC 'from' -> 'to')
     0xcb: ('UNK_CB', 'imp'),    # unknown 1-byte op, seen only directly after PATCH #1 at $2016
-    0xdb: ('UNK_DB', 'imp'),    # unknown 1-byte op, seen only directly after PATCH #11 at $201d    # 6b slot from16 to16 : ROM patch slot (inferred: redirect ROM PC 'from' -> 'to')
+    0xdb: ('UNK_DB', 'imp'),    # unknown 1-byte op, seen only directly after PATCH #11 at $201d
 }
 M.update(CUSTOM)
 SZ = {'imp':1,'acc':1,'imm':2,'zp':2,'zpx':2,'zpy':2,'izx':2,'izy':2,'izp':2,'rel':2,'abs':3,'abx':3,'aby':3,'ind':3,'iax':3,'zprel':3,'mabs':4,'mabsrel':5,'absmrel':5,'immzp':3,'slot':6,'imm2':3,'zpimm':3}

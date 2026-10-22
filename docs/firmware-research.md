@@ -519,11 +519,12 @@ seeds functions. Ghidra 12.1.4 was used. The decompiler output was a cross-check
 facts. The language spec is in `tools/ghidra/` (see [tools/README.md](../tools/README.md)); the
 headless scripts and the register labels are not published.
 
-**Reading memory safely.** A read-only HID reader: `cxtune dump`, whose request types are a CPU
-memory read and an EEPROM read and have no write flag (the research used a Python reader whose
-single send function refused any packet that was not a plain read). Reads of at most 32
-bytes, with 5 ms between the request and `GET_REPORT`, and a pause between chunks for dumps;
-one process at a time (the protocol has no request tag). Dumps were re-read in four places and
+**Reading memory safely.** The research used a Python reader whose single send function refused
+any packet that was not a plain read. `cxtune dump` is the published read-only equivalent: its
+request types are a CPU memory read and an EEPROM read and have no write flag. Reads are of at
+most 32 bytes, with 5 ms between the request and `GET_REPORT`; `cxtune dump` reads every chunk
+twice and retries it until the two reads agree, with no pause between chunks. One process at a
+time (the protocol has no request tag). The research dumps were re-read in four places and
 compared.
 
 **Measuring.** `examples/trace.rs` polls the playback registers (a cycle of four reads takes
