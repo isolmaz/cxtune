@@ -87,7 +87,8 @@ sidetone = false
 sidetone_level = 947
 ```
 
-Keys that are absent leave that setting as the device has it.
+Keys that are absent leave that setting as the device has it. The file is written to a temporary
+file next to it and renamed over it, so it is never half-written.
 
 A config file with keys from an earlier version (`profile`, `idle`, `clamp`) is rejected with
 an error that names the file, before anything is written to the device; delete it or rewrite it

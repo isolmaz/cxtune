@@ -1,6 +1,9 @@
 //! Settings in `%APPDATA%\cxtune\config.toml`: the selected mode, mic boost, min-hiss settle
 //! time and the microphone DSP settings. The file uses `key = value` lines (a TOML subset).
+//! It is replaced as a whole by renaming a finished temporary file over it, so a reader or a
+//! crash never sees a half-written file.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::mode::{self, Mode};
@@ -35,7 +38,7 @@ pub fn load() -> Result<Config> {
 }
 
 /// Reads the file at `path`; a missing file is the default settings. Every error names the file.
-fn load_from(path: &Path) -> Result<Config> {
+pub fn load_from(path: &Path) -> Result<Config> {
     let named = |why: &dyn std::fmt::Display| Error::Config(format!("{}: {why}", path.display()));
     match std::fs::read_to_string(path) {
         Ok(text) => parse(&text).map_err(|e| named(&e)),
@@ -45,10 +48,27 @@ fn load_from(path: &Path) -> Result<Config> {
 }
 
 pub fn save(cfg: &Config) -> Result<()> {
-    let path = path()?;
+    save_to(&path()?, cfg)
+}
+
+/// Writes `cfg` to a temporary file next to `path`, flushes it to disk and renames it over
+/// `path`. On failure `path` is untouched and the temporary file is removed. Every error names
+/// the file.
+pub fn save_to(path: &Path, cfg: &Config) -> Result<()> {
     let io = |e: std::io::Error| Error::Config(format!("{}: {e}", path.display()));
-    std::fs::create_dir_all(path.parent().unwrap()).map_err(io)?;
-    std::fs::write(&path, render(cfg)).map_err(io)
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir).map_err(io)?;
+    let tmp = path.with_extension(format!("toml.{}.tmp", std::process::id()));
+    let write = || -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(render(cfg).as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    };
+    write().map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        io(e)
+    })
 }
 
 fn parse(text: &str) -> Result<Config> {
@@ -185,6 +205,84 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(render(&cfg), "mic_nr = false\n");
+    }
+
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("cxtune-config-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn sample() -> Config {
+        Config {
+            mode: Some(Mode::MinHiss),
+            mic_boost: Some(6),
+            min_hiss_ms: Some(300),
+            mic_nr: Some(true),
+            mic_agc: Some(false),
+            sidetone: Some(false),
+            sidetone_level: Some(500),
+        }
+    }
+
+    #[test]
+    fn a_saved_file_replaces_the_old_one_whole_and_leaves_no_temporary_file() {
+        let dir = scratch_dir("replace");
+        let file = dir.join("config.toml");
+        let old = Config {
+            mode: Some(Mode::Quiet),
+            ..Config::default()
+        };
+        save_to(&file, &old).unwrap();
+        assert_eq!(load_from(&file).unwrap(), old);
+
+        // a handle on the old file keeps the complete old content: the new content arrives as
+        // a different file, not as a rewrite of this one
+        let mut reader = std::fs::File::open(&file).unwrap();
+        save_to(&file, &sample()).unwrap();
+        let mut seen = String::new();
+        std::io::Read::read_to_string(&mut reader, &mut seen).unwrap();
+        assert_eq!(seen, render(&old));
+        assert_eq!(load_from(&file).unwrap(), sample());
+        drop(reader);
+
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["config.toml"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn saving_creates_the_directory() {
+        let dir = scratch_dir("create");
+        let file = dir.join("nested").join("config.toml");
+        save_to(&file, &sample()).unwrap();
+        assert_eq!(load_from(&file).unwrap(), sample());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_save_names_the_file_and_leaves_the_old_one_and_no_temporary_file() {
+        let dir = scratch_dir("failed");
+        let file = dir.join("config.toml");
+        let old = Config {
+            mode: Some(Mode::Stock),
+            ..Config::default()
+        };
+        save_to(&file, &old).unwrap();
+        let mut permissions = std::fs::metadata(&file).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&file, permissions).unwrap();
+
+        let err = save_to(&file, &sample()).unwrap_err().to_string();
+        assert!(err.contains(&file.display().to_string()), "{err}");
+        assert_eq!(load_from(&file).unwrap(), old);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
