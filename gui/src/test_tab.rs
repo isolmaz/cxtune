@@ -164,11 +164,6 @@ impl TestTab {
         Some(Command::Test(TestRequest::Meter(self.meter_on)))
     }
 
-    /// A new engine has not been asked anything.
-    pub fn engine_restarted(&mut self) {
-        self.asked = false;
-    }
-
     pub fn event(&mut self, event: &TestEvent) {
         match event {
             TestEvent::Level(level) => {
@@ -184,7 +179,7 @@ impl TestTab {
             TestEvent::Failed { failure, .. } => {
                 self.progress = None;
                 self.problem = problem_of(failure.kind);
-                // the engine closes the microphone when a test or the meter fails
+                // a failed request can leave the microphone open; the following Meter(false) closes it
                 self.switched(false);
             }
         }

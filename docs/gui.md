@@ -176,12 +176,14 @@ with the last value always sent when the slider is released.
     `meter-toggled`) is on. The switch goes off, and the engine is sent `Meter(false)`, when the
     page is left, when the window is minimized or hidden in the notification area, when the
     dongle is lost or the computer wakes (the page waits until the engine has read the dongle
-    again), when the engine is restarted and when the program quits. It also goes off when a
+    again), when the engine stops and when the program quits. An engine is restarted only after
+    it stopped, and it closed the microphone itself when it did. It also goes off when a
     test that plays a sound or listens (click test, noise listening, playback) is started,
     because those need the microphone closed, and it stays off after the test until the user
     turns it on again: in balanced mode an open microphone opens the headphone driver, which
     would end the idle output that the test is meant to let the user hear. A request that fails
-    turns it off too, because the engine closes the microphone after one. A measurement (noise
+    turns it off too, and the `Meter(false)` that follows closes the microphone, which a failed
+    request can leave open. A measurement (noise
     floor, recording, comparison) keeps the meter as it is. While any test runs the switch cannot
     be used. `TestTab::state` applies these rules to each state of the engine and the window,
     and `TestTab::sync_meter` sends one request for each change; `tab-changed` and
