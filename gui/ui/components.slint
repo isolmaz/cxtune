@@ -1,5 +1,5 @@
 import { Slider, Switch } from "std-widgets.slint";
-import { Model, ModeIndicators, Pop } from "contract.slint";
+import { Click, Model, ModeIndicators, TestJob } from "contract.slint";
 import { Grid, Signal, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
@@ -9,6 +9,20 @@ export global Hover {
     in-out property <string> explanation;
     in-out property <length> x;
     in-out property <length> y;
+}
+
+// Keeps the keyboard focus in view on a page that scrolls: a control that gets the focus says
+// where it is, and the page moves to show it.
+export global Reveal {
+    in-out property <length> y;
+    in-out property <length> height;
+    in-out property <int> count;
+
+    public function focused(y: length, height: length) {
+        self.y = y;
+        self.height = height;
+        self.count += 1;
+    }
 }
 
 // ---- Type: see `Type` ----
@@ -210,7 +224,9 @@ export component Help inherits Rectangle {
     keys := FocusScope {
         width: 0px;
         changed has-focus => {
-            if !self.has-focus {
+            if self.has-focus {
+                Reveal.focused(root.absolute-position.y, root.height);
+            } else {
                 root.hide();
             }
         }
@@ -321,6 +337,7 @@ export component FluentButton inherits Rectangle {
     in property <bool> enabled: true;
     in property <bool> subtle;
     in property <length> button-height: 32px;
+    in property <length> pad: 12px;
     callback clicked();
     height: root.button-height;
     border-radius: 4px;
@@ -353,8 +370,8 @@ export component FluentButton inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
+        padding-left: root.pad;
+        padding-right: root.pad;
         spacing: 8px;
         alignment: center;
 
@@ -403,6 +420,7 @@ export component FluentButton inherits Rectangle {
         changed has-focus => {
             if self.has-focus {
                 root.show-tip();
+                Reveal.focused(root.absolute-position.y, root.height);
             } else {
                 root.hide-tip();
             }
@@ -413,6 +431,25 @@ export component FluentButton inherits Rectangle {
                 return accept;
             }
             return reject;
+        }
+    }
+}
+
+// The button of a test: it starts the test, and while that test runs it cancels it. The others
+// cannot be used then, because the engine refuses a test while another one runs. `available` is
+// what the test needs besides.
+export component TestButton inherits FluentButton {
+    in property <TestJob> job;
+    in property <string> start-text;
+    in property <bool> available: true;
+    property <bool> running: Model.test-job == root.job;
+    text: root.running ? @tr("ui" => "Cancel") : root.start-text;
+    enabled: root.running || (Model.test-available && Model.test-job == TestJob.none && root.available);
+    clicked => {
+        if root.running {
+            Model.test-cancelled();
+        } else {
+            Model.test-requested(root.job);
         }
     }
 }
@@ -477,6 +514,11 @@ component MuteToggle inherits Rectangle {
     keys := FocusScope {
         width: 0px;
         enabled: root.enabled;
+        changed has-focus => {
+            if self.has-focus {
+                Reveal.focused(root.absolute-position.y, root.height);
+            }
+        }
         key-pressed(event) => {
             if event.text == Key.Space || event.text == Key.Return {
                 root.toggled();
@@ -506,6 +548,8 @@ export component Row inherits Rectangle {
     in property <bool> value-column;
     // the control does nothing: the texts take the colour of a disabled control
     in property <bool> disabled;
+    // the control takes the space that the label leaves, instead of the label taking all of it
+    in property <bool> fill;
     in property <bool> hovered;
     callback mute-toggled(bool);
     height: Grid.row;
@@ -549,7 +593,7 @@ export component Row inherits Rectangle {
 
         VerticalLayout {
             alignment: center;
-            horizontal-stretch: 1;
+            horizontal-stretch: root.fill ? 0 : 1;
 
             HorizontalLayout {
                 spacing: 8px;
@@ -575,7 +619,7 @@ export component Row inherits Rectangle {
         // the control, at the right edge
         VerticalLayout {
             alignment: center;
-            horizontal-stretch: 0;
+            horizontal-stretch: root.fill ? 1 : 0;
 
             HorizontalLayout {
                 spacing: Grid.value-gap;
@@ -625,6 +669,11 @@ export component AppSlider inherits Rectangle {
             enabled: root.enabled;
             accessible-label: root.label;
             accessible-description: root.description;
+            changed has-focus => {
+                if self.has-focus {
+                    Reveal.focused(root.absolute-position.y, root.height);
+                }
+            }
             changed(value) => {
                 root.changed(value);
             }
@@ -669,6 +718,11 @@ export component SwitchControl inherits HorizontalLayout {
             enabled: root.enabled;
             accessible-label: root.label;
             accessible-description: root.description;
+            changed has-focus => {
+                if self.has-focus {
+                    Reveal.focused(self.absolute-position.y, self.height);
+                }
+            }
             toggled => {
                 root.toggled(self.checked);
             }
@@ -732,7 +786,7 @@ component Legend inherits HorizontalLayout {
     alignment: start;
     height: Grid.trait;
 
-    for name[i] in [@tr("ui" => "Noise floor"), @tr("ui" => "Click"), @tr("ui" => "Mute delay")]: Rectangle {
+    for name[i] in [@tr("ui" => "Noise floor"), @tr("ui" => "Click"), @tr("ui" => "Start delay")]: Rectangle {
         min-width: entry.preferred-width;
         horizontal-stretch: 0;
 
@@ -783,7 +837,7 @@ component ModeCard inherits Rectangle {
     accessible-checkable: true;
     accessible-checked: root.selected;
     accessible-enabled: root.enabled;
-    accessible-description: @tr("ui" => "{}: {}, {}: {}, {}: {}", @tr("ui" => "Noise floor"), Texts.hiss(root.indicators.hiss), @tr("ui" => "Click"), Texts.pop-spoken(root.indicators.pop), @tr("ui" => "Mute delay"), Texts.delay(root.indicators.delay, root.indicators.delay-ms));
+    accessible-description: @tr("ui" => "{}: {}, {}: {}, {}: {}", @tr("ui" => "Noise floor"), Texts.noise-floor(root.indicators.noise-floor), @tr("ui" => "Click"), Texts.click-spoken(root.indicators.click), @tr("ui" => "Start delay"), Texts.start-delay(root.indicators.start-delay, root.indicators.start-delay-ms));
     accessible-action-default => {
         root.clicked();
     }
@@ -822,8 +876,8 @@ component ModeCard inherits Rectangle {
 
         Trait {
             position: 0;
-            value: Texts.hiss(root.indicators.hiss);
-            tone: Signal.hiss(root.indicators.hiss);
+            value: Texts.noise-floor(root.indicators.noise-floor);
+            tone: Signal.noise-floor(root.indicators.noise-floor);
             tip: Texts.trait-tip(0);
             clicked => {
                 root.clicked();
@@ -832,10 +886,10 @@ component ModeCard inherits Rectangle {
 
         Trait {
             position: 1;
-            value: Texts.pop(root.indicators.pop);
-            tone: Signal.pop(root.indicators.pop);
-            measured: root.indicators.pop != Pop.not-measured;
-            tip: Texts.click-tip(root.indicators.pop);
+            value: Texts.click(root.indicators.click);
+            tone: Signal.click(root.indicators.click);
+            measured: root.indicators.click != Click.not-measured;
+            tip: Texts.click-tip(root.indicators.click);
             clicked => {
                 root.clicked();
             }
@@ -843,9 +897,9 @@ component ModeCard inherits Rectangle {
 
         Trait {
             position: 2;
-            value: Texts.delay(root.indicators.delay, root.indicators.delay-ms);
+            value: Texts.start-delay(root.indicators.start-delay, root.indicators.start-delay-ms);
             tone: Surface.secondary;
-            tip: Texts.delay-tip(root.indicators.delay, root.indicators.delay-ms);
+            tip: Texts.start-delay-tip(root.indicators.start-delay, root.indicators.start-delay-ms);
             clicked => {
                 root.clicked();
             }
@@ -928,6 +982,7 @@ export component ModeGroup inherits Rectangle {
         changed has-focus => {
             if self.has-focus {
                 root.focus-index = Model.mode;
+                Reveal.focused(root.absolute-position.y, root.height);
             }
         }
         key-pressed(event) => {
@@ -1102,7 +1157,7 @@ export component StatusPill inherits Rectangle {
 component Meter inherits Rectangle {
     in property <bool> active;
     in property <float> db;
-    property <int> segments: 28;
+    in property <int> segments: 28;
     property <float> level: Math.clamp((root.db + 60) / 60, 0, 1);
     width: root.segments * 7px - 2px;
     height: 8px;
@@ -1128,7 +1183,7 @@ export component MeterRow inherits HorizontalLayout {
     opacity: root.active ? 1 : 0.6;
     accessible-role: progress-indicator;
     accessible-label: root.label;
-    accessible-value: root.active ? @tr("ui" => "{} dB", Math.round(root.db)) : "";
+    accessible-value: root.active ? Texts.dbfs-rounded(root.db) : "";
 
     Text {
         text: root.tag;
@@ -1142,12 +1197,12 @@ export component MeterRow inherits HorizontalLayout {
     }
 
     if root.active: Text {
-        text: @tr("ui" => "{} dB", Math.round(root.db));
+        text: Texts.dbfs-rounded(root.db);
         font-size: Type.caption;
         color: Surface.text;
         vertical-alignment: center;
         horizontal-alignment: right;
-        width: 52px;
+        width: 56px;
         accessible-role: none;
     }
 
@@ -1157,6 +1212,51 @@ export component MeterRow inherits HorizontalLayout {
             active: root.active;
             db: root.db;
         }
+    }
+}
+
+// The level of the microphone on the Test page: a meter for a level in dBFS from -60 to 0, as high
+// as a row of buttons, with as many segments as fit in the width that the layout gives it. Without
+// a level it stays neutral.
+export component LevelBar inherits Rectangle {
+    in property <bool> active;
+    in property <float> db;
+    in property <string> label;
+    horizontal-stretch: 1;
+    height: 32px;
+    accessible-role: progress-indicator;
+    accessible-label: root.label;
+    accessible-value: root.active ? Texts.dbfs-rounded(root.db) : "";
+
+    meter := Meter {
+        y: (parent.height - self.height) / 2;
+        active: root.active;
+        db: root.db;
+        segments: Math.max(1, Math.floor((root.width + 2px) / 7px));
+    }
+}
+
+// The result of a test in a row: in a column of `Grid.result`, right-aligned, directly left of the
+// control. The measured value and, smaller under it, what else was measured.
+export component ResultText inherits VerticalLayout {
+    in property <string> text;
+    in property <string> detail;
+    in property <bool> subdued;
+    alignment: center;
+    horizontal-stretch: 0;
+    width: Grid.result;
+
+    Body {
+        text: root.text;
+        color: root.subdued ? Surface.secondary : Surface.text;
+        horizontal-alignment: right;
+        overflow: elide;
+    }
+
+    if root.detail != "": Caption {
+        text: root.detail;
+        horizontal-alignment: right;
+        overflow: elide;
     }
 }
 

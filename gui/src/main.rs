@@ -12,6 +12,7 @@ mod platform;
 mod snapshot;
 mod sound;
 mod status;
+mod test_tab;
 mod throttle;
 #[cfg(test)]
 mod translations;
@@ -31,6 +32,9 @@ struct Args {
     minimized: bool,
     #[cfg(feature = "snapshot")]
     snapshot: Option<std::path::PathBuf>,
+    /// The pages that `--snapshot` renders, if not all (`--pages output,test`).
+    #[cfg(feature = "snapshot")]
+    pages: Option<Vec<String>>,
 }
 
 impl Args {
@@ -44,6 +48,12 @@ impl Args {
                 .position(|arg| arg == "--snapshot")
                 .and_then(|at| args.get(at + 1))
                 .map(Into::into),
+            #[cfg(feature = "snapshot")]
+            pages: args
+                .iter()
+                .position(|arg| arg == "--pages")
+                .and_then(|at| args.get(at + 1))
+                .map(|pages| pages.split(',').map(str::to_owned).collect()),
         }
     }
 
@@ -86,7 +96,7 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     tray.show()?;
     #[cfg(feature = "snapshot")]
     if let Some(folder) = args.snapshot {
-        snapshot::schedule(&window, folder);
+        snapshot::schedule(&window, folder, args.pages);
         slint::run_event_loop_until_quit()?;
         return Ok(());
     }

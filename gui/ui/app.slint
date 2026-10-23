@@ -1,6 +1,6 @@
 import { Model, Title } from "contract.slint";
 import { Caption, DeviceTile, FluentButton, Hover, LinkText, MeterRow, Nav, RowText, StatusPill } from "components.slint";
-import { AboutPage, GeneralPage, MicrophonePage, OutputPage, SidetonePage } from "pages.slint";
+import { AboutPage, GeneralPage, MicrophonePage, OutputPage, SidetonePage, TestPage } from "pages.slint";
 import { Grid, Signal, Surface, Type } from "theme.slint";
 import { Texts } from "texts.slint";
 
@@ -65,13 +65,6 @@ component Header inherits Rectangle {
             alignment: center;
             spacing: 8px;
             horizontal-stretch: 0;
-
-            MeterRow {
-                tag: "OUT";
-                label: @tr("ui" => "Output level");
-                active: Model.meters-active;
-                db: Model.out-db;
-            }
 
             MeterRow {
                 tag: "MIC";
@@ -173,6 +166,15 @@ export component MainWindow inherits Window {
     min-height: Grid.height;
     max-height: Grid.height;
 
+    property <int> shown-tab: Model.tab;
+    changed shown-tab => {
+        Model.tab-changed(self.shown-tab);
+    }
+
+    changed minimized => {
+        Model.minimized-changed(self.minimized);
+    }
+
     VerticalLayout {
         Header {
             height: Grid.header;
@@ -192,10 +194,10 @@ export component MainWindow inherits Window {
                 }
 
                 Nav {
-                    icons: ["\u{E767}", "\u{E720}", "\u{E95B}", "\u{E713}"];
-                    names: [@tr("ui" => "Output"), @tr("ui" => "Microphone"), @tr("ui" => "Sidetone"), @tr("ui" => "General")];
+                    icons: ["\u{E767}", "\u{E720}", "\u{E95B}", "\u{E9F9}", "\u{E713}"];
+                    names: [@tr("ui" => "Output"), @tr("ui" => "Microphone"), @tr("ui" => "Sidetone"), @tr("ui" => "Test"), @tr("ui" => "General")];
                     // the About page belongs to General
-                    selected: Model.tab == 4 ? 3 : Model.tab;
+                    selected: Model.tab == 5 ? 4 : Model.tab;
                     chosen(page) => {
                         Model.tab = page;
                     }
@@ -209,8 +211,9 @@ export component MainWindow inherits Window {
                 if Model.tab == 0: OutputPage { }
                 if Model.tab == 1: MicrophonePage { }
                 if Model.tab == 2: SidetonePage { }
-                if Model.tab == 3: GeneralPage { }
-                if Model.tab == 4: AboutPage { }
+                if Model.tab == 3: TestPage { }
+                if Model.tab == 4: GeneralPage { }
+                if Model.tab == 5: AboutPage { }
             }
         }
 

@@ -28,8 +28,9 @@ usage page `0x000C` (interface 3).
   `0x20` alone, an EEPROM read, from `cxtune dump`. `0x20|0x40` (an EEPROM write), `0x10` (address
   at or above 64 KiB) and `0x80` (DSP memory) are never used.
 - A read needs about 5 ms between the request and GET_REPORT; a write needs about 50 ms before
-  the readback. Reads are retried up to five times when the IN report is not `0x05`. `cxtune dump` also reads
-  every chunk twice and retries the chunk (up to five times) until the two reads agree.
+  the readback. A read makes up to 5 attempts (4 retries) until the IN report is `0x05`.
+  `cxtune dump` also reads every chunk twice and makes up to 5 attempts (4 retries) at the chunk
+  until the two reads agree (`READ_ATTEMPTS` in `src/protocol.rs`).
 - Requests carry no tag. Two programs talking to the dongle at once can receive each other's
   responses, so only one process may use the interface. cxtune enforces this between its own
   processes with the named mutex `Global\cxtune-device` (`src/lock.rs`).
@@ -189,8 +190,10 @@ The byte sequences are proven; the annotations are inferred from the ROM disasse
   operand"). The measured times are under "Balanced stop decay time".
 - The **start dwell** (600 ms, timer 1) is set by the ROM routine at `$D671` that the routine
   calls; it is outside every region cxtune writes and is not tunable.
-- Cost: the first 600 ms of audio after idle are muted; opening the microphone from full idle
-  gives digital silence and a click first (see "Microphone capture in each mode").
+- Cost: the first ≈650 ms of audio after idle are muted (the 600 ms start dwell, the DAC unmute
+  about 37 ms later and the poll resolution; `mode::mute_delay_ms` uses 650 ms); opening the
+  microphone from full idle gives digital silence and a click first (see "Microphone capture in
+  each mode").
 
 ### Lowest noise (v2, former `min-hiss`)
 
@@ -353,7 +356,7 @@ Observed on the device:
 `$18BA..$18C5` that toggles `$1152` bit 3 and does not touch `$10D3` (found in the
 cross-references of the patch by a reviewer). That a control on the dongle switches the virtual
 surround is inferred from that code and was not tested: no button press was made on the device.
-ROM `$DA30` (entry 17 of the jump tables at `$F083` and `$1885`) steps through three states, each
+ROM `$DA30` (index 17, 0-based, of the jump tables at `$F083` and `$1885`) steps through three states, each
 followed by a NEWC request: from off it sets bit 3 and clears `$10D3` bit 4; the next call sets
 `$10D3` bit 4 as well; the call after that clears both (a reading of the ROM by a reviewer). Which
 physical control, if any, calls either routine is not known. The engine follows a surround switch

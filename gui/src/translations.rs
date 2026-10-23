@@ -16,13 +16,18 @@ const TEXTS: &str = include_str!("../ui/texts.slint");
 const TURKISH: &str = include_str!("../lang/tr/LC_MESSAGES/cxtune-gui.po");
 
 /// Texts that read the same in Turkish.
-const SAME_IN_TURKISH: [&str; 8] = [
+const SAME_IN_TURKISH: [&str; 13] = [
     "cxtune: {}",
     "{} ms",
     "AGC",
     "Sidetone",
+    "Test",
     "+{} dB",
     "{} dB",
+    "{} dBFS",
+    "{}",
+    "{} · {}",
+    "{} / {} dBFS",
     "{}: {}, {}: {}, {}: {}",
     "≈ {} ms",
 ];

@@ -22,8 +22,12 @@ impl Drop for Scratch {
 // One test, so that no other test of this file takes the lock for a moment in between.
 #[test]
 fn every_device_command_is_refused_while_the_lock_is_held() {
-    // Either this test holds the lock or a running cxtune does; both make the lock busy.
-    let _held = NamedLock::device();
+    // This test holds the lock from here to its end, so that no command can get it whatever
+    // other processes do meanwhile. If a tray app or a command already holds it, the test cannot
+    // make that promise and stops.
+    let _held = NamedLock::device().expect(
+        "the device lock is held by another cxtune process; close it and run the test again",
+    );
     assert!(matches!(NamedLock::device(), Err(Error::Busy(_))));
 
     let appdata =

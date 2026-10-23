@@ -29,8 +29,8 @@ and a tray application.
 - **Automatic re-apply** (`cxtune watch`): the settings are applied again when the dongle is
   replugged or the computer wakes from sleep.
 - **Test helpers** in the engine (`docs/engine.md`): microphone level, noise floor, noise
-  reduction comparison, recording and playback, a click test and noise listening, for the
-  application's Test tab.
+  reduction comparison, recording and playback, a click test and noise listening, shown on the
+  Test page of the tray application.
 - **Tray application** (English and Turkish): a window and a notification-area icon for all of
   the above and for the Windows volume of the dongle; see
   [The tray application](#the-tray-application).
@@ -39,7 +39,7 @@ and a tray application.
 |---|---|---|---|
 | `default` | Vendor behaviour: driver always on. Constant noise floor. | No clicks. | None. |
 | `low-click` | ROM default idle power-down. Some noise. | Low click. | None. |
-| `balanced` | Driver clamped, analog references off. | Follows the ROM power-up order. | The first 600 ms of audio after idle are muted; opening the microphone from full idle gives a stretch of digital silence and a click first. The driver stays open for the decay time (default 800 ms) after a stream or capture ends. |
+| `balanced` | Driver clamped, analog references off. | Follows the ROM power-up order. | The first ≈650 ms of audio after idle are muted; opening the microphone from full idle gives a stretch of digital silence and a click first. The driver stays open for the decay time (default 800 ms) after a stream or capture ends. |
 | `lowest-noise` | Driver clamped. | Loud click. | Audio is muted for the soft-start time (default 600 ms) plus 150 ms. |
 
 The former names `stock`, `quiet`, `click-free` and `min-hiss` are accepted by the command line
@@ -108,17 +108,23 @@ cxtune watch                    keep the remembered settings applied across repl
 `target\release\cxtune-gui.exe` is a small window and notification-area icon on top of the same
 engine (Windows 11, Turkish and English). It follows the light or dark scheme of Windows, has no
 console window and closes to the notification area. A list of pages on the left leads to the
-four below, and a header shows the dongle and its state (it also has level meters, which
-show nothing yet).
+five below, and a header shows the dongle, its state and the level of the microphone (while
+the level meter of the Test page is switched on).
 
 - **Output**: the four modes (Default, Low click, Balanced, Lowest noise) as cards with Noise
-  floor, Click and Mute delay indicators that show only what was measured (and say so when
-  something was not), the soft-start time of Lowest noise, the speaker volume and **Apply
-  recommended** (balanced mode, microphone boost 6, noise reduction on, AGC and sidetone off).
+  floor, Click and Start delay indicators that show only what was measured (and say so when
+  something was not), the speaker volume, the soft-start time of Lowest noise, the release time
+  of Balanced (its stop decay time), the experimental virtual surround with its level, and
+  **Apply recommended** (balanced mode, microphone boost 6, noise reduction on, AGC and sidetone
+  off).
 - **Microphone**: boost with the gain compared with the vendor's setting, noise reduction, AGC
   (experimental) and the microphone volume.
 - **Sidetone** (experimental, the level in dB, with a note not to turn on Windows' "Listen to this
-  device" as well) and **General**: start with Windows, language, the log folder and **About**
+  device" as well), **Test** (the engine's test helpers: a microphone level meter that you
+  switch on and that opens the microphone only while it is on, the noise floor, a recording and
+  its playback, the noise reduction comparison, the click test and listening to the noise, each
+  showing only what it measured; a test sound is low-level and plays in the headset) and
+  **General**: start with Windows, language, the log folder and **About**
   (version, the supported device and the disclaimer).
 - The **notification-area icon** switches the mode, re-applies the settings and shows the
   window; its tooltip is the short status. `cxtune-gui.exe --minimized` starts it in the

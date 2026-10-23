@@ -59,22 +59,22 @@ export enum Tone {
 }
 
 // The indicators of an output mode.
-export enum Hiss {
+export enum NoiseFloor {
     constant,
     some,
     cut,
 }
 
-export enum Pop {
+export enum Click {
     none,
     low,
     not-measured,
     loud,
 }
 
-// How long the start of audio is muted (`delay-ms`, the engine's own figure): not at all, a
+// How long the start of audio is muted (`start-delay-ms`, the engine's own figure): not at all, a
 // fixed time, or the soft-start time plus a fixed one.
-export enum Delay {
+export enum StartDelay {
     none,
     fixed,
     settle,
@@ -82,10 +82,53 @@ export enum Delay {
 
 // What a mode costs and gives.
 export struct ModeIndicators {
-    hiss: Hiss,
-    pop: Pop,
-    delay: Delay,
-    delay-ms: int,
+    noise-floor: NoiseFloor,
+    click: Click,
+    start-delay: StartDelay,
+    start-delay-ms: int,
+}
+
+// The tests of the Test page; at most one runs at a time.
+export enum TestJob {
+    none,
+    noise-floor,
+    record,
+    play,
+    comparison,
+    click,
+    listen,
+}
+
+// Where a running test is.
+export enum TestStep {
+    warming-up,
+    measuring,
+    recording,
+    with-noise-reduction,
+    switching,
+    without-noise-reduction,
+    waiting,
+    resting,
+    playing,
+}
+
+// Why a request of the Test page failed, by what the user can do about it.
+export enum TestProblem {
+    none,
+    communication,
+    audio,
+    other,
+}
+
+// What a test measured: only the numbers, in the order of the test. The noise floor has its level
+// in `first`; a recording its RMS level and its peak level (`first`, `second`); the comparison the
+// change that noise reduction makes in dB, the level with it on and the level with it off; the
+// click test and noise listening the milliseconds that the output took to go idle (`first`).
+export struct Measured {
+    present: bool,
+    first: float,
+    second: float,
+    third: float,
 }
 
 // Development only: the screenshots of the `snapshot` feature show both colour schemes through
@@ -94,7 +137,8 @@ export global Theme {
     in-out property <ColorScheme> scheme <=> Palette.color-scheme;
 }
 
-// The tabs, by index: 0 output, 1 microphone, 2 sidetone, 3 general, 4 about (a page of general).
+// The tabs, by index: 0 output, 1 microphone, 2 sidetone, 3 test, 4 general, 5 about (a page of
+// general).
 //
 // The modes, by index: default, low click, balanced, lowest noise.
 //
@@ -115,10 +159,10 @@ export global Model {
     // whether the controls that change the dongle can be used
     in property <bool> controls-enabled;
 
-    // header meters: the peak level of the output and of the microphone in dBFS, from -60 to 0.
-    // Only shown while `meters-active`; otherwise the meters stay neutral.
+    // the level meter of the microphone, in the header and on the Test page: the RMS level of the
+    // last 50 ms in dBFS, from -60 to 0. `meters-active` is true only while the meter runs and has
+    // delivered a level; otherwise the meter stays neutral and shows no value.
     in property <bool> meters-active;
-    in property <float> out-db: -60;
     in property <float> mic-db: -60;
 
     // output mode
@@ -130,7 +174,18 @@ export global Model {
     in property <float> settle-min: 20;
     in property <float> settle-max: 2000;
     in property <float> settle-step: 10;
-    in property <bool> delay-enabled;
+    in property <bool> settle-enabled;
+    // the stop decay time of Balanced: its slider is enabled only in that mode
+    in-out property <float> decay-ms: 800;
+    in property <float> decay-min: 100;
+    in property <float> decay-max: 2000;
+    in property <float> decay-step: 10;
+    in property <bool> decay-enabled;
+    // virtual surround and its level
+    in-out property <bool> surround;
+    in-out property <float> surround-level: 4;
+    in property <float> surround-level-min: 1;
+    in property <float> surround-level-max: 10;
 
     // microphone
     in-out property <float> boost: 4;
@@ -156,6 +211,29 @@ export global Model {
     in-out property <float> microphone-volume;
     in-out property <bool> microphone-muted;
 
+    // the Test page: whether it can reach the dongle (it is connected and has been read; the tests
+    // and the meter switch cannot be used otherwise), the switch of the level meter (the
+    // microphone is open for the meter only while it is on), the test that runs and where it is
+    // (`test-remaining` is in ms, -1 when the step has no known end), whether a recording can be
+    // played, the last problem, whether the caution about the sound of the output tests is still
+    // to be shown, the durations that the tests use in seconds, and the last result of each test
+    in property <bool> test-available;
+    in-out property <bool> meter-on;
+    in property <TestJob> test-job;
+    in property <TestStep> test-step;
+    in property <int> test-remaining: -1;
+    in property <bool> test-has-recording;
+    in property <TestProblem> test-problem;
+    in property <bool> test-caution;
+    in property <int> noise-floor-seconds: 10;
+    in property <int> record-seconds: 5;
+    in property <int> comparison-seconds: 10;
+    in property <Measured> noise-floor-result;
+    in property <Measured> recording-result;
+    in property <Measured> comparison-result;
+    in property <Measured> click-result;
+    in property <Measured> listen-result;
+
     // general
     in-out property <bool> autostart;
     in property <bool> autostart-failed;
@@ -163,12 +241,22 @@ export global Model {
 
     callback mode-selected(int);
     callback settle-changed(int);
+    callback decay-changed(int);
+    callback surround-toggled(bool);
+    callback surround-level-changed(int);
     callback boost-changed(int);
     callback noise-reduction-toggled(bool);
     callback agc-toggled(bool);
     callback sidetone-toggled(bool);
     callback level-changed(float);
     callback slider-released();
+    // the tab changed: the meter of the Test page is turned off when the page is left
+    callback tab-changed(int);
+    // the window was minimized or restored: the meter is turned off in a window that cannot be seen
+    callback minimized-changed(bool);
+    callback meter-toggled(bool);
+    callback test-requested(TestJob);
+    callback test-cancelled();
     callback autostart-toggled(bool);
     callback language-selected(int);
     callback volume-changed(int, int);

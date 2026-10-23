@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 fn main() {
-    // The tests look elements up by label, which needs the debug info; release builds leave it out.
+    // The tests look elements up by their type, which needs the debug info; release builds leave it out.
     let debug_info = std::env::var("PROFILE").is_ok_and(|profile| profile == "debug");
     let config = slint_build::CompilerConfiguration::new()
         .with_style("fluent".into())
