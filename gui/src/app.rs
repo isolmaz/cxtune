@@ -282,7 +282,6 @@ impl App {
         self.snapshot = None;
         self.start_problem = None;
         self.touched = Touched::default();
-        self.test.engine_restarted();
         let spawned = std::thread::Builder::new()
             .name("cxtune-start".into())
             .spawn(move || {

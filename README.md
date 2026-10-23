@@ -65,6 +65,18 @@ HyperX, HP or Synaptics (Conexant). Use it at your own risk; the software is pro
 warranty and without liability, as stated in the [license](LICENSE). The changes it makes are
 temporary (RAM only), and replugging the dongle restores the vendor behaviour.
 
+## Download
+
+Releases are published on the [GitHub Releases](https://github.com/isolmaz/cxtune/releases) page
+with a SHA-256 checksum. To check a downloaded file, compare the output of this PowerShell
+command with the published checksum:
+
+```
+Get-FileHash .\cxtune-gui.exe -Algorithm SHA256
+```
+
+You can also build the binaries yourself, see Quick start.
+
 ## Quick start
 
 Requires Windows 11 and the Rust MSVC toolchain, version 1.92 or newer (1.88 for the
